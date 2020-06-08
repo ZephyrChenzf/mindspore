@@ -55,15 +55,19 @@ class DFunctor {
   FuncGraphPtr KUserDefined(const FuncGraphPtr &primal);
   // Register functor objects to form a global view.
   void Init(const DFunctorPtr &functor, bool is_top = false);
+  bool IsInScope(const AnfNodePtr &node);
+
   // Clear resources.
   static void Clear();
 
  private:
   // Map one morphism.
   AdjointPtr MapMorphism(const AnfNodePtr &morph);
+  bool IsFreeMorphism(const AnfNodePtr &node);
   // Map morphism that's not attached to output.
   void MapFreeMorphism();
   void BackPropagateFv(const AnfNodePtr &fv, const AnfNodePtr &din);
+  void BackPropagateSwitchLayer(const CNodePtr &cnode_morph, const CNodePtr &env);
   void BackPropagate(const CNodePtr &cnode_morph, const CNodePtr &k_app, const AdjointPtr &node_adjoint);
   AnfNodePtr AttachFvDoutToTape(const AnfNodePtr &grad_fv);
   AnfNodePtr AttachIndirectFvDoutToTape(const AnfNodePtr &grad_fv);
@@ -100,6 +104,7 @@ class DFunctor {
   bool is_top_;
   static std::unordered_map<FuncGraphPtr, std::shared_ptr<DFunctor>> func_graph_to_functor_;
   static std::unordered_map<AnfNodePtr, AdjointPtr> anfnode_to_adjoin_definition_;
+  static FuncGraphSet scope_;
 };
 
 // D Functor's rules to map primitive object.
@@ -119,14 +124,16 @@ class KPrim {
 
  private:
   FuncGraphPtr GetBprop(const PrimitivePtr &prim);
+  FuncGraphPtr GetFprop(const PrimitivePtr &prim);
   FuncGraphPtr FakeBprop(const ValueNodePtr &value_node, const pipeline::ResourceBasePtr &resources);
+  FuncGraphPtr BpropCut(const ValueNodePtr &value_node, const pipeline::ResourceBasePtr &resources);
   // Given a bprop rule, do the K mapping.
   template <typename T>
   FuncGraphPtr BpropToK(const T &primal, const FuncGraphPtr &bprop_g);
   AnfNodePtr BuildOutput(const FuncGraphPtr &bprop_fg);
   void TransformArgs(const FuncGraphManagerPtr &mng, const FuncGraphPtr &bprop_fg, const FuncGraphPtr &outer,
                      std::vector<AnfNodePtr> *const transf_args);
-  void AddCheckTypeShapeOp(const FuncGraphPtr &bprop_fg);
+  void CheckBprop(const FuncGraphPtr &bprop_fg, const string &prim_to_check);
 
   Registry bprop_registry_;
   std::unordered_map<PrimitivePtr, MetaFuncGraphPtr> bprop_registry_meta_;
@@ -136,10 +143,7 @@ template <typename T>
 FuncGraphPtr KPrim::BpropToK(const T &primal, const FuncGraphPtr &bprop_fg) {
   MS_EXCEPTION_IF_NULL(primal);
   MS_EXCEPTION_IF_NULL(bprop_fg);
-
-  if (IsPrimitiveCNode(bprop_fg->output(), prim::kPrimMakeTuple)) {
-    AddCheckTypeShapeOp(bprop_fg);
-  }
+  CheckBprop(bprop_fg, primal->ToString());
 
   auto debug_info = std::make_shared<GraphDebugInfo>();
   debug_info->set_name(primal->ToString());

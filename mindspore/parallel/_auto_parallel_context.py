@@ -14,8 +14,12 @@
 # ============================================================================
 """Context of auto parallel"""
 import threading
+import mindspore.context as context
+from mindspore.parallel._dp_allreduce_fusion import _set_fusion_strategy_by_idx, _set_fusion_strategy_by_size
 from mindspore._c_expression import AutoParallelContext
-from mindspore._extends.pynative_helper import args_type_check
+from mindspore._checkparam import args_type_check
+
+_MAX_GROUP_NAME_LEN = 127
 
 
 class _AutoParallelContext:
@@ -206,52 +210,169 @@ class _AutoParallelContext:
         self.check_context_handle()
         return self._context_handle.get_parameter_broadcast()
 
+    def set_strategy_ckpt_load_file(self, strategy_ckpt_load_file):
+        """
+        Set strategy checkpoint load path.
+
+        Args:
+            strategy_ckpt_load_file (bool): Path to load parallel strategy checkpoint.
+        """
+        self.check_context_handle()
+        self._context_handle.set_strategy_ckpt_load_file(strategy_ckpt_load_file)
+
+    def get_strategy_ckpt_load_file(self):
+        """Get strategy checkpoint load path."""
+        self.check_context_handle()
+        return self._context_handle.get_strategy_ckpt_load_file()
+
+    def set_strategy_ckpt_save_file(self, strategy_ckpt_save_file):
+        """
+        Set strategy checkpoint save path.
+
+        Args:
+            strategy_ckpt_save_file (bool): Path to save parallel strategy checkpoint.
+        """
+        self.check_context_handle()
+        self._context_handle.set_strategy_ckpt_save_file(strategy_ckpt_save_file)
+
+    def get_strategy_ckpt_save_file(self):
+        """Get strategy checkpoint save path."""
+        self.check_context_handle()
+        return self._context_handle.get_strategy_ckpt_save_file()
+
     def get_parameter_broadcast_is_set(self):
         """Get parameter broadcast is set or not."""
         self.check_context_handle()
         return self._context_handle.get_parameter_broadcast_is_set()
 
-    def set_all_reduce_fusion_split_indices(self, indices):
+    def set_all_reduce_fusion_split_indices(self, indices, group="hccl_world_groupsum1"):
         """
         Set allreduce fusion strategy by parameters indices.
 
         Args:
             indices (list): Indices list.
+            group (str): The hccl communication group.
 
         Raises:
-            ValueError: If type of indices item is not int.
+            TypeError: If type of indices item is not int.
+            TypeError: If group is not a python str.
         """
         self.check_context_handle()
-        for index in indices:
-            if not isinstance(index, int):
-                raise TypeError('indices has invalid value')
-        return self._context_handle.set_all_reduce_fusion_split_indices(indices)
+        if isinstance(indices, (list)):
+            for index in indices:
+                if not isinstance(index, int):
+                    raise TypeError('indices has invalid value')
+        else:
+            raise TypeError('indices must be a python list')
 
-    def get_all_reduce_fusion_split_indices(self):
-        """Get allreduce fusion split indices."""
+        if isinstance(group, (str)):
+            group_len = len(group)
+            if group_len > _MAX_GROUP_NAME_LEN:
+                raise ValueError('Group name len is out of range {_MAX_GROUP_NAME_LEN}')
+        else:
+            raise TypeError('Group must be a python str')
+
+        self._context_handle.set_all_reduce_fusion_split_indices(indices, group)
+        if context.get_context("device_target") == "Ascend":
+            if group == "":
+                _set_fusion_strategy_by_idx(indices)
+            else:
+                _set_fusion_strategy_by_idx(indices, group)
+
+    def get_all_reduce_fusion_split_indices(self, group="hccl_world_groupsum1"):
+        """
+        Get allreduce fusion split indices.
+
+        Args:
+            group (str): The hccl communication group.
+
+        Returns:
+            Return split sizes list according to the group.
+
+        Raises:
+            TypeError: If group is not a python str.
+        """
         self.check_context_handle()
-        return self._context_handle.get_all_reduce_fusion_split_indices()
+        if isinstance(group, (str)):
+            group_len = len(group)
+            if group_len > _MAX_GROUP_NAME_LEN:
+                raise ValueError('Group name len is out of range {_MAX_GROUP_NAME_LEN}')
+        else:
+            raise TypeError('Group must be a python str')
+        return self._context_handle.get_all_reduce_fusion_split_indices(group)
 
-    def set_all_reduce_fusion_split_sizes(self, sizes):
+    def set_all_reduce_fusion_split_sizes(self, sizes, group="hccl_world_groupsum1"):
         """
         Set allreduce fusion strategy by parameters data sizes.
 
         Args:
             sizes (list): Sizes list.
+            group (str): The hccl communication group.
 
         Raises:
-            ValueError: If type of sizes item is not int.
+            TypeError: If type of sizes item is not int.
+            TypeError: If group is not a python str.
         """
         self.check_context_handle()
-        for size in sizes:
-            if not isinstance(size, int):
-                raise TypeError('sizes has invalid value')
-        return self._context_handle.set_all_reduce_fusion_split_sizes(sizes)
+        if isinstance(sizes, (list)):
+            for size in sizes:
+                if not isinstance(size, int):
+                    raise TypeError('sizes has invalid value')
+        else:
+            raise TypeError('sizes must be a python list')
 
-    def get_all_reduce_fusion_split_sizes(self):
-        """Get allreduce fusion split sizes."""
+        if isinstance(group, (str)):
+            group_len = len(group)
+            if group_len > _MAX_GROUP_NAME_LEN:
+                raise ValueError('Group name len is out of range {_MAX_GROUP_NAME_LEN}')
+        else:
+            raise TypeError('Group must be a python str')
+
+        self._context_handle.set_all_reduce_fusion_split_sizes(sizes, group)
+        if context.get_context("device_target") == "Ascend":
+            if group == "":
+                _set_fusion_strategy_by_size(sizes)
+            else:
+                _set_fusion_strategy_by_size(sizes, group)
+
+    def get_all_reduce_fusion_split_sizes(self, group="hccl_world_groupsum1"):
+        """
+        Get allreduce fusion split sizes.
+
+        Args:
+            group (str): The hccl communication group.
+
+        Returns:
+            Return split sizes list according to the group.
+
+        Raises:
+            TypeError: If group is not a python str.
+        """
         self.check_context_handle()
-        return self._context_handle.get_all_reduce_fusion_split_sizes()
+        if isinstance(group, (str)):
+            group_len = len(group)
+            if group_len > _MAX_GROUP_NAME_LEN:
+                raise ValueError('Group name len is out of range {_MAX_GROUP_NAME_LEN}')
+        else:
+            raise TypeError('Group must be a python str')
+        return self._context_handle.get_all_reduce_fusion_split_sizes(group)
+
+    def set_enable_all_reduce_fusion(self, enable_all_reduce_fusion):
+        """
+        Set enable/disable all reduce fusion.
+
+        Args:
+            enable_all_reduce_fusion (bool): Enable/disable all reduce fusion.
+        """
+        self.check_context_handle()
+        if not isinstance(enable_all_reduce_fusion, bool):
+            raise TypeError('enable_all_reduce_fusion is invalid type')
+        self._context_handle.set_enable_all_reduce_fusion(enable_all_reduce_fusion)
+
+    def get_enable_all_reduce_fusion(self):
+        """Get all reduce fusion flag."""
+        self.check_context_handle()
+        return self._context_handle.get_enable_all_reduce_fusion()
 
     def get_device_num_is_set(self):
         """Get device number is set or not."""
@@ -292,7 +413,9 @@ _set_auto_parallel_context_func_map = {
     "cast_before_mirror": auto_parallel_context().set_cast_before_mirror,
     "loss_repeated_mean": auto_parallel_context().set_loss_repeated_mean,
     "parallel_mode": auto_parallel_context().set_parallel_mode,
-    "parameter_broadcast": auto_parallel_context().set_parameter_broadcast}
+    "parameter_broadcast": auto_parallel_context().set_parameter_broadcast,
+    "strategy_ckpt_load_file": auto_parallel_context().set_strategy_ckpt_load_file,
+    "strategy_ckpt_save_file": auto_parallel_context().set_strategy_ckpt_save_file}
 
 
 _get_auto_parallel_context_func_map = {
@@ -302,11 +425,14 @@ _get_auto_parallel_context_func_map = {
     "cast_before_mirror": auto_parallel_context().get_cast_before_mirror,
     "loss_repeated_mean": auto_parallel_context().get_loss_repeated_mean,
     "parallel_mode": auto_parallel_context().get_parallel_mode,
-    "parameter_broadcast": auto_parallel_context().get_parameter_broadcast}
+    "parameter_broadcast": auto_parallel_context().get_parameter_broadcast,
+    "strategy_ckpt_load_file": auto_parallel_context().get_strategy_ckpt_load_file,
+    "strategy_ckpt_save_file": auto_parallel_context().get_strategy_ckpt_save_file}
 
 
 @args_type_check(device_num=int, global_rank=int, mirror_mean=bool, cast_before_mirror=bool,
-                 loss_repeated_mean=bool, parallel_mode=str, parameter_broadcast=bool)
+                 loss_repeated_mean=bool, parallel_mode=str, parameter_broadcast=bool,
+                 strategy_ckpt_load_file=str, strategy_ckpt_save_file=str)
 def _set_auto_parallel_context(**kwargs):
     """
     Set auto parallel context.
@@ -337,6 +463,8 @@ def _set_auto_parallel_context(**kwargs):
         parameter_broadcast (bool): Indicating whether to broadcast parameters before training.
                        "stand_alone", "semi_auto_parallel" and "auto_parallel" do not support parameter
                        broadcast. Default: False.
+        strategy_ckpt_load_file (str): The path to load parallel strategy checkpoint. Default: ''
+        strategy_ckpt_save_file (str): The path to save parallel strategy checkpoint. Default: ''
 
     Raises:
         ValueError: If input key is not attribute in auto parallel context.
@@ -377,5 +505,7 @@ def _reset_auto_parallel_context():
     - cast_before_mirror: True.
     - parallel_mode: "stand_alone".
     - parameter_broadcast: False.
+    - strategy_ckpt_load_file: ""
+    - strategy_ckpt_save_file: ""
     """
     auto_parallel_context().reset()

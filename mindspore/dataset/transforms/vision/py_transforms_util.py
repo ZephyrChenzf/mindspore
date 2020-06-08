@@ -455,6 +455,9 @@ def random_crop(img, size, padding, pad_if_needed, fill_value, padding_mode):
     def _input_to_factor(img, size):
         img_width, img_height = img.size
         height, width = size
+        if height > img_height or width > img_width:
+            raise ValueError("Crop size {} is larger than input image size {}".format(size, (img_height, img_width)))
+
         if width == img_width and height == img_height:
             return 0, 0, img_height, img_width
 
@@ -1408,3 +1411,130 @@ def hsv_to_rgbs(np_hsv_imgs, is_hwc):
     if batch_size == 0:
         return hsv_to_rgb(np_hsv_imgs, is_hwc)
     return np.array([hsv_to_rgb(img, is_hwc) for img in np_hsv_imgs])
+
+
+def random_color(img, degrees):
+
+    """
+    Adjust the color of the input PIL image by a random degree.
+
+    Args:
+        img (PIL Image): Image to be color adjusted.
+        degrees (sequence): Range of random color adjustment degrees.
+            It should be in (min, max) format (default=(0.1,1.9)).
+
+    Returns:
+        img (PIL Image), Color adjusted image.
+    """
+
+    if not is_pil(img):
+        raise TypeError('img should be PIL Image. Got {}'.format(type(img)))
+
+    v = (degrees[1] - degrees[0]) * random.random() + degrees[0]
+    return ImageEnhance.Color(img).enhance(v)
+
+
+def random_sharpness(img, degrees):
+
+    """
+    Adjust the sharpness of the input PIL image by a random degree.
+
+    Args:
+        img (PIL Image): Image to be sharpness adjusted.
+        degrees (sequence): Range of random sharpness adjustment degrees.
+            It should be in (min, max) format (default=(0.1,1.9)).
+
+    Returns:
+        img (PIL Image), Sharpness adjusted image.
+    """
+
+    if not is_pil(img):
+        raise TypeError('img should be PIL Image. Got {}'.format(type(img)))
+
+    v = (degrees[1] - degrees[0]) * random.random() + degrees[0]
+    return ImageEnhance.Sharpness(img).enhance(v)
+
+
+def auto_contrast(img):
+
+    """
+    Automatically maximize the contrast of the input PIL image.
+
+    Args:
+        img (PIL Image): Image to be augmented with AutoContrast.
+
+    Returns:
+        img (PIL Image), Augmented image.
+
+    """
+
+    if not is_pil(img):
+        raise TypeError('img should be PIL Image. Got {}'.format(type(img)))
+
+    return ImageOps.autocontrast(img)
+
+
+def invert_color(img):
+
+    """
+    Invert colors of input PIL image.
+
+    Args:
+        img (PIL Image): Image to be color inverted.
+
+    Returns:
+        img (PIL Image), Color inverted image.
+
+    """
+
+    if not is_pil(img):
+        raise TypeError('img should be PIL Image. Got {}'.format(type(img)))
+
+    return ImageOps.invert(img)
+
+
+def equalize(img):
+
+    """
+    Equalize the histogram of input PIL image.
+
+    Args:
+        img (PIL Image): Image to be equalized
+
+    Returns:
+        img (PIL Image), Equalized image.
+
+    """
+
+    if not is_pil(img):
+        raise TypeError('img should be PIL Image. Got {}'.format(type(img)))
+
+    return ImageOps.equalize(img)
+
+
+def uniform_augment(img, transforms, num_ops):
+
+    """
+    Uniformly select and apply a number of transforms sequentially from
+    a list of transforms. Randomly assigns a probability to each transform for
+    each image to decide whether apply it or not.
+    All the transforms in transform list must have the same input/output data type.
+
+    Args:
+        img: Image to be applied transformation.
+        transforms (list): List of transformations to be chosen from to apply.
+        num_ops (int): number of transforms to sequentially aaply.
+
+    Returns:
+        img, Transformed image.
+
+    """
+
+    op_idx = np.random.choice(len(transforms), size=num_ops, replace=False)
+    for idx in op_idx:
+        AugmentOp = transforms[idx]
+        pr = random.random()
+        if random.random() < pr:
+            img = AugmentOp(img.copy())
+
+    return img

@@ -16,22 +16,26 @@
 import functools
 import logging
 import numpy as np
-import pytest
-from mindspore import nn
+
+import mindspore.context as context
 from mindspore import Tensor
-from mindspore.ops import operations as P
+from mindspore import nn
 from mindspore.common.api import _executor
+from mindspore.ops import operations as P
 from ..ut_filter import non_graph_engine
 from ....mindspore_test_framework.mindspore_test import mindspore_test
 from ....mindspore_test_framework.pipeline.forward.compile_forward \
     import pipeline_for_compile_forward_ge_graph_for_case_by_case_config
 from ....mindspore_test_framework.pipeline.forward.verify_exception \
     import pipeline_for_verify_exception_for_case_by_case_config
+
 logging.basicConfig(level=logging.WARNING)
 
 
+# pylint: disable=abstract-method
 class NetMissConstruct(nn.Cell):
     """ NetMissConstruct definition """
+
     def __init__(self):
         super(NetMissConstruct, self).__init__()
         self.conv1 = nn.Conv2d(1, 6, 5, pad_mode='valid')
@@ -43,7 +47,6 @@ class NetMissConstruct(nn.Cell):
         self.max_pool2d = nn.MaxPool2d(kernel_size=2)
         self.flatten = P.Flatten()
 
-    # pylint: disable=abstract-method
     # TestCase: Mis-spelled 'construct' to 'construtc'
     def construtc(self, x):
         x = self.max_pool2d(self.relu(self.conv1(x)))
@@ -62,7 +65,7 @@ def test_net_without_construct():
     try:
         _executor.compile(net, inp)
     except RuntimeError as err:
-        if str(err).find("unsupported syntax 'Raise' at ") >= 0:
+        if str(err).find("Unsupported syntax 'Raise' at ") >= 0:
             print(str(err))
         else:
             raise err
@@ -70,6 +73,7 @@ def test_net_without_construct():
 
 class NetWithRaise(nn.Cell):
     """ NetWithRaise definition """
+
     def __init__(self):
         super(NetWithRaise, self).__init__()
         self.conv1 = nn.Conv2d(1, 6, 5, pad_mode='valid')
@@ -86,7 +90,7 @@ def test_net_with_raise():
     try:
         _executor.compile(net, inp)
     except RuntimeError as err:
-        if str(err).find("unsupported syntax 'Raise' at ") >= 0:
+        if str(err).find("Unsupported syntax 'Raise' at ") >= 0:
             print(str(err))
         else:
             raise err
@@ -94,6 +98,7 @@ def test_net_with_raise():
 
 class NetAddN(nn.Cell):
     """net for test AddN"""
+
     def __init__(self):
         super(NetAddN, self).__init__()
         self.net = P.AddN()
@@ -104,6 +109,7 @@ class NetAddN(nn.Cell):
 
 class NetSplit(nn.Cell):
     "net for test Split"
+
     def __init__(self):
         super(NetSplit, self).__init__()
         self.net = P.Split(1, 2)
@@ -114,6 +120,7 @@ class NetSplit(nn.Cell):
 
 class NetBatchMatMul(nn.Cell):
     """net for test BatchMatMul"""
+
     def __init__(self):
         super(NetBatchMatMul, self).__init__()
         self.op = P.BatchMatMul()
@@ -160,16 +167,16 @@ test_case_check_ops = [
         'block': nn.Dense(1, 6, has_bias=False, bias_init=Tensor(np.ones([6]).astype(np.float32))),
         'desc_inputs': [Tensor(np.ones(shape=[6, 1]).astype(np.float32))]}),
     ('MaxPool2d_1', {
-        'block': nn.MaxPool2d(5, pad_mode='same', padding=0),
+        'block': nn.MaxPool2d(5, pad_mode='same'),
         'desc_inputs': [Tensor(np.ones(shape=[5, 5, 8, 8]).astype(np.float32))]}),
     ('MaxPool2d_2', {
-        'block': nn.MaxPool2d(5, pad_mode='valid', padding=0),
+        'block': nn.MaxPool2d(5, pad_mode='valid'),
         'desc_inputs': [Tensor(np.ones(shape=[5, 5, 8, 8]).astype(np.float32))]}),
     ('AvgPool2d_1', {
-        'block': nn.AvgPool2d(5, pad_mode='same', padding=0),
+        'block': nn.AvgPool2d(5, pad_mode='same'),
         'desc_inputs': [Tensor(np.ones(shape=[5, 5, 8, 8]).astype(np.float32))]}),
     ('AvgPool2d_2', {
-        'block': nn.AvgPool2d(5, pad_mode='valid', padding=0),
+        'block': nn.AvgPool2d(5, pad_mode='valid'),
         'desc_inputs': [Tensor(np.ones(shape=[5, 5, 8, 8]).astype(np.float32))]}),
     ('Conv2D_1', {
         'block': P.Conv2D(1, 6, pad_mode='same', pad=0),
@@ -213,7 +220,6 @@ test_exec_case = functools.reduce(lambda x, y: x + y, test_case_lists)
 # pytest tests/python/ops/test_ops.py::test_backward -k LayerNorm
 
 
-import mindspore.context as context
 
 @non_graph_engine
 @mindspore_test(pipeline_for_compile_forward_ge_graph_for_case_by_case_config)

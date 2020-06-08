@@ -114,12 +114,12 @@ void FusedBatchNormCheckDim(const PrimitivePtr &primitive, const AbstractBasePtr
     AbstractTensorPtr arg = CheckArg<AbstractTensor>(op_name, args_spec_list, i);
     ShapePtr arg_shape = dyn_cast<Shape>(arg->GetShapeTrack());
     if (arg_shape == nullptr) {
-      MS_LOG(EXCEPTION) << "" << op_name << " type of args[" << i << "] should be Shape, but " << arg->ToString();
+      MS_LOG(EXCEPTION) << op_name << " type of args[" << i << "] should be Shape, but " << arg->ToString();
     }
 
     if (i == 0) {
       if (arg_shape->shape().size() < 2) {
-        MS_LOG(EXCEPTION) << "" << op_name << " shape of args[" << i
+        MS_LOG(EXCEPTION) << op_name << " shape of args[" << i
                           << "] should be TensorShape with dimension greater than 1, but shape: "
                           << arg_shape->ToString();
       }
@@ -127,7 +127,7 @@ void FusedBatchNormCheckDim(const PrimitivePtr &primitive, const AbstractBasePtr
     }
 
     if (arg_shape->shape().size() != 1) {
-      MS_LOG(EXCEPTION) << "" << op_name << " shape of args[" << i
+      MS_LOG(EXCEPTION) << op_name << " shape of args[" << i
                         << "] should be TensorShape with dimension: 1, but shape: " << arg_shape->ToString();
     }
   }
@@ -159,7 +159,7 @@ AbstractBasePtr InferImplFusedBatchNorm(const AnalysisEnginePtr &, const Primiti
       MS_LOG(EXCEPTION) << "Arg shape size should >= 1.";
     }
     if (arg_shape_list[0] != input_shape_list[1]) {
-      MS_LOG(EXCEPTION) << "" << op_name << " size of tensor param[" << i << "](which is " << arg_shape_list[0]
+      MS_LOG(EXCEPTION) << op_name << " size of tensor param[" << i << "](which is " << arg_shape_list[0]
                         << ") should match the second dimension of tensor"
                            " param[0](which is "
                         << input_shape_list[1] << ").";
@@ -246,7 +246,7 @@ AbstractBasePtr InferImplBiasAddGrad(const AnalysisEnginePtr &, const PrimitiveP
   // Inputs: at least one tensor(y_backprop)
   // Outputs: dbias
   if (args_spec_list.empty()) {
-    MS_LOG(EXCEPTION) << "" << primitive->name() << " evaluator at least has 1 parameters, while the input size is "
+    MS_LOG(EXCEPTION) << primitive->name() << " evaluator at least has 1 parameters, while the input size is "
                       << args_spec_list.size() << ".";
   }
 
@@ -255,8 +255,7 @@ AbstractBasePtr InferImplBiasAddGrad(const AnalysisEnginePtr &, const PrimitiveP
   MS_EXCEPTION_IF_NULL(shape_y);
   std::vector<int> y_dims = shape_y->shape();
   if (y_dims.size() < 2) {
-    MS_LOG(EXCEPTION) << "" << primitive->name() << " input y backprop, dim should >= 2, while " << y_dims.size()
-                      << ".";
+    MS_LOG(EXCEPTION) << primitive->name() << " input y backprop, dim should >= 2, while " << y_dims.size() << ".";
   }
   std::vector<int> bias_dims = {y_dims[1]};
   ShapePtr ret_shape = std::make_shared<Shape>(bias_dims);
@@ -272,8 +271,8 @@ AbstractBasePtr InferImplRelu(const AnalysisEnginePtr &, const PrimitivePtr &pri
   return args_spec_list[0]->Broaden();
 }
 
-AbstractBasePtr InferImplZerosLikeTensor(const AnalysisEnginePtr &, const PrimitivePtr &primitive,
-                                         const AbstractBasePtrList &args_spec_list) {
+AbstractBasePtr InferImplZerosLike(const AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                   const AbstractBasePtrList &args_spec_list) {
   // Inputs: a tensor.
   CheckArgsSize(primitive->name(), args_spec_list, 1);
   return args_spec_list[0]->Broaden();
@@ -284,6 +283,16 @@ AbstractBasePtr InferImplFakeBprop(const AnalysisEnginePtr &, const PrimitivePtr
   // Inputs: a tensor.
   CheckArgsSize(primitive->name(), args_spec_list, 1);
   return args_spec_list[0]->Broaden();
+}
+
+AbstractBasePtr InferImplBpropCut(const AnalysisEnginePtr &, const PrimitivePtr &primitive,
+                                  const AbstractBasePtrList &args_spec_list) {
+  // Inputs: a tensor.
+  AbstractBasePtrList args_list;
+  for (size_t i = 0; i < args_spec_list.size() - 2; i++) {
+    args_list.push_back(args_spec_list[i]->Broaden());
+  }
+  return std::make_shared<AbstractTuple>(args_list);
 }
 
 AbstractBasePtr InferImplLayerNorm(const AnalysisEnginePtr &, const PrimitivePtr &primitive,
@@ -302,7 +311,7 @@ AbstractBasePtr InferImplLayerNorm(const AnalysisEnginePtr &, const PrimitivePtr
 
   // begin_norm_axis and begin_params_axis should be smaller than the size of input_x and >= -1
   ValuePtr bna_ptr = primitive->GetAttr("begin_norm_axis");
-  (void)CheckAxis(op_name, bna_ptr, -1, SizeToInt(input_rank) - 1);
+  int begin_norm_axis = CheckAxis(op_name, bna_ptr, -1, SizeToInt(input_rank) - 1);
 
   ValuePtr bpa_ptr = primitive->GetAttr("begin_params_axis");
   int begin_params_axis = CheckAxis(op_name, bpa_ptr, -1, SizeToInt(input_rank) - 1);
@@ -342,7 +351,13 @@ AbstractBasePtr InferImplLayerNorm(const AnalysisEnginePtr &, const PrimitivePtr
   }
 
   auto mean_var_shape_value = input_shape->shape();
-  mean_var_shape_value[input_rank - 1] = 1;
+  if (begin_norm_axis == -1) {
+    mean_var_shape_value[input_rank - 1] = 1;
+  } else {
+    for (size_t i = begin_norm_axis; i < input_rank; ++i) {
+      mean_var_shape_value[i] = 1;
+    }
+  }
 
   auto mean = input_x->Broaden();
   mean->set_shape(std::make_shared<Shape>(mean_var_shape_value));
@@ -378,7 +393,7 @@ AbstractBasePtr InferImplDropoutGenMask(const AnalysisEnginePtr &, const Primiti
 
   TypePtr prob_type = keep_prob->element()->BuildType();
   if ((prob_type->type_id() != kNumberTypeFloat16) && (prob_type->type_id() != kNumberTypeFloat32)) {
-    MS_LOG(EXCEPTION) << "" << op_name << " keep_prob type should be float16 or float32, but " << prob_type->ToString()
+    MS_LOG(EXCEPTION) << op_name << " keep_prob type should be float16 or float32, but " << prob_type->ToString()
                       << ".";
   }
 
@@ -402,7 +417,11 @@ AbstractBasePtr InferImplDropoutGenMask(const AnalysisEnginePtr &, const Primiti
   }
 
   // convert to bytes(8 bits) mask, using round up
-  int bytes_count = (count + 7) / 8;
+  int n128s = count / 128;
+  if ((count % 128) != 0) {
+    n128s++;
+  }
+  int bytes_count = n128s * 16;
   std::vector<int> shape_y{bytes_count};
 
   primitive->set_attr("T", kInt32);

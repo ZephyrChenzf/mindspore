@@ -17,7 +17,6 @@ from argparse import ArgumentParser
 import numpy as np
 
 from mindspore import Tensor
-
 from ....dataset_mock import MindData
 
 __factory = {

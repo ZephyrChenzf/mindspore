@@ -14,12 +14,14 @@
 # ============================================================================
 
 """Parameter for cell."""
-from copy import copy
-import numpy as np
-from .initializer import initializer
-from .tensor import Tensor
+import numbers
+from copy import copy, deepcopy
+from . import dtype as mstype
+from .initializer import initializer, Initializer
+from .tensor import Tensor, MetaTensor
 from .._checkparam import _check_str_by_regular
 from ..parallel._utils import _set_clone_info, _CloneInfo
+from ..parallel._tensor import _get_seed
 
 __all__ = ['Parameter', 'ParameterTuple']
 
@@ -42,7 +44,8 @@ class Parameter:
         Each parameter of Cell is represented by Parameter class.
 
     Args:
-        default_input (Tensor): A parameter tensor.
+        default_input (Union[Tensor, Initializer]): Parameter data, when `default_input` is` Initializer`,
+            the data stored by Parameter is `MetaTensor`, otherwise it is `Tensor`.
         name (str): Name of the child parameter.
         requires_grad (bool): True if the parameter requires gradient. Default: True.
         layerwise_parallel (bool): A kind of model parallel mode. When layerwise_parallel is true in paralle mode,
@@ -54,6 +57,7 @@ class Parameter:
         self.requires_grad = requires_grad
         self.layerwise_parallel = layerwise_parallel
         self._is_init = False
+        self._sliced = False
         self.clone_info = _CloneInfo()
 
     def __repr__(self):
@@ -91,6 +95,15 @@ class Parameter:
         self._name = name_
 
     @property
+    def sliced(self):
+        """Get slice status of the parameter."""
+        return self._sliced
+
+    @sliced.setter
+    def sliced(self, sliced_):
+        self._sliced = sliced_
+
+    @property
     def is_init(self):
         """Get init status of the parameter."""
         return self._is_init
@@ -124,7 +137,11 @@ class Parameter:
         if init != 'same':
             shape = self.default_input.shape()
             dtype = self.default_input.dtype()
-            x.default_input = initializer(init, shape=shape, dtype=dtype)
+            if isinstance(init, (str, Initializer, numbers.Number)):
+                x.init_mode = initializer(init, shape=shape, dtype=dtype)
+                x.default_input = MetaTensor(dtype, shape)
+            else:
+                x.default_input = initializer(init, shape=shape, dtype=dtype)
 
         x.clone_info = copy(self.clone_info)
         _set_clone_info(self.clone_info, x.clone_info)
@@ -155,15 +172,78 @@ class Parameter:
     def data(self):
         return self.default_input
 
+    def __add__(self, other):
+        res = deepcopy(self)
+        res.default_input = res.default_input + other
+        return res
+
+    def __sub__(self, other):
+        res = deepcopy(self)
+        res.default_input = res.default_input - other
+        return res
+
+    def __mul__(self, other):
+        res = deepcopy(self)
+        default_input = res.default_input * other
+        res.default_input = Tensor(default_input.asnumpy().copy())
+        return res
+
+    def __truediv__(self, other):
+        res = deepcopy(self)
+        res.default_input = res.default_input / other
+        return res
+
     def set_parameter_data(self, data):
-        if isinstance(data, (Tensor, list, int, float,
-                             np.float16, np.float32, np.int32, np.int16, np.ndarray)) and not isinstance(data, bool):
-            if isinstance(data, Tensor):
-                # make a copy of Tensor to init the parameter
-                data = Tensor(data.asnumpy().copy())
-            self.default_input = data
+        """Set `default_input` of current `Parameter`."""
+        if isinstance(data, bool):
+            raise ValueError('Parameter data can not be `bool`')
+        if isinstance(data, Tensor):
+            # make a copy of Tensor to init the parameter
+            data = Tensor(data.asnumpy().copy())
+            data.init_flag = False
+        elif isinstance(data, Initializer):
+            self.init_mode = data
+            data = MetaTensor(self.init_mode.dtype, self.init_mode.shape)
+        elif isinstance(data, int):
+            data = Tensor(data, dtype=mstype.int32)
+        elif isinstance(data, float):
+            data = Tensor(data, dtype=mstype.float32)
         else:
-            raise ValueError("Parameter data must be tensor or number.")
+            data = Tensor(data)
+            data.init_flag = False
+
+        self.default_input = data
+
+
+    def init_data(self, layout=None, set_sliced=False):
+        """
+        Init data of the parameter.
+
+        Args:
+            layout (list[list[int]]): Parameter slice layout [dev_mat, tensor_map, slice_shape].
+
+                - dev_mat (list[int]): Device matrix.
+                - tensor_map (list[int]): Tensor map.
+                - slice_shape (list[int]): Shape of slice.
+            set_sliced (bool): True if should set parameter sliced after init the data of initializer.
+                Default: False.
+        """
+        if not isinstance(self.default_input, MetaTensor):
+            return
+        if layout is not None:
+            if not isinstance(layout, list):
+                raise TypeError("The layout should be list! layout is {}."
+                                .format(layout))
+            if len(layout) != 3:
+                raise ValueError("The length of layout must be 3! layout is {}."
+                                 .format(layout))
+            self.init_mode.shape = layout[2]
+            self.init_mode.seed = int(_get_seed(layout[0], layout[1]))
+
+        self.default_input = self.init_mode.to_tensor()
+        self.init_mode = None
+        if set_sliced:
+            self.sliced = True
 
 
 class ParameterTuple(tuple):

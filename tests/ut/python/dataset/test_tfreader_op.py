@@ -13,13 +13,12 @@
 # limitations under the License.
 # ==============================================================================
 import numpy as np
+import pytest
 from util import save_and_check
 
 import mindspore.common.dtype as mstype
 import mindspore.dataset as ds
 from mindspore import log as logger
-import pytest
-
 
 FILES = ["../data/dataset/testTFTestAllTypes/test.data"]
 DATASET_ROOT = "../data/dataset/testTFTestAllTypes/"
@@ -32,16 +31,46 @@ def test_case_tf_shape():
     ds1 = ds.TFRecordDataset(FILES, schema_file)
     ds1 = ds1.batch(2)
     for data in ds1.create_dict_iterator():
-        print(data)
+        logger.info(data)
     output_shape = ds1.output_shapes()
-    assert (len(output_shape[-1]) == 1)
+    assert len(output_shape[-1]) == 1
+
+
+def test_case_tf_read_all_dataset():
+    schema_file = "../data/dataset/testTFTestAllTypes/datasetSchemaNoRow.json"
+    ds1 = ds.TFRecordDataset(FILES, schema_file)
+    assert ds1.get_dataset_size() == 12
+    count = 0
+    for _ in ds1.create_tuple_iterator():
+        count += 1
+    assert count == 12
+
+
+def test_case_num_samples():
+    schema_file = "../data/dataset/testTFTestAllTypes/datasetSchema7Rows.json"
+    ds1 = ds.TFRecordDataset(FILES, schema_file, num_samples=8)
+    assert ds1.get_dataset_size() == 8
+    count = 0
+    for _ in ds1.create_dict_iterator():
+        count += 1
+    assert count == 8
+
+
+def test_case_num_samples2():
+    schema_file = "../data/dataset/testTFTestAllTypes/datasetSchema7Rows.json"
+    ds1 = ds.TFRecordDataset(FILES, schema_file)
+    assert ds1.get_dataset_size() == 7
+    count = 0
+    for _ in ds1.create_dict_iterator():
+        count += 1
+    assert count == 7
 
 
 def test_case_tf_shape_2():
     ds1 = ds.TFRecordDataset(FILES, SCHEMA_FILE)
     ds1 = ds1.batch(2)
     output_shape = ds1.output_shapes()
-    assert (len(output_shape[-1]) == 2)
+    assert len(output_shape[-1]) == 2
 
 
 def test_case_tf_file():
@@ -124,7 +153,7 @@ def test_tf_record_shuffle():
             assert np.array_equal(t1, t2)
 
 
-def skip_test_tf_record_shard():
+def test_tf_record_shard():
     tf_files = ["../data/dataset/tf_file_dataset/test1.data", "../data/dataset/tf_file_dataset/test2.data",
                 "../data/dataset/tf_file_dataset/test3.data", "../data/dataset/tf_file_dataset/test4.data"]
 
@@ -142,12 +171,14 @@ def skip_test_tf_record_shard():
     # 2. with enough epochs, both workers will get the entire dataset (e,g. ep1_wrkr1: f1&f3, ep2,_wrkr1 f2&f4)
     worker1_res = get_res(0, 16)
     worker2_res = get_res(1, 16)
+    # Confirm each worker gets 3x16=48 rows
+    assert len(worker1_res) == 48
+    assert len(worker1_res) == len(worker2_res)
     # check criteria 1
-    for i in range(len(worker1_res)):
-        assert (worker1_res[i] != worker2_res[i])
+    for i, _ in enumerate(worker1_res):
+        assert worker1_res[i] != worker2_res[i]
     # check criteria 2
-    assert (set(worker2_res) == set(worker1_res))
-    assert (len(set(worker2_res)) == 12)
+    assert set(worker2_res) == set(worker1_res)
 
 
 def test_tf_shard_equal_rows():
@@ -166,13 +197,16 @@ def test_tf_shard_equal_rows():
     worker2_res = get_res(3, 1, 2)
     worker3_res = get_res(3, 2, 2)
     # check criteria 1
-    for i in range(len(worker1_res)):
-        assert (worker1_res[i] != worker2_res[i])
-        assert (worker2_res[i] != worker3_res[i])
-    assert (len(worker1_res) == 28)
+    for i, _ in enumerate(worker1_res):
+        assert worker1_res[i] != worker2_res[i]
+        assert worker2_res[i] != worker3_res[i]
+    # Confirm each worker gets same number of rows
+    assert len(worker1_res) == 28
+    assert len(worker1_res) == len(worker2_res)
+    assert len(worker2_res) == len(worker3_res)
 
     worker4_res = get_res(1, 0, 1)
-    assert (len(worker4_res) == 40)
+    assert len(worker4_res) == 40
 
 
 def test_case_tf_file_no_schema_columns_list():
@@ -181,7 +215,7 @@ def test_case_tf_file_no_schema_columns_list():
     assert row["col_sint16"] == [-32768]
 
     with pytest.raises(KeyError) as info:
-        a = row["col_sint32"]
+        _ = row["col_sint32"]
     assert "col_sint32" in str(info.value)
 
 
@@ -200,15 +234,51 @@ def test_tf_record_schema_columns_list():
     assert row["col_sint16"] == [-32768]
 
     with pytest.raises(KeyError) as info:
-        a = row["col_sint32"]
+        _ = row["col_sint32"]
     assert "col_sint32" in str(info.value)
+
+
+def test_case_invalid_files():
+    valid_file = "../data/dataset/testTFTestAllTypes/test.data"
+    invalid_file = "../data/dataset/testTFTestAllTypes/invalidFile.txt"
+    files = [invalid_file, valid_file, SCHEMA_FILE]
+
+    data = ds.TFRecordDataset(files, SCHEMA_FILE, shuffle=ds.Shuffle.FILES)
+
+    with pytest.raises(RuntimeError) as info:
+        _ = data.create_dict_iterator().get_next()
+    assert "cannot be opened" in str(info.value)
+    assert "not valid tfrecord files" in str(info.value)
+    assert valid_file not in str(info.value)
+    assert invalid_file in str(info.value)
+    assert SCHEMA_FILE in str(info.value)
+
+    nonexistent_file = "this/file/does/not/exist"
+    files = [invalid_file, valid_file, SCHEMA_FILE, nonexistent_file]
+
+    with pytest.raises(ValueError) as info:
+        data = ds.TFRecordDataset(files, SCHEMA_FILE, shuffle=ds.Shuffle.FILES)
+    assert "did not match any files" in str(info.value)
+    assert valid_file not in str(info.value)
+    assert invalid_file not in str(info.value)
+    assert SCHEMA_FILE not in str(info.value)
+    assert nonexistent_file in str(info.value)
+
 
 if __name__ == '__main__':
     test_case_tf_shape()
+    test_case_tf_read_all_dataset()
+    test_case_num_samples()
+    test_case_num_samples2()
+    test_case_tf_shape_2()
     test_case_tf_file()
     test_case_tf_file_no_schema()
     test_case_tf_file_pad()
     test_tf_files()
     test_tf_record_schema()
     test_tf_record_shuffle()
+    test_tf_record_shard()
     test_tf_shard_equal_rows()
+    test_case_tf_file_no_schema_columns_list()
+    test_tf_record_schema_columns_list()
+    test_case_invalid_files()

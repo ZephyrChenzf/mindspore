@@ -15,19 +15,20 @@
 """test callback function."""
 import os
 import stat
+
 import numpy as np
 import pytest
 
-import mindspore.nn as nn
 import mindspore.common.dtype as mstype
-from mindspore import context
-from mindspore.common.tensor import Tensor
-from mindspore.nn.optim import Momentum
-from mindspore.nn import TrainOneStepCell, WithLossCell
-from mindspore.train.callback import ModelCheckpoint, _check_file_name_prefix, RunContext,_checkpoint_cb_for_save_op,\
-                                      LossMonitor, _InternalCallbackParam, _chg_ckpt_file_name_if_same_exist,\
-                                      _build_callbacks, CheckpointConfig, _set_cur_net
+import mindspore.nn as nn
 from mindspore.common.api import ms_function
+from mindspore.common.tensor import Tensor
+from mindspore.nn import TrainOneStepCell, WithLossCell
+from mindspore.nn.optim import Momentum
+from mindspore.train.callback import ModelCheckpoint, _check_file_name_prefix, RunContext, _checkpoint_cb_for_save_op, \
+    LossMonitor, _InternalCallbackParam, _chg_ckpt_file_name_if_same_exist, \
+    _build_callbacks, CheckpointConfig, _set_cur_net
+
 
 class Net(nn.Cell):
     """Net definition."""
@@ -52,6 +53,7 @@ class Net(nn.Cell):
 
 class LossNet(nn.Cell):
     """ LossNet definition """
+
     def __init__(self):
         super(LossNet, self).__init__()
         self.conv = nn.Conv2d(3, 64, 3, has_bias=False, weight_init='normal', pad_mode='valid')
@@ -72,7 +74,7 @@ class LossNet(nn.Cell):
         return out
 
 
-def test_Model_Checkpoint_prefix_invalid():
+def test_model_checkpoint_prefix_invalid():
     """Test ModelCheckpoint prefix invalid."""
     with pytest.raises(ValueError):
         ModelCheckpoint(123)
@@ -110,8 +112,8 @@ def test_save_checkpoint():
         os.remove('./test_files/test_ckpt-model.pkl')
 
 
-def test_loss_monitor_graph_model():
-    """Test lossmonitor Graph model."""
+def test_loss_monitor_sink_mode():
+    """Test loss monitor sink mode."""
     cb_params = _InternalCallbackParam()
     cb_params.cur_epoch_num = 4
     cb_params.cur_step_num = 2
@@ -129,8 +131,8 @@ def test_loss_monitor_graph_model():
     callbacklist.end(run_context)
 
 
-def test_Loss_Monitor_feed_feed_model():
-    """Test Loss Monitor feed feed mode."""
+def test_loss_monitor_normal_mode():
+    """Test loss monitor normal(non-sink) mode."""
     cb_params = _InternalCallbackParam()
     run_context = RunContext(cb_params)
     loss_cb = LossMonitor(1)
@@ -282,14 +284,14 @@ def test_build_callbacks():
 
     callbacks = [ck_obj, loss_cb_1, 'Error', None]
     with pytest.raises(TypeError):
-        callback_list = _build_callbacks(callbacks)
+        _ = _build_callbacks(callbacks)
 
 
 def test_RunContext():
     """Test RunContext."""
     context_err = 666
     with pytest.raises(TypeError):
-        context = RunContext(context_err)
+        _ = RunContext(context_err)
 
     cb_params = _InternalCallbackParam()
     cb_params.member1 = 1
@@ -308,10 +310,10 @@ def test_RunContext():
 def test_Checkpoint_Config():
     """Test CheckpointConfig all None or 0."""
     with pytest.raises(ValueError):
-        CheckpointConfig(0, 0, 0, 0)
+        CheckpointConfig(0, 0, 0, 0, True)
 
     with pytest.raises(ValueError):
-        CheckpointConfig(0, None, 0, 0)
+        CheckpointConfig(0, None, 0, 0, True)
 
 
 def test_step_end_save_graph():
@@ -336,9 +338,9 @@ def test_step_end_save_graph():
     ckpoint_cb.begin(run_context)
     # import pdb;pdb.set_trace()
     ckpoint_cb.step_end(run_context)
-    assert os.path.exists('./test_files/test-graph.meta') == True
+    assert os.path.exists('./test_files/test-graph.meta')
     if os.path.exists('./test_files/test-graph.meta'):
         os.chmod('./test_files/test-graph.meta', stat.S_IWRITE)
         os.remove('./test_files/test-graph.meta')
     ckpoint_cb.step_end(run_context)
-    assert os.path.exists('./test_files/test-graph.meta') == False
+    assert not os.path.exists('./test_files/test-graph.meta')

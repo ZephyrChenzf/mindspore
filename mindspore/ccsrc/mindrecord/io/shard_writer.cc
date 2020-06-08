@@ -40,6 +40,105 @@ ShardWriter::~ShardWriter() {
   }
 }
 
+MSRStatus ShardWriter::GetFullPathFromFileName(const std::vector<std::string> &paths) {
+  // Get full path from file name
+  for (const auto &path : paths) {
+    if (!CheckIsValidUtf8(path)) {
+      MS_LOG(ERROR) << "The filename contains invalid uft-8 data: " << path << ".";
+      return FAILED;
+    }
+    char resolved_path[PATH_MAX] = {0};
+    char buf[PATH_MAX] = {0};
+    if (strncpy_s(buf, PATH_MAX, common::SafeCStr(path), path.length()) != EOK) {
+      MS_LOG(ERROR) << "Secure func failed";
+      return FAILED;
+    }
+#if defined(_WIN32) || defined(_WIN64)
+    if (_fullpath(resolved_path, dirname(&(buf[0])), PATH_MAX) == nullptr) {
+      MS_LOG(ERROR) << "Invalid file path";
+      return FAILED;
+    }
+    if (_fullpath(resolved_path, common::SafeCStr(path), PATH_MAX) == nullptr) {
+      MS_LOG(DEBUG) << "Path " << resolved_path;
+    }
+#else
+    if (realpath(dirname(&(buf[0])), resolved_path) == nullptr) {
+      MS_LOG(ERROR) << "Invalid file path";
+      return FAILED;
+    }
+    if (realpath(common::SafeCStr(path), resolved_path) == nullptr) {
+      MS_LOG(DEBUG) << "Path " << resolved_path;
+    }
+#endif
+    file_paths_.emplace_back(string(resolved_path));
+  }
+  return SUCCESS;
+}
+
+MSRStatus ShardWriter::OpenDataFiles(bool append) {
+  // Open files
+  for (const auto &file : file_paths_) {
+    std::shared_ptr<std::fstream> fs = std::make_shared<std::fstream>();
+    if (!append) {
+      // if not append and mindrecord file exist, return FAILED
+      fs->open(common::SafeCStr(file), std::ios::in | std::ios::binary);
+      if (fs->good()) {
+        MS_LOG(ERROR) << "MindRecord file already existed.";
+        fs->close();
+        return FAILED;
+      }
+      fs->close();
+
+      // open the mindrecord file to write
+      fs->open(common::SafeCStr(file), std::ios::out | std::ios::in | std::ios::binary | std::ios::trunc);
+      if (!fs->good()) {
+        MS_LOG(ERROR) << "MindRecord file could not opened.";
+        return FAILED;
+      }
+    } else {
+      // open the mindrecord file to append
+      fs->open(common::SafeCStr(file), std::ios::out | std::ios::in | std::ios::binary);
+      if (!fs->good()) {
+        MS_LOG(ERROR) << "MindRecord file could not opened for append.";
+        return FAILED;
+      }
+    }
+    MS_LOG(INFO) << "Open shard file successfully.";
+    file_streams_.push_back(fs);
+  }
+  return SUCCESS;
+}
+
+MSRStatus ShardWriter::RemoveLockFile() {
+  // Remove temporary file
+  int ret = std::remove(pages_file_.c_str());
+  if (ret == 0) {
+    MS_LOG(DEBUG) << "Remove page file.";
+  }
+
+  ret = std::remove(lock_file_.c_str());
+  if (ret == 0) {
+    MS_LOG(DEBUG) << "Remove lock file.";
+  }
+  return SUCCESS;
+}
+
+MSRStatus ShardWriter::InitLockFile() {
+  if (file_paths_.size() == 0) {
+    MS_LOG(ERROR) << "File path not initialized.";
+    return FAILED;
+  }
+
+  lock_file_ = file_paths_[0] + kLockFileSuffix;
+  pages_file_ = file_paths_[0] + kPageFileSuffix;
+
+  if (RemoveLockFile() == FAILED) {
+    MS_LOG(ERROR) << "Remove file failed.";
+    return FAILED;
+  }
+  return SUCCESS;
+}
+
 MSRStatus ShardWriter::Open(const std::vector<std::string> &paths, bool append) {
   shard_count_ = paths.size();
   if (shard_count_ > kMaxShardCount || shard_count_ == 0) {
@@ -52,45 +151,21 @@ MSRStatus ShardWriter::Open(const std::vector<std::string> &paths, bool append) 
   }
 
   // Get full path from file name
-  for (const auto &path : paths) {
-    if (!CheckIsValidUtf8(path)) {
-      MS_LOG(ERROR) << "The filename contains invalid uft-8 data: " << path << ".";
-      return FAILED;
-    }
-    char resolved_path[PATH_MAX] = {0};
-    char buf[PATH_MAX] = {0};
-    if (strncpy_s(buf, PATH_MAX, common::SafeCStr(path), path.length()) != EOK) {
-      MS_LOG(ERROR) << "Securec func failed";
-      return FAILED;
-    }
-    if (realpath(dirname(&(buf[0])), resolved_path) == nullptr) {
-      MS_LOG(ERROR) << "Invalid file path";
-      return FAILED;
-    }
-    if (realpath(common::SafeCStr(path), resolved_path) == nullptr) {
-      MS_LOG(DEBUG) << "Path " << resolved_path;
-    }
-    file_paths_.emplace_back(string(resolved_path));
+  if (GetFullPathFromFileName(paths) == FAILED) {
+    MS_LOG(ERROR) << "Get full path from file name failed.";
+    return FAILED;
   }
 
   // Open files
-  for (const auto &file : file_paths_) {
-    std::shared_ptr<std::fstream> fs = std::make_shared<std::fstream>();
-    fs->open(common::SafeCStr(file), std::ios::in | std::ios::out | std::ios::binary);
-    if (fs->fail()) {
-      fs->open(common::SafeCStr(file), std::ios::in | std::ios::out | std::ios::trunc | std::ios::binary);
-      if (fs->fail()) {
-        MS_LOG(ERROR) << "File could not opened";
-        return FAILED;
-      }
-    } else {
-      if (!append) {
-        MS_LOG(ERROR) << "MindRecord file already existed";
-        return FAILED;
-      }
-    }
-    MS_LOG(INFO) << "Open shard file successfully.";
-    file_streams_.push_back(fs);
+  if (OpenDataFiles(append) == FAILED) {
+    MS_LOG(ERROR) << "Open data files failed.";
+    return FAILED;
+  }
+
+  // Init lock file
+  if (InitLockFile() == FAILED) {
+    MS_LOG(ERROR) << "Init lock file failed.";
+    return FAILED;
   }
   return SUCCESS;
 }
@@ -99,34 +174,65 @@ MSRStatus ShardWriter::OpenForAppend(const std::string &path) {
   if (!IsLegalFile(path)) {
     return FAILED;
   }
-  ShardHeader sh = ShardHeader();
-  if (sh.Build(path) == FAILED) {
+  auto ret1 = ShardHeader::BuildSingleHeader(path);
+  if (ret1.first != SUCCESS) {
     return FAILED;
   }
-  shard_header_ = std::make_shared<ShardHeader>(sh);
-  auto paths = shard_header_->get_shard_addresses();
-  MSRStatus ret = set_header_size(shard_header_->get_header_size());
+  auto json_header = ret1.second;
+  auto ret2 = GetParentDir(path);
+  if (SUCCESS != ret2.first) {
+    return FAILED;
+  }
+  std::vector<std::string> real_addresses;
+  for (const auto &path : json_header["shard_addresses"]) {
+    std::string abs_path = ret2.second + string(path);
+    real_addresses.emplace_back(abs_path);
+  }
+  ShardHeader header = ShardHeader();
+  if (header.BuildDataset(real_addresses) == FAILED) {
+    return FAILED;
+  }
+  shard_header_ = std::make_shared<ShardHeader>(header);
+  MSRStatus ret = SetHeaderSize(shard_header_->GetHeaderSize());
   if (ret == FAILED) {
     return FAILED;
   }
-  ret = set_page_size(shard_header_->get_page_size());
+  ret = SetPageSize(shard_header_->GetPageSize());
   if (ret == FAILED) {
     return FAILED;
   }
-  ret = Open(paths, true);
+  ret = Open(real_addresses, true);
   if (ret == FAILED) {
     MS_LOG(ERROR) << "Open file failed";
     return FAILED;
   }
+  shard_column_ = std::make_shared<ShardColumn>(shard_header_);
   return SUCCESS;
 }
 
 MSRStatus ShardWriter::Commit() {
+  // Read pages file
+  std::ifstream page_file(pages_file_.c_str());
+  if (page_file.good()) {
+    page_file.close();
+    if (shard_header_->FileToPages(pages_file_) == FAILED) {
+      MS_LOG(ERROR) << "Read pages from file failed";
+      return FAILED;
+    }
+  }
+
   if (WriteShardHeader() == FAILED) {
     MS_LOG(ERROR) << "Write metadata failed";
     return FAILED;
   }
   MS_LOG(INFO) << "Write metadata successfully.";
+
+  // Remove lock file
+  if (RemoveLockFile() == FAILED) {
+    MS_LOG(ERROR) << "Remove lock file failed.";
+    return FAILED;
+  }
+
   return SUCCESS;
 }
 
@@ -137,10 +243,10 @@ MSRStatus ShardWriter::SetShardHeader(std::shared_ptr<ShardHeader> header_data) 
   }
 
   // set fields in mindrecord when empty
-  std::vector<std::pair<uint64_t, std::string>> fields = header_data->get_fields();
+  std::vector<std::pair<uint64_t, std::string>> fields = header_data->GetFields();
   if (fields.empty()) {
     MS_LOG(DEBUG) << "Missing index fields by user, auto generate index fields.";
-    std::vector<std::shared_ptr<Schema>> schemas = header_data->get_schemas();
+    std::vector<std::shared_ptr<Schema>> schemas = header_data->GetSchemas();
     for (const auto &schema : schemas) {
       json jsonSchema = schema->GetSchema()["schema"];
       for (const auto &el : jsonSchema.items()) {
@@ -149,7 +255,7 @@ MSRStatus ShardWriter::SetShardHeader(std::shared_ptr<ShardHeader> header_data) 
             (el.value()["type"] == "int64" && el.value().find("shape") == el.value().end()) ||
             (el.value()["type"] == "float32" && el.value().find("shape") == el.value().end()) ||
             (el.value()["type"] == "float64" && el.value().find("shape") == el.value().end())) {
-          fields.emplace_back(std::make_pair(schema->get_schema_id(), el.key()));
+          fields.emplace_back(std::make_pair(schema->GetSchemaID(), el.key()));
         }
       }
     }
@@ -164,12 +270,13 @@ MSRStatus ShardWriter::SetShardHeader(std::shared_ptr<ShardHeader> header_data) 
   }
 
   shard_header_ = header_data;
-  shard_header_->set_header_size(header_size_);
-  shard_header_->set_page_size(page_size_);
+  shard_header_->SetHeaderSize(header_size_);
+  shard_header_->SetPageSize(page_size_);
+  shard_column_ = std::make_shared<ShardColumn>(shard_header_);
   return SUCCESS;
 }
 
-MSRStatus ShardWriter::set_header_size(const uint64_t &header_size) {
+MSRStatus ShardWriter::SetHeaderSize(const uint64_t &header_size) {
   // header_size [16KB, 128MB]
   if (header_size < kMinHeaderSize || header_size > kMaxHeaderSize) {
     MS_LOG(ERROR) << "Header size should between 16KB and 128MB.";
@@ -184,7 +291,7 @@ MSRStatus ShardWriter::set_header_size(const uint64_t &header_size) {
   return SUCCESS;
 }
 
-MSRStatus ShardWriter::set_page_size(const uint64_t &page_size) {
+MSRStatus ShardWriter::SetPageSize(const uint64_t &page_size) {
   // PageSize [32KB, 256MB]
   if (page_size < kMinPageSize || page_size > kMaxPageSize) {
     MS_LOG(ERROR) << "Page size should between 16KB and 256MB.";
@@ -306,7 +413,7 @@ MSRStatus ShardWriter::CheckData(const std::map<uint64_t, std::vector<json>> &ra
       return FAILED;
     }
     json schema = result.first->GetSchema()["schema"];
-    for (const auto &field : result.first->get_blob_fields()) {
+    for (const auto &field : result.first->GetBlobFields()) {
       (void)schema.erase(field);
     }
     std::vector<json> sub_raw_data = rawdata_iter->second;
@@ -364,7 +471,7 @@ std::tuple<MSRStatus, int, int> ShardWriter::ValidateRawData(std::map<uint64_t, 
   MS_LOG(DEBUG) << "Schema count is " << schema_count_;
 
   // Determine if the number of schemas is the same
-  if (shard_header_->get_schemas().size() != schema_count_) {
+  if (shard_header_->GetSchemas().size() != schema_count_) {
     MS_LOG(ERROR) << "Data size is not equal with the schema size";
     return failed;
   }
@@ -383,9 +490,9 @@ std::tuple<MSRStatus, int, int> ShardWriter::ValidateRawData(std::map<uint64_t, 
     }
     (void)schema_ids.insert(rawdata_iter->first);
   }
-  const std::vector<std::shared_ptr<Schema>> &schemas = shard_header_->get_schemas();
+  const std::vector<std::shared_ptr<Schema>> &schemas = shard_header_->GetSchemas();
   if (std::any_of(schemas.begin(), schemas.end(), [schema_ids](const std::shared_ptr<Schema> &schema) {
-        return schema_ids.find(schema->get_schema_id()) == schema_ids.end();
+        return schema_ids.find(schema->GetSchemaID()) == schema_ids.end();
       })) {
     // There is not enough data which is not matching the number of schema
     MS_LOG(ERROR) << "Input rawdata schema id do not match real schema id.";
@@ -434,13 +541,81 @@ void ShardWriter::FillArray(int start, int end, std::map<uint64_t, vector<json>>
   }
 }
 
-MSRStatus ShardWriter::WriteRawData(std::map<uint64_t, std::vector<json>> &raw_data,
-                                    std::vector<std::vector<uint8_t>> &blob_data, bool sign) {
+int ShardWriter::LockWriter(bool parallel_writer) {
+  if (!parallel_writer) {
+    return 0;
+  }
+
+#if defined(_WIN32) || defined(_WIN64)
+  MS_LOG(DEBUG) << "Lock file done by python.";
+  const int fd = 0;
+#else
+  const int fd = open(lock_file_.c_str(), O_WRONLY | O_CREAT, 0666);
+  if (fd >= 0) {
+    flock(fd, LOCK_EX);
+  } else {
+    MS_LOG(ERROR) << "Shard writer failed when locking file";
+    return -1;
+  }
+#endif
+
+  // Open files
+  file_streams_.clear();
+  for (const auto &file : file_paths_) {
+    std::shared_ptr<std::fstream> fs = std::make_shared<std::fstream>();
+    fs->open(common::SafeCStr(file), std::ios::in | std::ios::out | std::ios::binary);
+    if (fs->fail()) {
+      MS_LOG(ERROR) << "File could not opened";
+      return -1;
+    }
+    file_streams_.push_back(fs);
+  }
+
+  if (shard_header_->FileToPages(pages_file_) == FAILED) {
+    MS_LOG(ERROR) << "Read pages from file failed";
+    return -1;
+  }
+  return fd;
+}
+
+MSRStatus ShardWriter::UnlockWriter(int fd, bool parallel_writer) {
+  if (!parallel_writer) {
+    return SUCCESS;
+  }
+
+  if (shard_header_->PagesToFile(pages_file_) == FAILED) {
+    MS_LOG(ERROR) << "Write pages to file failed";
+    return FAILED;
+  }
+
+  for (int i = static_cast<int>(file_streams_.size()) - 1; i >= 0; i--) {
+    file_streams_[i]->close();
+  }
+
+#if defined(_WIN32) || defined(_WIN64)
+  MS_LOG(DEBUG) << "Unlock file done by python.";
+#else
+  flock(fd, LOCK_UN);
+  close(fd);
+#endif
+  return SUCCESS;
+}
+
+MSRStatus ShardWriter::WriteRawDataPreCheck(std::map<uint64_t, std::vector<json>> &raw_data,
+                                            std::vector<std::vector<uint8_t>> &blob_data, bool sign, int *schema_count,
+                                            int *row_count) {
   // check the free disk size
   auto st_space = GetDiskSize(file_paths_[0], kFreeSize);
   if (st_space.first != SUCCESS || st_space.second < kMinFreeDiskSize) {
     MS_LOG(ERROR) << "IO error / there is no free disk to be used";
     return FAILED;
+  }
+
+  // compress blob
+  if (shard_column_->CheckCompressBlob()) {
+    for (auto &blob : blob_data) {
+      blob = shard_column_->CompressBlob(blob);
+    }
   }
 
   // Add 4-bytes dummy blob data if no any blob fields
@@ -458,10 +633,29 @@ MSRStatus ShardWriter::WriteRawData(std::map<uint64_t, std::vector<json>> &raw_d
     MS_LOG(ERROR) << "Validate raw data failed";
     return FAILED;
   }
+  *schema_count = std::get<1>(v);
+  *row_count = std::get<2>(v);
+  return SUCCESS;
+}
+
+MSRStatus ShardWriter::WriteRawData(std::map<uint64_t, std::vector<json>> &raw_data,
+                                    std::vector<std::vector<uint8_t>> &blob_data, bool sign, bool parallel_writer) {
+  // Lock Writer if loading data parallel
+  int fd = LockWriter(parallel_writer);
+  if (fd < 0) {
+    MS_LOG(ERROR) << "Lock writer failed";
+    return FAILED;
+  }
 
   // Get the count of schemas and rows
-  int schema_count = std::get<1>(v);
-  int row_count = std::get<2>(v);
+  int schema_count = 0;
+  int row_count = 0;
+
+  // Serialize raw data
+  if (WriteRawDataPreCheck(raw_data, blob_data, sign, &schema_count, &row_count) == FAILED) {
+    MS_LOG(ERROR) << "Check raw data failed";
+    return FAILED;
+  }
 
   if (row_count == kInt0) {
     MS_LOG(INFO) << "Raw data size is 0.";
@@ -495,11 +689,17 @@ MSRStatus ShardWriter::WriteRawData(std::map<uint64_t, std::vector<json>> &raw_d
   }
   MS_LOG(INFO) << "Write " << bin_raw_data.size() << " records successfully.";
 
+  if (UnlockWriter(fd, parallel_writer) == FAILED) {
+    MS_LOG(ERROR) << "Unlock writer failed";
+    return FAILED;
+  }
+
   return SUCCESS;
 }
 
 MSRStatus ShardWriter::WriteRawData(std::map<uint64_t, std::vector<py::handle>> &raw_data,
-                                    std::map<uint64_t, std::vector<py::handle>> &blob_data, bool sign) {
+                                    std::map<uint64_t, std::vector<py::handle>> &blob_data, bool sign,
+                                    bool parallel_writer) {
   std::map<uint64_t, std::vector<json>> raw_data_json;
   std::map<uint64_t, std::vector<json>> blob_data_json;
 
@@ -533,11 +733,11 @@ MSRStatus ShardWriter::WriteRawData(std::map<uint64_t, std::vector<py::handle>> 
     MS_LOG(ERROR) << "Serialize raw data failed in write raw data";
     return FAILED;
   }
-  return WriteRawData(raw_data_json, bin_blob_data, sign);
+  return WriteRawData(raw_data_json, bin_blob_data, sign, parallel_writer);
 }
 
 MSRStatus ShardWriter::WriteRawData(std::map<uint64_t, std::vector<py::handle>> &raw_data,
-                                    vector<vector<uint8_t>> &blob_data, bool sign) {
+                                    vector<vector<uint8_t>> &blob_data, bool sign, bool parallel_writer) {
   std::map<uint64_t, std::vector<json>> raw_data_json;
   (void)std::transform(raw_data.begin(), raw_data.end(), std::inserter(raw_data_json, raw_data_json.end()),
                        [](const std::pair<uint64_t, std::vector<py::handle>> &pair) {
@@ -547,7 +747,7 @@ MSRStatus ShardWriter::WriteRawData(std::map<uint64_t, std::vector<py::handle>> 
                                               [](const py::handle &obj) { return nlohmann::detail::ToJsonImpl(obj); });
                          return std::make_pair(pair.first, std::move(json_raw_data));
                        });
-  return WriteRawData(raw_data_json, blob_data, sign);
+  return WriteRawData(raw_data_json, blob_data, sign, parallel_writer);
 }
 
 MSRStatus ShardWriter::ParallelWriteData(const std::vector<std::vector<uint8_t>> &blob_data,
@@ -633,10 +833,10 @@ MSRStatus ShardWriter::CutRowGroup(int start_row, int end_row, const std::vector
                                    std::vector<std::pair<int, int>> &rows_in_group,
                                    const std::shared_ptr<Page> &last_raw_page,
                                    const std::shared_ptr<Page> &last_blob_page) {
-  auto n_byte_blob = last_blob_page ? last_blob_page->get_page_size() : 0;
+  auto n_byte_blob = last_blob_page ? last_blob_page->GetPageSize() : 0;
 
-  auto last_raw_page_size = last_raw_page ? last_raw_page->get_page_size() : 0;
-  auto last_raw_offset = last_raw_page ? last_raw_page->get_last_row_group_id().second : 0;
+  auto last_raw_page_size = last_raw_page ? last_raw_page->GetPageSize() : 0;
+  auto last_raw_offset = last_raw_page ? last_raw_page->GetLastRowGroupID().second : 0;
   auto n_byte_raw = last_raw_page_size - last_raw_offset;
 
   int page_start_row = start_row;
@@ -672,8 +872,8 @@ MSRStatus ShardWriter::AppendBlobPage(const int &shard_id, const std::vector<std
   if (blob_row.first == blob_row.second) return SUCCESS;
 
   // Write disk
-  auto page_id = last_blob_page->get_page_id();
-  auto bytes_page = last_blob_page->get_page_size();
+  auto page_id = last_blob_page->GetPageID();
+  auto bytes_page = last_blob_page->GetPageSize();
   auto &io_seekp = file_streams_[shard_id]->seekp(page_size_ * page_id + header_size_ + bytes_page, std::ios::beg);
   if (!io_seekp.good() || io_seekp.fail() || io_seekp.bad()) {
     MS_LOG(ERROR) << "File seekp failed";
@@ -685,9 +885,9 @@ MSRStatus ShardWriter::AppendBlobPage(const int &shard_id, const std::vector<std
 
   // Update last blob page
   bytes_page += std::accumulate(blob_data_size_.begin() + blob_row.first, blob_data_size_.begin() + blob_row.second, 0);
-  last_blob_page->set_page_size(bytes_page);
-  uint64_t end_row = last_blob_page->get_end_row_id() + blob_row.second - blob_row.first;
-  last_blob_page->set_end_row_id(end_row);
+  last_blob_page->SetPageSize(bytes_page);
+  uint64_t end_row = last_blob_page->GetEndRowID() + blob_row.second - blob_row.first;
+  last_blob_page->SetEndRowID(end_row);
   (void)shard_header_->SetPage(last_blob_page);
   return SUCCESS;
 }
@@ -696,8 +896,8 @@ MSRStatus ShardWriter::NewBlobPage(const int &shard_id, const std::vector<std::v
                                    const std::vector<std::pair<int, int>> &rows_in_group,
                                    const std::shared_ptr<Page> &last_blob_page) {
   auto page_id = shard_header_->GetLastPageId(shard_id);
-  auto page_type_id = last_blob_page ? last_blob_page->get_page_type_id() : -1;
-  auto current_row = last_blob_page ? last_blob_page->get_end_row_id() : 0;
+  auto page_type_id = last_blob_page ? last_blob_page->GetPageTypeID() : -1;
+  auto current_row = last_blob_page ? last_blob_page->GetEndRowID() : 0;
   // index(0) indicate appendBlobPage
   for (uint32_t i = 1; i < rows_in_group.size(); ++i) {
     auto blob_row = rows_in_group[i];
@@ -728,15 +928,15 @@ MSRStatus ShardWriter::ShiftRawPage(const int &shard_id, const std::vector<std::
                                     std::shared_ptr<Page> &last_raw_page) {
   auto blob_row = rows_in_group[0];
   if (blob_row.first == blob_row.second) return SUCCESS;
-  auto last_raw_page_size = last_raw_page ? last_raw_page->get_page_size() : 0;
+  auto last_raw_page_size = last_raw_page ? last_raw_page->GetPageSize() : 0;
   if (std::accumulate(raw_data_size_.begin() + blob_row.first, raw_data_size_.begin() + blob_row.second, 0) +
         last_raw_page_size <=
       page_size_) {
     return SUCCESS;
   }
   auto page_id = shard_header_->GetLastPageId(shard_id);
-  auto last_row_group_id_offset = last_raw_page->get_last_row_group_id().second;
-  auto last_raw_page_id = last_raw_page->get_page_id();
+  auto last_row_group_id_offset = last_raw_page->GetLastRowGroupID().second;
+  auto last_raw_page_id = last_raw_page->GetPageID();
   auto shift_size = last_raw_page_size - last_row_group_id_offset;
 
   std::vector<uint8_t> buf(shift_size);
@@ -779,10 +979,10 @@ MSRStatus ShardWriter::ShiftRawPage(const int &shard_id, const std::vector<std::
   (void)shard_header_->SetPage(last_raw_page);
 
   // Refresh page info in header
-  int row_group_id = last_raw_page->get_last_row_group_id().first + 1;
+  int row_group_id = last_raw_page->GetLastRowGroupID().first + 1;
   std::vector<std::pair<int, uint64_t>> row_group_ids;
   row_group_ids.emplace_back(row_group_id, 0);
-  int page_type_id = last_raw_page->get_page_id();
+  int page_type_id = last_raw_page->GetPageID();
   auto page = Page(++page_id, shard_id, kPageTypeRaw, ++page_type_id, 0, 0, row_group_ids, shift_size);
   (void)shard_header_->AddPage(std::make_shared<Page>(page));
 
@@ -794,7 +994,7 @@ MSRStatus ShardWriter::ShiftRawPage(const int &shard_id, const std::vector<std::
 MSRStatus ShardWriter::WriteRawPage(const int &shard_id, const std::vector<std::pair<int, int>> &rows_in_group,
                                     std::shared_ptr<Page> &last_raw_page,
                                     const std::vector<std::vector<uint8_t>> &bin_raw_data) {
-  int last_row_group_id = last_raw_page ? last_raw_page->get_last_row_group_id().first : -1;
+  int last_row_group_id = last_raw_page ? last_raw_page->GetLastRowGroupID().first : -1;
   for (uint32_t i = 0; i < rows_in_group.size(); ++i) {
     const auto &blob_row = rows_in_group[i];
     if (blob_row.first == blob_row.second) continue;
@@ -802,7 +1002,7 @@ MSRStatus ShardWriter::WriteRawPage(const int &shard_id, const std::vector<std::
       std::accumulate(raw_data_size_.begin() + blob_row.first, raw_data_size_.begin() + blob_row.second, 0);
     if (!last_raw_page) {
       EmptyRawPage(shard_id, last_raw_page);
-    } else if (last_raw_page->get_page_size() + raw_size > page_size_) {
+    } else if (last_raw_page->GetPageSize() + raw_size > page_size_) {
       (void)shard_header_->SetPage(last_raw_page);
       EmptyRawPage(shard_id, last_raw_page);
     }
@@ -817,7 +1017,7 @@ MSRStatus ShardWriter::WriteRawPage(const int &shard_id, const std::vector<std::
 void ShardWriter::EmptyRawPage(const int &shard_id, std::shared_ptr<Page> &last_raw_page) {
   auto row_group_ids = std::vector<std::pair<int, uint64_t>>();
   auto page_id = shard_header_->GetLastPageId(shard_id);
-  auto page_type_id = last_raw_page ? last_raw_page->get_page_id() : -1;
+  auto page_type_id = last_raw_page ? last_raw_page->GetPageID() : -1;
   auto page = Page(++page_id, shard_id, kPageTypeRaw, ++page_type_id, 0, 0, row_group_ids, 0);
   (void)shard_header_->AddPage(std::make_shared<Page>(page));
   SetLastRawPage(shard_id, last_raw_page);
@@ -826,9 +1026,9 @@ void ShardWriter::EmptyRawPage(const int &shard_id, std::shared_ptr<Page> &last_
 MSRStatus ShardWriter::AppendRawPage(const int &shard_id, const std::vector<std::pair<int, int>> &rows_in_group,
                                      const int &chunk_id, int &last_row_group_id, std::shared_ptr<Page> last_raw_page,
                                      const std::vector<std::vector<uint8_t>> &bin_raw_data) {
-  std::vector<std::pair<int, uint64_t>> row_group_ids = last_raw_page->get_row_group_ids();
-  auto last_raw_page_id = last_raw_page->get_page_id();
-  auto n_bytes = last_raw_page->get_page_size();
+  std::vector<std::pair<int, uint64_t>> row_group_ids = last_raw_page->GetRowGroupIds();
+  auto last_raw_page_id = last_raw_page->GetPageID();
+  auto n_bytes = last_raw_page->GetPageSize();
 
   //  previous raw data page
   auto &io_seekp =
@@ -845,8 +1045,8 @@ MSRStatus ShardWriter::AppendRawPage(const int &shard_id, const std::vector<std:
   (void)FlushRawChunk(file_streams_[shard_id], rows_in_group, chunk_id, bin_raw_data);
 
   // Update previous raw data page
-  last_raw_page->set_page_size(n_bytes);
-  last_raw_page->set_row_group_ids(row_group_ids);
+  last_raw_page->SetPageSize(n_bytes);
+  last_raw_page->SetRowGroupIds(row_group_ids);
   (void)shard_header_->SetPage(last_raw_page);
 
   return SUCCESS;

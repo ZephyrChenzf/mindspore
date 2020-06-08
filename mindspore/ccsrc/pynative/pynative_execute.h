@@ -22,61 +22,93 @@
 #include <string>
 #include <memory>
 #include <unordered_map>
+#include <mutex>
+#include <stack>
 
 #include "pybind11/pybind11.h"
 
-#include "transform/convert.h"
-#include "transform/graph_runner.h"
-#include "transform/types.h"
+#include "pynative/base.h"
 #include "utils/context/ms_context.h"
+#include "ir/anf.h"
+#include "pipeline/resource.h"
+#include "operator/composite/composite.h"
 
 namespace mindspore {
 namespace pynative {
 
-using MeTensor = mindspore::tensor::Tensor;
-using MeTensorPtr = mindspore::tensor::TensorPtr;
-using GeTensor = ge::Tensor;
-using GeTensorPtr = std::shared_ptr<GeTensor>;
-using GeGraph = ge::Graph;
-using GeGraphPtr = std::shared_ptr<GeGraph>;
-using GeOperator = ge::Operator;
-using GeOperatorPtr = std::shared_ptr<GeOperator>;
-
 namespace py = pybind11;
+using ResourcePtr = std::shared_ptr<pipeline::Resource>;
+using GradOperationPtr = std::shared_ptr<prim::GradOperation>;
 
-enum PynativeStatusCode {
-  PYNATIVE_SUCCESS = 0,
-  PYNATIVE_OP_NOT_IMPLEMENTED_ERR = 1,
-  PYNATIVE_OP_INPUTS_ERR = 2,
-  PYNATIVE_OP_PARAMS_ERR = 3,
-  PYNATIVE_OP_ATTRS_ERR = 4,
-  PYNATIVE_GRAPH_MANAGER_ERR = 5,
-  PYNATIVE_GRAPH_GE_BUILD_ERR = 6,
-  PYNATIVE_GRAPH_GE_RUN_ERR = 7,
-  PYNATIVE_UNKNOWN_STATE = 0XFF
+py::object RunOpInVM(const OpExecInfoPtr &op_exec_info, PynativeStatusCode *status);
+
+py::tuple RunOp(const py::args &args);
+
+void ConvertInputs(const PrimitivePyPtr &prim, const py::list &py_args, py::tuple *out_args);
+
+void ClearPyNativeSession();
+
+struct GraphInfo {
+  std::unordered_map<std::string, AnfNodePtr> param_map;
+  std::unordered_map<std::string, std::pair<AnfNodePtr, int>> obj_node_map;
+  AnfNodePtr output;
+  std::vector<std::string> objects;
 };
 
-enum RunOpArgsEnum { PY_PRIM = 0, PY_NAME, PY_INPUTS, PY_INPUT_MASK, PY_ARGS_NUM };
+class PynativeExecutor : public std::enable_shared_from_this<PynativeExecutor> {
+ public:
+  static std::shared_ptr<PynativeExecutor> GetInstance() {
+    std::lock_guard<std::mutex> i_lock(instance_lock_);
+    if (executor_ == nullptr) {
+      executor_ = std::shared_ptr<PynativeExecutor>(new (std::nothrow) PynativeExecutor());
+      resource_ = std::make_shared<pipeline::Resource>();
+    }
+    return executor_;
+  }
+  void NewGraph(const py::object &cell, const py::args &args);
+  void EndGraph(const py::object &cell, const py::object &out, const py::args &args);
+  void GradNet(const GradOperationPtr &grad, const py::object &cell, const py::object &weights, const py::args &args);
+  void Clear();
+  void Clean();
+  bool grad_flag() { return grad_flag_; }
+  void set_grad_flag(bool flag) { grad_flag_ = flag; }
+  AnfNodePtr GetInput(const py::object &obj, const py::object &op_mask);
+  AnfNodePtr GetObjNode(const py::object &obj);
+  FuncGraphPtr curr_g() { return curr_g_; }
+  void set_pyobj(FuncGraphPtr g, const std::string obj) { graph_info_map_[g].objects.push_back(obj); }
+  void set_obj_node_map(FuncGraphPtr g, const std::string obj, AnfNodePtr node) {
+    graph_info_map_[g].obj_node_map[obj] = std::make_pair(node, -1);
+  }
+  void set_obj_node_map(FuncGraphPtr g, const std::string obj, AnfNodePtr node, int index) {
+    graph_info_map_[g].obj_node_map[obj] = std::make_pair(node, index);
+  }
+  AnfNodePtr MakeCNode(const py::args &args, const py::tuple &out);
+  py::object Run(const py::tuple &args, const py::object &phase);
 
-struct OpExecInfo {
-  PrimitivePyPtr py_primitive;
-  std::string op_name;
-  AbstractBasePtr abstract;
+  void Pushp();
+  void Popp();
+  FuncGraphPtr GradGraph(FuncGraphPtr g, const GradOperationPtr &grad_op, const std::vector<AnfNodePtr> &weights,
+                         size_t arg_size);
 
-  py::tuple op_inputs;
-  py::tuple inputs_mask;
-  py::dict op_attrs;
+  ~PynativeExecutor();
+
+ private:
+  PynativeExecutor();
+  static std::shared_ptr<PynativeExecutor> executor_;
+  static std::mutex instance_lock_;
+  static ResourcePtr resource_;
+  bool grad_flag_;
+  std::unordered_map<std::string, FuncGraphPtr> graph_map_;
+  std::unordered_map<std::string, FuncGraphPtr> cell_graph_map_;
+  std::unordered_map<FuncGraphPtr, GraphInfo> graph_info_map_;
+  std::stack<FuncGraphPtr> graph_p_;
+  FuncGraphPtr top_g_;
+  FuncGraphPtr df_builder_;
+  FuncGraphPtr curr_g_;
 };
-using OpExecInfoPtr = std::shared_ptr<OpExecInfo>;
-OpExecInfoPtr GenerateOpExecInfo(const py::args& args);
-bool BuildSingleOpGraph(const OpExecInfoPtr& op_exec_info, const std::vector<GeTensorPtr>& inputs,
-                        const std::unordered_map<std::string, ValuePtr>& attrs, const GeGraphPtr& graph);
 
-py::object RunOpInGE(const OpExecInfoPtr& op_exec_info, PynativeStatusCode* status);
+using PynativeExecutorPtr = std::shared_ptr<PynativeExecutor>;
 
-py::object RunOpInVM(const OpExecInfoPtr& op_exec_info, PynativeStatusCode* status);
-
-py::tuple RunOp(const py::args& args);
 }  // namespace pynative
 }  // namespace mindspore
 

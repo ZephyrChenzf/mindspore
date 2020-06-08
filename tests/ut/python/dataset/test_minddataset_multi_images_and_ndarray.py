@@ -15,26 +15,26 @@
 """
 This is the test module for mindrecord
 """
-import numpy as np
 import os
+import numpy as np
 
 import mindspore.dataset as ds
 from mindspore import log as logger
-
 from mindspore.mindrecord import FileWriter
 
 FILES_NUM = 1
 CV_FILE_NAME = "./complex.mindrecord"
 
+
 def test_cv_minddataset_reader_multi_image_and_ndarray_tutorial():
     writer = FileWriter(CV_FILE_NAME, FILES_NUM)
-    cv_schema_json={"id": {"type": "int32"},
-                    "image_0": {"type": "bytes"},
-                    "image_2": {"type": "bytes"},
-                    "image_3": {"type": "bytes"},
-                    "image_4": {"type": "bytes"},
-                    "input_mask": {"type": "int32", "shape": [-1]},
-                    "segments": {"type": "float32", "shape": [2, 3]}}
+    cv_schema_json = {"id": {"type": "int32"},
+                      "image_0": {"type": "bytes"},
+                      "image_2": {"type": "bytes"},
+                      "image_3": {"type": "bytes"},
+                      "image_4": {"type": "bytes"},
+                      "input_mask": {"type": "int32", "shape": [-1]},
+                      "segments": {"type": "float32", "shape": [2, 3]}}
     writer.add_schema(cv_schema_json, "two_images_schema")
     with open("../data/mindrecord/testImageNetData/images/image_00010.jpg", "rb") as file_reader:
         img_data = file_reader.read()
@@ -50,7 +50,7 @@ def test_cv_minddataset_reader_multi_image_and_ndarray_tutorial():
     assert os.path.exists(CV_FILE_NAME)
     assert os.path.exists(CV_FILE_NAME + ".db")
 
-    """tutorial for minderdataset."""
+    # tutorial for minderdataset.
     columns_list = ["id", "image_0", "image_2", "image_3", "image_4", "input_mask", "segments"]
     num_readers = 1
     data_set = ds.MindDataset(CV_FILE_NAME, columns_list, num_readers)
@@ -67,7 +67,7 @@ def test_cv_minddataset_reader_multi_image_and_ndarray_tutorial():
         assert item["image_3"].dtype == np.uint8
         assert item["image_4"].dtype == np.uint8
         assert item["id"].dtype == np.int32
-        assert item["input_mask"].shape == (5, )
+        assert item["input_mask"].shape == (5,)
         assert item["input_mask"].dtype == np.int32
         assert item["segments"].shape == (2, 3)
         assert item["segments"].dtype == np.float32

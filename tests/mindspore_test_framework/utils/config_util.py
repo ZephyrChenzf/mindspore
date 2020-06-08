@@ -20,6 +20,7 @@ import numpy as np
 from . import keyword
 from .other_util import select_from_config_tuple
 
+
 def get_input_config(d):
     """
     Get input config.
@@ -37,6 +38,7 @@ def get_input_config(d):
         dtype = ext_config.get(keyword.dtype, np.float32)
         scale = ext_config.get(keyword.scale, 1)
     return s, dtype, scale
+
 
 def get_expect_config(d):
     """
@@ -66,6 +68,7 @@ def get_expect_config(d):
         absolute_tolerance = ext_config.get(keyword.absolute_tolerance, 0.0)
     return s, dtype, scale, max_error, check_tolerance, relative_tolerance, absolute_tolerance
 
+
 def get_function_config(function):
     """
     Get input config.
@@ -87,8 +90,10 @@ def get_function_config(function):
     init_param_with = function.get(keyword.init_param_with, None)
     split_outputs = function.get(keyword.split_outputs, True)
     exception = function.get(keyword.exception, Exception)
+    error_keywords = function.get(keyword.error_keywords, None)
     return delta, max_error, input_selector, output_selector, sampling_times, \
-           reduce_output, init_param_with, split_outputs, exception
+           reduce_output, init_param_with, split_outputs, exception, error_keywords
+
 
 def get_grad_checking_options(function, inputs):
     """
@@ -104,6 +109,6 @@ def get_grad_checking_options(function, inputs):
     """
     f = function[keyword.block]
     args = inputs[keyword.desc_inputs]
-    delta, max_error, input_selector, output_selector, sampling_times, reduce_output, _, _, _ = \
+    delta, max_error, input_selector, output_selector, sampling_times, reduce_output, _, _, _, _ = \
         get_function_config(function)
     return f, args, delta, max_error, input_selector, output_selector, sampling_times, reduce_output

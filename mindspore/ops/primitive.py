@@ -88,6 +88,8 @@ class Primitive(Primitive_):
         for name in self.attrs:
             value = self.attrs[name]
             cloned.add_prim_attr(name, value)
+        if hasattr(self, 'instance_name'):
+            cloned.set_prim_instance_name(self.instance_name)
         return cloned
 
     def add_prim_attr(self, name, value):
@@ -109,6 +111,7 @@ class Primitive(Primitive_):
 
         Note:
             Valid only in semi auto parallel or auto parallel mode.
+            In other parallel modes, strategies will be ignored if set.
 
         Args:
             strategy (tuple): Strategy describes the distributed parallel mode of the current primitive.
@@ -307,6 +310,7 @@ def constexpr(fn=None, get_instance=True, name=None):
             def __init__(self):
                 op_name = name if name else fn.__name__
                 PrimitiveWithInfer.__init__(self, op_name)
+                self.const_value = True
 
             def infer_value(self, *args):
                 return fn(*args)
@@ -325,11 +329,9 @@ def _run_op(obj, op_name, args):
     op_inputs = []
     for i, arg in enumerate(args):
         if hasattr(arg, '__parameter__'):
-            op_inputs.append(arg.default_input)
             op_mask[i] = 1
-        else:
-            op_inputs.append(arg)
-    output = real_run_op(obj, op_name, tuple(op_inputs), tuple(op_mask))
+        op_inputs.append(arg)
+    output = real_run_op(obj, op_name, args, tuple(op_mask))
     if not output:
         raise RuntimeError("Pynative run op %s failed!" % op_name)
     if len(output) == 1:

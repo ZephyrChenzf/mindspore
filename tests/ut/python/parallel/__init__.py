@@ -13,11 +13,22 @@
 # limitations under the License.
 
 import mindspore.context as context
+from mindspore.parallel._auto_parallel_context import auto_parallel_context
+from mindspore.parallel._cost_model_context import reset_cost_model_context
+from mindspore.parallel._utils import _reset_op_id
+from mindspore.parallel.algo_parameter_config import reset_algo_parameters
 
 
-def setup_module(module):
-    context.set_context(mode=context.GRAPH_MODE)
+def setup_module():
+    auto_parallel_context().set_enable_all_reduce_fusion(enable_all_reduce_fusion=True)
+    context.set_context(mode=context.GRAPH_MODE, device_target="Ascend", save_graphs=False)
+    reset_cost_model_context()
+    reset_algo_parameters()
+    _reset_op_id()
 
 
 def teardown_module():
     context.reset_auto_parallel_context()
+    reset_cost_model_context()
+    reset_algo_parameters()
+    _reset_op_id()

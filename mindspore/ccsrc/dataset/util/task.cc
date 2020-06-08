@@ -24,10 +24,13 @@ namespace dataset {
 thread_local Task *gMyTask = nullptr;
 
 void Task::operator()() {
+#if !defined(_WIN32) && !defined(_WIN64)
   gMyTask = this;
+#endif
+  id_ = this_thread::get_id();
   std::stringstream ss;
-  ss << this_thread::get_id();
-  MS_LOG(INFO) << my_name_ << " Thread ID " << ss.str() << " Started.";
+  ss << id_;
+  MS_LOG(DEBUG) << my_name_ << " Thread ID " << ss.str() << " Started.";
   try {
     // Previously there is a timing hole where the thread is spawn but hit error immediately before we can set
     // the TaskGroup pointer and register. We move the registration logic to here (after we spawn) so we can
@@ -66,12 +69,12 @@ void Task::ShutdownGroup() {  // Wake up watch dog and shutdown the engine.
       vg->rc_ = rc_;
       rcLock.unlock();
       TaskManager::InterruptMaster(rc_);
-      TaskManager::InterruptGroup(*gMyTask);
+      TaskManager::InterruptGroup(*this);
     }
   }
 }
 
-Status Task::GetTaskErrorIfAny() {
+Status Task::GetTaskErrorIfAny() const {
   std::lock_guard<std::mutex> lk(mux_);
   if (caught_severe_exception_) {
     return rc_;
@@ -97,8 +100,7 @@ Status Task::Run() {
   Status rc;
   if (running_ == false) {
     try {
-      thrd_ = std::thread(std::ref(*this));
-      id_ = thrd_.get_id();
+      thrd_ = std::async(std::launch::async, std::ref(*this));
       running_ = true;
       caught_severe_exception_ = false;
     } catch (const std::exception &e) {
@@ -108,18 +110,34 @@ Status Task::Run() {
   return rc;
 }
 
-Status Task::Join() {
+Status Task::Join(WaitFlag blocking) {
   if (running_) {
+    RETURN_UNEXPECTED_IF_NULL(MyTaskGroup());
+    auto interrupt_svc = MyTaskGroup()->GetIntrpService();
     try {
-      thrd_.join();
+      if (blocking == WaitFlag::kBlocking) {
+        // If we are asked to wait, then wait
+        thrd_.get();
+      } else if (blocking == WaitFlag::kNonBlocking) {
+        // There is a race condition in the global resource tracking such that a thread can miss the
+        // interrupt and becomes blocked on a conditional variable forever. As a result, calling
+        // join() will not come back. We need some timeout version of join such that if the thread
+        // doesn't come back in a reasonable of time, we will send the interrupt again.
+        while (thrd_.wait_for(std::chrono::seconds(1)) != std::future_status::ready) {
+          // We can't tell which conditional_variable this thread is waiting on. So we may need
+          // to interrupt everything one more time.
+          MS_LOG(INFO) << "Some threads not responding. Interrupt again";
+          interrupt_svc->InterruptAll();
+        }
+      } else {
+        RETURN_STATUS_UNEXPECTED("Unknown WaitFlag");
+      }
       std::stringstream ss;
       ss << get_id();
-      MS_LOG(INFO) << MyName() << " Thread ID " << ss.str() << " Stopped.";
+      MS_LOG(DEBUG) << MyName() << " Thread ID " << ss.str() << " Stopped.";
       running_ = false;
       RETURN_IF_NOT_OK(wp_.Deregister());
-      if (MyTaskGroup()) {
-        RETURN_IF_NOT_OK(MyTaskGroup()->GetIntrpService()->Deregister(ss.str()));
-      }
+      RETURN_IF_NOT_OK(interrupt_svc->Deregister(ss.str()));
     } catch (const std::exception &e) {
       RETURN_STATUS_UNEXPECTED(e.what());
     }
@@ -132,5 +150,13 @@ TaskGroup *Task::MyTaskGroup() { return task_group_; }
 void Task::set_task_group(TaskGroup *vg) { task_group_ = vg; }
 
 Task::~Task() { task_group_ = nullptr; }
+Status Task::OverrideInterruptRc(const Status &rc) {
+  if (rc.IsInterrupted() && this_thread::is_master_thread()) {
+    // If we are interrupted, override the return value if this is the master thread.
+    // Master thread is being interrupted mostly because of some thread is reporting error.
+    return TaskManager::GetMasterThreadRc();
+  }
+  return rc;
+}
 }  // namespace dataset
 }  // namespace mindspore

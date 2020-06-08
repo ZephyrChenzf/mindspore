@@ -19,23 +19,22 @@
 
 #include <cstdint>
 #include <string>
-#include <vector>
 #include <utility>
+#include <vector>
 
+#include "parallel/device_matrix.h"
 #include "parallel/status.h"
 #include "parallel/tensor_layout/tensor_layout.h"
-#include "parallel/device_matrix.h"
 
 namespace mindspore {
 namespace parallel {
-
 using Shapes = std::vector<Shape>;
 
 class TensorInfo {
  public:
-  TensorInfo(const TensorLayout& tensor_layout, Shape shape, Shape slice_shape)
+  TensorInfo(const TensorLayout &tensor_layout, Shape shape, Shape slice_shape)
       : tensor_layout_(tensor_layout), shape_(std::move(shape)), slice_shape_(std::move(slice_shape)) {}
-  explicit TensorInfo(const TensorLayout& tensor_layout) : tensor_layout_(tensor_layout) {
+  explicit TensorInfo(const TensorLayout &tensor_layout) : tensor_layout_(tensor_layout) {
     shape_ = tensor_layout.tensor_shape().array();
     slice_shape_ = tensor_layout.slice_shape().array();
   }
@@ -45,8 +44,19 @@ class TensorInfo {
   TensorLayout tensor_layout() const { return tensor_layout_; }
   Shape slice_shape() const { return slice_shape_; }
   Shape shape() const { return shape_; }
-  void set_reduce_dim(const std::vector<int32_t>& dim) { reduce_dim_ = dim; }
+  void set_reduce_dim(const std::vector<int32_t> &dim) { reduce_dim_ = dim; }
   std::vector<int32_t> reduce_dim() const { return reduce_dim_; }
+  Dimensions InferStrategy() const {
+    Dimensions stra;
+    for (size_t i = 0; i < shape_.size(); ++i) {
+      if ((slice_shape_[i] == 0) || (shape_[i] % slice_shape_[i] != 0)) {
+        return stra;
+      }
+      int32_t dim = (int32_t)(shape_[i] / slice_shape_[i]);
+      stra.push_back(dim);
+    }
+    return stra;
+  }
 
  private:
   TensorLayout tensor_layout_;
@@ -55,7 +65,6 @@ class TensorInfo {
   // reduce method's reduce dim
   std::vector<int32_t> reduce_dim_;
 };
-
 }  // namespace parallel
 }  // namespace mindspore
 

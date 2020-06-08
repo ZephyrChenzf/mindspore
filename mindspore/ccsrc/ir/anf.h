@@ -52,6 +52,7 @@ class AbstractBase;
 }  // namespace abstract
 using BaseShapePtr = std::shared_ptr<abstract::BaseShape>;
 using AbstractBasePtr = std::shared_ptr<abstract::AbstractBase>;
+using AbstractBasePtrList = std::vector<AbstractBasePtr>;
 
 class ValueNode;
 using ValueNodePtr = std::shared_ptr<ValueNode>;
@@ -78,12 +79,19 @@ using KernelInfoDevicePtr = std::shared_ptr<KernelInfoDevice>;
 
 class AnfVisitor;
 
+class ParamValue {
+ public:
+  ParamValue() = default;
+  virtual ~ParamValue() = default;
+};
+using ParamValuePtr = std::shared_ptr<ParamValue>;
+
 // AnfNode is the basic class of the IR definition derived from Base.
 // Only two types of nodes are derived: CNode and ANode.
 // Methods:
 // func_graph: return FuncGraph that this AnfNode belongs to.
 // scope: return the scope namespace of this AnfNode. Set it using set_scope.
-// abstract: return the cached inferred abstract value. It cantains type, shape
+// abstract: return the cached inferred abstract value. It contains type, shape
 // value. Set New cache using set_abstract.
 // intermediate_abstract: return the cached inferring abstract value.
 // Type/Shape: return the related info of this AnfNode. When this AnfNode is an
@@ -155,6 +163,7 @@ class AnfNode : public Base {
     os << node.ToString();
     return os;
   }
+  size_t seen_{0};
 
  protected:
   // Hold a weak ref to Graph as Graph also hold ref to AnfNode.
@@ -238,11 +247,11 @@ class ANode : public AnfNode {
 
 // Parameter represents the parameter inputs of a function. They have no value.
 // Attributes:
-// default_param_: used to hold the inputting tensor of the model.
+// default_param_value_: used to hold the inputting tensor of the model.
 class Parameter : public ANode {
  public:
   explicit Parameter(const FuncGraphPtr &func_graph)
-      : ANode(func_graph), name_(""), has_default_(false), default_param_(py::none()), tensor_layout_(nullptr) {}
+      : ANode(func_graph), name_(""), has_default_(false), default_param_(nullptr), tensor_layout_(nullptr) {}
   ~Parameter() override = default;
   MS_DECLARE_PARENT(Parameter, ANode);
 
@@ -253,12 +262,11 @@ class Parameter : public ANode {
   std::string fullname_with_scope() override { return name(); };
 
   bool has_default() const { return has_default_; }
-
-  py::object default_param() { return default_param_; }
-  void set_default_param(const py::object &obj) {
-    default_param_ = obj;
+  void set_default_param(ParamValuePtr param) {
+    default_param_ = param;
     has_default_ = true;
   }
+  ParamValuePtr default_param() const { return default_param_; }
 
   std::shared_ptr<parallel::TensorLayout> tensor_layout() const { return tensor_layout_; }
   void set_tensor_layout(const std::shared_ptr<parallel::TensorLayout> &tensor_layout) {
@@ -279,12 +287,12 @@ class Parameter : public ANode {
  private:
   std::string name_;
   bool has_default_;
-  py::object default_param_;
+  ParamValuePtr default_param_;
   std::shared_ptr<parallel::TensorLayout> tensor_layout_;
 };
 using ParameterPtr = std::shared_ptr<Parameter>;
 
-// Value is used to represent the atomic expression metioned in BNF.
+// Value is used to represent the atomic expression mentioned in BNF.
 // It mainly be stored in ValueNode. Value and ValueNode is related definition.
 class Value : public Base {
  public:
@@ -313,7 +321,7 @@ using ValuePtr = std::shared_ptr<Value>;
 using ValuePtrList = std::vector<ValuePtr>;
 
 // ValueNode is used to hold value. Unlike CNode and Parameter, ValueNode
-// do not belong to any particular function graph.
+// does not belong to any particular function graph.
 class ValueNode : public ANode {
  public:
   explicit ValueNode(const ValuePtr &value) : value_(value) {}
@@ -384,6 +392,8 @@ static S GetValue(const ValuePtr &value) {
   return v;
 }
 
+std::string GetCNodeFuncName(CNodePtr cnode);
+
 // used to check whether an AnfNode is a cnode with a kind of Primitive as first input
 bool IsPrimitiveCNode(const AnfNodePtr &node, const PrimitivePtr &value);
 
@@ -427,6 +437,9 @@ inline S GetValueNode(const AnfNodePtr &node) {
   auto s = value->cast<S>();
   return s;
 }
+
+size_t NewSeenGeneration();
+
 namespace id_generator {
 std::string get_id(const AnfNodePtr &node);
 void reset_id();

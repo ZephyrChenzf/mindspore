@@ -127,9 +127,12 @@ def serialize_operations(node_repr, key, val):
 
 def serialize_sampler(node_repr, val):
     """Serialize sampler object to dictionary."""
-    node_repr['sampler'] = val.__dict__
-    node_repr['sampler']['sampler_module'] = type(val).__module__
-    node_repr['sampler']['sampler_name'] = type(val).__name__
+    if val is None:
+        node_repr['sampler'] = None
+    else:
+        node_repr['sampler'] = val.__dict__
+        node_repr['sampler']['sampler_module'] = type(val).__module__
+        node_repr['sampler']['sampler_name'] = type(val).__name__
 
 
 def traverse(node):
@@ -157,6 +160,20 @@ def traverse(node):
             expand_path(node_repr, k, v)
         else:
             node_repr[k] = v
+
+    # If a sampler exists in this node, then the following 4 arguments must be set to None:
+    #    num_samples, shard_id, num_shards, shuffle
+    # These arguments get moved into the sampler itself, so they are no longer needed to
+    # be set at the dataset level.
+    if 'sampler' in node_args.keys():
+        if 'num_samples' in node_repr.keys():
+            node_repr['num_samples'] = None
+        if 'shuffle' in node_repr.keys():
+            node_repr['shuffle'] = None
+        if 'num_shards' in node_repr.keys():
+            node_repr['num_shards'] = None
+        if 'shard_id' in node_repr.keys():
+            node_repr['shard_id'] = None
 
     # Leaf node doesn't have input attribute.
     if not node.input:
@@ -227,11 +244,7 @@ def create_node(node):
     pyobj = None
     # Find a matching Dataset class and call the constructor with the corresponding args.
     # When a new Dataset class is introduced, another if clause and parsing code needs to be added.
-    if dataset_op == 'StorageDataset':
-        pyobj = pyclass(node['dataset_files'], node['schema'], node.get('distribution'),
-                        node.get('columns_list'), node.get('num_parallel_workers'))
-
-    elif dataset_op == 'ImageFolderDatasetV2':
+    if dataset_op == 'ImageFolderDatasetV2':
         sampler = construct_sampler(node.get('sampler'))
         pyobj = pyclass(node['dataset_dir'], node.get('num_samples'), node.get('num_parallel_workers'),
                         node.get('shuffle'), sampler, node.get('extensions'),
@@ -253,9 +266,10 @@ def create_node(node):
                         node.get('shuffle'), sampler, node.get('num_shards'), node.get('shard_id'))
 
     elif dataset_op == 'MindDataset':
-        pyobj = pyclass(node['dataset_file'], node.get('column_list'),
+        sampler = construct_sampler(node.get('sampler'))
+        pyobj = pyclass(node['dataset_file'], node.get('columns_list'),
                         node.get('num_parallel_workers'), node.get('seed'), node.get('num_shards'),
-                        node.get('shard_id'), node.get('block_reader'))
+                        node.get('shard_id'), node.get('block_reader'), sampler)
 
     elif dataset_op == 'TFRecordDataset':
         pyobj = pyclass(node['dataset_files'], node.get('schema'), node.get('column_list'),
@@ -281,8 +295,9 @@ def create_node(node):
 
     elif dataset_op == 'VOCDataset':
         sampler = construct_sampler(node.get('sampler'))
-        pyobj = pyclass(node['dataset_dir'], node.get('num_samples'), node.get('num_parallel_workers'),
-                        node.get('shuffle'), node.get('decode'), sampler, node.get('distribution'))
+        pyobj = pyclass(node['dataset_dir'], node.get('task'), node.get('mode'), node.get('class_indexing'),
+                        node.get('num_samples'), node.get('num_parallel_workers'), node.get('shuffle'),
+                        node.get('decode'), sampler, node.get('num_shards'), node.get('shard_id'))
 
     elif dataset_op == 'CelebADataset':
         sampler = construct_sampler(node.get('sampler'))
@@ -296,6 +311,12 @@ def create_node(node):
 
     elif dataset_op == 'RepeatDataset':
         pyobj = de.Dataset().repeat(node.get('count'))
+
+    elif dataset_op == 'SkipDataset':
+        pyobj = de.Dataset().skip(node.get('count'))
+
+    elif dataset_op == 'TakeDataset':
+        pyobj = de.Dataset().take(node.get('count'))
 
     elif dataset_op == 'MapDataset':
         tensor_ops = construct_tensor_ops(node.get('operations'))
@@ -324,6 +345,10 @@ def create_node(node):
         # Create ZipDataset instance, giving dummy input dataset that will be overrided in the caller.
         pyobj = de.ZipDataset((de.Dataset(), de.Dataset()))
 
+    elif dataset_op == 'ConcatDataset':
+        # Create ConcatDataset instance, giving dummy input dataset that will be overrided in the caller.
+        pyobj = de.ConcatDataset((de.Dataset(), de.Dataset()))
+
     elif dataset_op == 'RenameDataset':
         pyobj = de.Dataset().rename(node['input_columns'], node['output_columns'])
 
@@ -341,24 +366,25 @@ def create_node(node):
 
 def construct_sampler(in_sampler):
     """Instantiate Sampler object based on the information from dictionary['sampler']"""
-    sampler_name = in_sampler['sampler_name']
-    sampler_module = in_sampler['sampler_module']
-    sampler_class = getattr(sys.modules[sampler_module], sampler_name)
     sampler = None
-    if sampler_name == 'DistributedSampler':
-        sampler = sampler_class(in_sampler['num_shards'], in_sampler['shard_id'], in_sampler.get('shuffle'))
-    elif sampler_name == 'PKSampler':
-        sampler = sampler_class(in_sampler['num_val'], in_sampler.get('num_class'), in_sampler('shuffle'))
-    elif sampler_name == 'RandomSampler':
-        sampler = sampler_class(in_sampler.get('replacement'), in_sampler.get('num_samples'))
-    elif sampler_name == 'SequentialSampler':
-        sampler = sampler_class()
-    elif sampler_name == 'SubsetRandomSampler':
-        sampler = sampler_class(in_sampler['indices'])
-    elif sampler_name == 'WeightedRandomSampler':
-        sampler = sampler_class(in_sampler['weights'], in_sampler['num_samples'], in_sampler.get('replacement'))
-    else:
-        raise ValueError("Sampler type is unknown: " + sampler_name)
+    if in_sampler is not None:
+        sampler_name = in_sampler['sampler_name']
+        sampler_module = in_sampler['sampler_module']
+        sampler_class = getattr(sys.modules[sampler_module], sampler_name)
+        if sampler_name == 'DistributedSampler':
+            sampler = sampler_class(in_sampler['num_shards'], in_sampler['shard_id'], in_sampler.get('shuffle'))
+        elif sampler_name == 'PKSampler':
+            sampler = sampler_class(in_sampler['num_val'], in_sampler.get('num_class'), in_sampler('shuffle'))
+        elif sampler_name == 'RandomSampler':
+            sampler = sampler_class(in_sampler.get('replacement'), in_sampler.get('num_samples'))
+        elif sampler_name == 'SequentialSampler':
+            sampler = sampler_class()
+        elif sampler_name == 'SubsetRandomSampler':
+            sampler = sampler_class(in_sampler['indices'])
+        elif sampler_name == 'WeightedRandomSampler':
+            sampler = sampler_class(in_sampler['weights'], in_sampler['num_samples'], in_sampler.get('replacement'))
+        else:
+            raise ValueError("Sampler type is unknown: " + sampler_name)
 
     return sampler
 

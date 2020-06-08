@@ -13,15 +13,16 @@
 # limitations under the License.
 # ============================================================================
 
-import pytest
 import numpy as np
-from mindspore import Tensor
-from mindspore.ops import operations as P
-import mindspore.nn as nn
+import pytest
+
 import mindspore.context as context
-from mindspore.ops.composite import GradOperation
+import mindspore.nn as nn
+from mindspore import Tensor
 from mindspore.common.parameter import ParameterTuple
 from mindspore.ops import composite as C
+from mindspore.ops import operations as P
+from mindspore.ops.composite import GradOperation
 
 
 class BiasAdd(nn.Cell):
@@ -67,8 +68,8 @@ class GradData(nn.Cell):
         self.grad = GradOperation(name="get_all", get_all=True, sens_param=True)
         self.network = network
 
-    def construct(self, input, output_grad):
-        return self.grad(self.network)(input, output_grad)
+    def construct(self, inputs, output_grad):
+        return self.grad(self.network)(inputs, output_grad)
 
 
 class GradWeight(nn.Cell):
@@ -171,8 +172,8 @@ class Grad(nn.Cell):
         self.grad = GradOperation(name="get_all", get_all=True, sens_param=True)
         self.network = network
 
-    def construct(self, input, bias, dy):
-        return self.grad(self.network)(input, bias, dy)
+    def construct(self, input_, bias, dy):
+        return self.grad(self.network)(input_, bias, dy)
 
 
 @pytest.mark.level0

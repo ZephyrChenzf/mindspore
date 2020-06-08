@@ -16,6 +16,7 @@
 resnet50 example
 """
 import numpy as np
+
 import mindspore.nn as nn
 from mindspore import Tensor
 from mindspore.ops import operations as P
@@ -189,7 +190,7 @@ class ResNet50(nn.Cell):
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, weight_init=weight_conv)
         self.bn1 = bn_with_initialize(64)
         self.relu = nn.ReLU()
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2)
 
         self.layer1 = MakeLayer3(
             block, in_channels=64, out_channels=256, stride=1)

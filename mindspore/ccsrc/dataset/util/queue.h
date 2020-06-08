@@ -110,7 +110,7 @@ class Queue {
       empty_cv_.NotifyAll();
       _lock.unlock();
     } else {
-      (void)empty_cv_.Interrupt();
+      empty_cv_.Interrupt();
     }
     return rc;
   }
@@ -125,7 +125,7 @@ class Queue {
       empty_cv_.NotifyAll();
       _lock.unlock();
     } else {
-      (void)empty_cv_.Interrupt();
+      empty_cv_.Interrupt();
     }
     return rc;
   }
@@ -141,7 +141,7 @@ class Queue {
       empty_cv_.NotifyAll();
       _lock.unlock();
     } else {
-      (void)empty_cv_.Interrupt();
+      empty_cv_.Interrupt();
     }
     return rc;
   }
@@ -160,7 +160,7 @@ class Queue {
       full_cv_.NotifyAll();
       _lock.unlock();
     } else {
-      (void)full_cv_.Interrupt();
+      full_cv_.Interrupt();
     }
     return rc;
   }
@@ -212,7 +212,7 @@ class QueueList {
   void Init(int num_queues, int capacity) {
     queue_list_.reserve(num_queues);
     for (int i = 0; i < num_queues; i++) {
-      queue_list_.emplace_back(mindspore::make_unique<Queue<T>>(capacity));
+      queue_list_.emplace_back(std::make_unique<Queue<T>>(capacity));
     }
   }
 
@@ -229,6 +229,8 @@ class QueueList {
   int size() const { return queue_list_.size(); }
 
   std::unique_ptr<Queue<T>> &operator[](const int index) { return queue_list_[index]; }
+
+  const std::unique_ptr<Queue<T>> &operator[](const int index) const { return queue_list_[index]; }
 
   ~QueueList() = default;
 

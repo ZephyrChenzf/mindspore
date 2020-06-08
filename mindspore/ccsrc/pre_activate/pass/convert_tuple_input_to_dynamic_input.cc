@@ -19,6 +19,7 @@
 #include <memory>
 
 #include "session/anf_runtime_algorithm.h"
+#include "pre_activate/common/helper.h"
 #include "session/kernel_graph.h"
 
 namespace mindspore {
@@ -40,13 +41,7 @@ void ConvertTupleOuputToPlantInputs(const FuncGraphPtr &graph, const AnfNodePtr 
     convert_inputs = kernel_graph->SplitTupleValueNodeToNodeList(value_node);
   } else {
     for (size_t index = 0; index < output_size; ++index) {
-      auto idx = NewValueNode(SizeToInt(index));
-      MS_EXCEPTION_IF_NULL(idx);
-      auto imm = std::make_shared<Int32Imm>(SizeToInt(index));
-      auto abstract_scalar = std::make_shared<abstract::AbstractScalar>(imm);
-      idx->set_abstract(abstract_scalar);
-      auto tuple_get_item =
-        graph->NewCNode(std::vector<AnfNodePtr>{NewValueNode(prim::kPrimTupleGetItem), input_node, idx});
+      auto tuple_get_item = CreatTupleGetItemNode(graph, input_node, index);
       AnfAlgo::SetOutputInferTypeAndShape({AnfAlgo::GetOutputInferDataType(input_node, index)},
                                           {AnfAlgo::GetOutputInferShape(input_node, index)}, tuple_get_item.get());
       convert_inputs.emplace_back(tuple_get_item);
@@ -74,7 +69,7 @@ CNodePtr ConvertMakeTupleInputToPlantInputs(const FuncGraphPtr &graph, const CNo
       MS_EXCEPTION_IF_NULL(cnode);
       auto inputs = cnode->inputs();
       (void)std::copy(inputs.begin() + 1, inputs.end(), std::back_inserter(plant_inputs));
-    } else if (AnfAlgo::IsTupleOutput(input_node)) {
+    } else if (input_node->Type() != nullptr && AnfAlgo::IsTupleOutput(input_node)) {
       ConvertTupleOuputToPlantInputs(graph, input_node, &plant_inputs, &dyn_input_sizes);
     } else {
       dyn_input_sizes.push_back(-1);

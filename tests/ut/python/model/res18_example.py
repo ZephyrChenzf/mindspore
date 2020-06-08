@@ -17,10 +17,10 @@ resnet50 example
 """
 import numpy as np
 
-from mindspore.common.api import _executor
+import mindspore.nn as nn  # pylint: disable=C0414
 from mindspore import Tensor
+from mindspore.common.api import _executor
 from mindspore.ops.operations import TensorAdd
-import mindspore.nn as nn # pylint: disable=C0414
 from ...train_step_wrap import train_step_with_loss_warp
 
 
@@ -106,7 +106,7 @@ class ResNet18(nn.Cell):
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, pad_mode='pad')
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU()
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1, pad_mode='pad')
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, pad_mode='same')
 
         self.layer1 = self.MakeLayer(
             block, 2, in_channels=64, out_channels=256, stride=1)
@@ -175,7 +175,7 @@ class ResNet9(nn.Cell):
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU()
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2)
 
         self.layer1 = self.MakeLayer(
             block, 1, in_channels=64, out_channels=256, stride=1)

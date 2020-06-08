@@ -18,6 +18,7 @@
 #define MINDRECORD_INCLUDE_SHARD_WRITER_H_
 
 #include <libgen.h>
+#include <sys/file.h>
 #include <unistd.h>
 #include <algorithm>
 #include <array>
@@ -35,6 +36,7 @@
 #include <utility>
 #include <vector>
 #include "mindrecord/include/common/shard_utils.h"
+#include "mindrecord/include/shard_column.h"
 #include "mindrecord/include/shard_error.h"
 #include "mindrecord/include/shard_header.h"
 #include "mindrecord/include/shard_index.h"
@@ -68,12 +70,12 @@ class ShardWriter {
   /// \brief Set file size
   /// \param[in] header_size the size of header, only (1<<N) is accepted
   /// \return MSRStatus the status of MSRStatus
-  MSRStatus set_header_size(const uint64_t &header_size);
+  MSRStatus SetHeaderSize(const uint64_t &header_size);
 
   /// \brief Set page size
   /// \param[in] page_size the size of page, only (1<<N) is accepted
   /// \return MSRStatus the status of MSRStatus
-  MSRStatus set_page_size(const uint64_t &page_size);
+  MSRStatus SetPageSize(const uint64_t &page_size);
 
   /// \brief Set shard header
   /// \param[in] header_data the info of header
@@ -87,7 +89,7 @@ class ShardWriter {
   /// \param[in] sign validate data or not
   /// \return MSRStatus the status of MSRStatus to judge if write successfully
   MSRStatus WriteRawData(std::map<uint64_t, std::vector<json>> &raw_data, vector<vector<uint8_t>> &blob_data,
-                         bool sign = true);
+                         bool sign = true, bool parallel_writer = false);
 
   /// \brief write raw data by group size for call from python
   /// \param[in] raw_data the vector of raw json data, python-handle format
@@ -95,7 +97,7 @@ class ShardWriter {
   /// \param[in] sign validate data or not
   /// \return MSRStatus the status of MSRStatus to judge if write successfully
   MSRStatus WriteRawData(std::map<uint64_t, std::vector<py::handle>> &raw_data, vector<vector<uint8_t>> &blob_data,
-                         bool sign = true);
+                         bool sign = true, bool parallel_writer = false);
 
   /// \brief write raw data by group size for call from python
   /// \param[in] raw_data the vector of raw json data, python-handle format
@@ -103,7 +105,8 @@ class ShardWriter {
   /// \param[in] sign validate data or not
   /// \return MSRStatus the status of MSRStatus to judge if write successfully
   MSRStatus WriteRawData(std::map<uint64_t, std::vector<py::handle>> &raw_data,
-                         std::map<uint64_t, std::vector<py::handle>> &blob_data, bool sign = true);
+                         std::map<uint64_t, std::vector<py::handle>> &blob_data, bool sign = true,
+                         bool parallel_writer = false);
 
  private:
   /// \brief write shard header data to disk
@@ -201,7 +204,34 @@ class ShardWriter {
   MSRStatus CheckDataTypeAndValue(const std::string &key, const json &value, const json &data, const int &i,
                                   std::map<int, std::string> &err_raw_data);
 
+  /// \brief Lock writer and save pages info
+  int LockWriter(bool parallel_writer = false);
+
+  /// \brief Unlock writer and save pages info
+  MSRStatus UnlockWriter(int fd, bool parallel_writer = false);
+
+  /// \brief Check raw data before writing
+  MSRStatus WriteRawDataPreCheck(std::map<uint64_t, std::vector<json>> &raw_data, vector<vector<uint8_t>> &blob_data,
+                                 bool sign, int *schema_count, int *row_count);
+
+  /// \brief Get full path from file name
+  MSRStatus GetFullPathFromFileName(const std::vector<std::string> &paths);
+
+  /// \brief Open files
+  MSRStatus OpenDataFiles(bool append);
+
+  /// \brief Remove lock file
+  MSRStatus RemoveLockFile();
+
+  /// \brief Remove lock file
+  MSRStatus InitLockFile();
+
  private:
+  const std::string kLockFileSuffix = "_Locker";
+  const std::string kPageFileSuffix = "_Pages";
+  std::string lock_file_;   // lock file for parallel run
+  std::string pages_file_;  // temporary file of pages info for parallel run
+
   int shard_count_;        // number of files
   uint64_t header_size_;   // header size
   uint64_t page_size_;     // page size
@@ -211,9 +241,10 @@ class ShardWriter {
   std::vector<uint64_t> raw_data_size_;   // Raw data size
   std::vector<uint64_t> blob_data_size_;  // Blob data size
 
-  std::vector<string> file_paths_;                           // file paths
+  std::vector<std::string> file_paths_;                      // file paths
   std::vector<std::shared_ptr<std::fstream>> file_streams_;  // file handles
-  std::shared_ptr<ShardHeader> shard_header_;                // shard headers
+  std::shared_ptr<ShardHeader> shard_header_;                // shard header
+  std::shared_ptr<ShardColumn> shard_column_;                // shard columns
 
   std::map<uint64_t, std::map<int, std::string>> err_mg_;  // used for storing error raw_data info
 

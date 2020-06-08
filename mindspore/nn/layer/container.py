@@ -15,9 +15,9 @@
 """container"""
 from collections import OrderedDict
 from abc import abstractmethod, ABCMeta
-
 from ..cell import Cell
 
+__all__ = ['SequentialCell', 'CellList']
 
 def _valid_index(cell_num, index):
     if not isinstance(index, int):
@@ -86,7 +86,7 @@ class SequentialCell(Cell):
         >>> relu = nn.ReLU()
         >>> seq = nn.SequentialCell([conv, bn, relu])
         >>>
-        >>> x = mindspore.Tensor(np.random.random((1, 3, 4, 4)), dtype=mindspore.float32)
+        >>> x = Tensor(np.random.random((1, 3, 4, 4)), dtype=mindspore.float32)
         >>> seq(x)
         [[[[0.02531557 0.        ]
            [0.04933941 0.04880078]]
@@ -105,6 +105,9 @@ class SequentialCell(Cell):
                     self.insert_child_to_cell(name, cell)
             else:
                 raise TypeError('Cells must be list or orderedDict')
+        else:
+            for index, cell in enumerate(args):
+                self.insert_child_to_cell(str(index), cell)
         self.cell_list = list(self._cells.values())
 
     def __getitem__(self, index):
@@ -138,7 +141,6 @@ class SequentialCell(Cell):
         return len(self._cells)
 
     def construct(self, input_data):
-        """Processes the input with the defined sequence of Cells."""
         for cell in self.cell_list:
             input_data = cell(input_data)
         return input_data
@@ -148,8 +150,9 @@ class CellList(_CellListBase, Cell):
     """
     Holds Cells in a list.
 
-    CellList can be indexed like a regular Python list, but cells it
-    contains are properly registered, and will be visible by all Cell methods.
+    CellList can be used like a regular Python list, support
+    '__getitem__', '__setitem__', '__delitem__', '__len__', '__iter__' and '__iadd__',
+    but cells it contains are properly registered, and will be visible by all Cell methods.
 
     Args:
         args (list, optional): List of subclass of Cell.
@@ -161,7 +164,7 @@ class CellList(_CellListBase, Cell):
         >>> cell_ls = nn.CellList([bn])
         >>> cell_ls.insert(0, conv)
         >>> cell_ls.append(relu)
-        >>> x = mindspore.Tensor(np.random.random((1, 3, 4, 4)), dtype=mindspore.float32)
+        >>> x = Tensor(np.random.random((1, 3, 4, 4)), dtype=mindspore.float32)
         >>> # not same as nn.SequentialCell, `cell_ls(x)` is not correct
         >>> cell_ls
         CellList< (0): Conv2d<input_channels=100, ..., bias_init=None>

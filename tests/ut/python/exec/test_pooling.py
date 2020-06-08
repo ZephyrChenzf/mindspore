@@ -15,20 +15,18 @@
 """
 test pooling api
 """
-import numpy as np
 import mindspore.nn as nn
-from mindspore import Tensor
+
 
 class MaxNet(nn.Cell):
     """MaxNet definition"""
+
     def __init__(self,
                  kernel_size,
-                 stride=None,
-                 padding=0):
+                 stride=None):
         super(MaxNet, self).__init__()
         self.maxpool = nn.MaxPool2d(kernel_size,
-                                    stride,
-                                    padding=padding)
+                                    stride)
 
     def construct(self, input_x):
         return self.maxpool(input_x)

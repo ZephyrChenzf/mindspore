@@ -21,7 +21,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include "utils/any.h"
 #include "ir/anf.h"
 
 namespace mindspore {
@@ -29,7 +28,7 @@ namespace label_manage {
 enum class TraceLabelType { kShortSymbol, kFullName, kWithUniqueId };
 TraceLabelType GetGlobalTraceLabelType();
 void SetGlobalTraceLabelType(TraceLabelType label_type);
-std::string Label(const DebugInfoPtr& debug_info, TraceLabelType trace_type = TraceLabelType::kShortSymbol);
+std::string Label(const DebugInfoPtr &debug_info, TraceLabelType trace_type = TraceLabelType::kShortSymbol);
 }  // namespace label_manage
 }  // namespace mindspore
 

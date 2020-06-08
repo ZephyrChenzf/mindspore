@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2020 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@
 
 #include "transform/types.h"
 #include "transform/util.h"
-#include "ir/meta_tensor.h"
+#include "ir/tensor.h"
 #include "transform/df_graph_manager.h"
 
 namespace mindspore {
@@ -46,16 +46,16 @@ struct RunOptions {
 
 class GraphRunner {
  public:
-  explicit GraphRunner(const GraphRunnerOptions& options);
+  explicit GraphRunner(const GraphRunnerOptions &options);
   ~GraphRunner() { sess_ = nullptr; }
-  Status RunGraph(const RunOptions& options, const std::vector<MeTensorPtr>& inputs, std::vector<MeTensorPtr>* outputs);
-  Status RunGraph(const RunOptions& options, const std::vector<GeTensorPtr>& inputs, std::vector<GeTensorPtr>* outputs);
-  static std::shared_ptr<ge::Session> NewSession(const SessionOptions& sess_options);
+  Status RunGraph(const RunOptions &options, const std::vector<MeTensorPtr> &inputs, std::vector<MeTensorPtr> *outputs);
+  Status RunGraph(const RunOptions &options, const std::vector<GeTensorPtr> &inputs, std::vector<GeTensorPtr> *outputs);
+  static std::shared_ptr<ge::Session> NewSession(const SessionOptions &sess_options);
 
  private:
   std::shared_ptr<ge::Session> sess_;
   transform::GraphRunnerOptions options_;
-  DfGraphManager& graph_manager_;
+  DfGraphManager &graph_manager_;
 };
 }  // namespace transform
 }  // namespace mindspore

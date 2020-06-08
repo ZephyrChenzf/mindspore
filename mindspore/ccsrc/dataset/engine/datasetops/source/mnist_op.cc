@@ -16,7 +16,7 @@
 #include "dataset/engine/datasetops/source/mnist_op.h"
 
 #include <fstream>
-
+#include <iomanip>
 #include "common/utils.h"
 #include "dataset/core/config_manager.h"
 #include "dataset/core/tensor_shape.h"
@@ -31,7 +31,7 @@ const int32_t kMnistLabelFileMagicNumber = 2049;
 const int32_t kMnistImageRows = 28;
 const int32_t kMnistImageCols = 28;
 
-MnistOp::Builder::Builder() : builder_num_samples_(0), builder_sampler_(nullptr) {
+MnistOp::Builder::Builder() : builder_sampler_(nullptr) {
   std::shared_ptr<ConfigManager> cfg = GlobalContext::config_manager();
   builder_num_workers_ = cfg->num_parallel_workers();
   builder_rows_per_buffer_ = cfg->rows_per_buffer();
@@ -41,17 +41,18 @@ MnistOp::Builder::Builder() : builder_num_samples_(0), builder_sampler_(nullptr)
 Status MnistOp::Builder::Build(std::shared_ptr<MnistOp> *ptr) {
   RETURN_IF_NOT_OK(SanityCheck());
   if (builder_sampler_ == nullptr) {
-    builder_sampler_ = std::make_shared<SequentialSampler>();
+    int64_t num_samples = 0;
+    int64_t start_index = 0;
+    builder_sampler_ = std::make_shared<SequentialSampler>(start_index, num_samples);
   }
-  builder_schema_ = make_unique<DataSchema>();
+  builder_schema_ = std::make_unique<DataSchema>();
   RETURN_IF_NOT_OK(
     builder_schema_->AddColumn(ColDescriptor("image", DataType(DataType::DE_UINT8), TensorImpl::kCv, 1)));
   TensorShape scalar = TensorShape::CreateScalar();
   RETURN_IF_NOT_OK(builder_schema_->AddColumn(
     ColDescriptor("label", DataType(DataType::DE_UINT32), TensorImpl::kFlexible, 0, &scalar)));
-  *ptr =
-    std::make_shared<MnistOp>(builder_num_workers_, builder_rows_per_buffer_, builder_dir_, builder_op_connector_size_,
-                              builder_num_samples_, std::move(builder_schema_), std::move(builder_sampler_));
+  *ptr = std::make_shared<MnistOp>(builder_num_workers_, builder_rows_per_buffer_, builder_dir_,
+                                   builder_op_connector_size_, std::move(builder_schema_), std::move(builder_sampler_));
   return Status::OK();
 }
 
@@ -60,36 +61,33 @@ Status MnistOp::Builder::SanityCheck() {
   std::string err_msg;
   err_msg += dir.IsDirectory() == false ? "MNIST path is invalid or not set\n" : "";
   err_msg += builder_num_workers_ <= 0 ? "Number of parallel workers is set to 0 or negative\n" : "";
-  err_msg += builder_num_samples_ < 0 ? "Number of samples is set to negative\n" : "";
   return err_msg.empty() ? Status::OK() : Status(StatusCode::kUnexpectedError, __LINE__, __FILE__, err_msg);
 }
 
 MnistOp::MnistOp(int32_t num_workers, int32_t rows_per_buffer, std::string folder_path, int32_t queue_size,
-                 int64_t num_samples, std::unique_ptr<DataSchema> data_schema, std::shared_ptr<Sampler> sampler)
+                 std::unique_ptr<DataSchema> data_schema, std::shared_ptr<Sampler> sampler)
     : ParallelOp(num_workers, queue_size),
       buf_cnt_(0),
       row_cnt_(0),
-      num_rows_(0),
-      num_samples_(num_samples),
       folder_path_(folder_path),
       rows_per_buffer_(rows_per_buffer),
       sampler_(std::move(sampler)),
       data_schema_(std::move(data_schema)) {
+  // set the column name map (base class field)
   for (int32_t i = 0; i < data_schema_->NumColumns(); ++i) {
-    col_name_map_[data_schema_->column(i).name()] = i;
+    column_name_id_map_[data_schema_->column(i).name()] = i;
   }
   io_block_queues_.Init(num_workers, queue_size);
 }
 
 Status MnistOp::TraversalSampleIds(const std::shared_ptr<Tensor> &sample_ids, std::vector<int64_t> *keys) {
   for (auto itr = sample_ids->begin<int64_t>(); itr != sample_ids->end<int64_t>(); ++itr) {
-    if ((*itr) >= num_rows_) continue;    // index out of bound, skipping
-    if (row_cnt_ >= num_samples_) break;  // enough row read, break for loop
+    if ((*itr) >= num_rows_) continue;  // index out of bound, skipping
     keys->push_back(*itr);
     row_cnt_++;
     if (row_cnt_ % rows_per_buffer_ == 0) {
       RETURN_IF_NOT_OK(io_block_queues_[buf_cnt_++ % num_workers_]->Add(
-        make_unique<IOBlock>(IOBlock(*keys, IOBlock::kDeIoBlockNone))));
+        std::make_unique<IOBlock>(IOBlock(*keys, IOBlock::kDeIoBlockNone))));
       keys->clear();
     }
   }
@@ -115,21 +113,21 @@ Status MnistOp::operator()() {
     }
     if (keys.empty() == false) {
       RETURN_IF_NOT_OK(io_block_queues_[(buf_cnt_++) % num_workers_]->Add(
-        make_unique<IOBlock>(IOBlock(keys, IOBlock::kDeIoBlockNone))));
+        std::make_unique<IOBlock>(IOBlock(keys, IOBlock::kDeIoBlockNone))));
     }
     if (!BitTest(op_ctrl_flags_, kDeOpRepeated) || BitTest(op_ctrl_flags_, kDeOpLastRepeat)) {
       RETURN_IF_NOT_OK(
-        io_block_queues_[(buf_cnt_++) % num_workers_]->Add(make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEoe)));
+        io_block_queues_[(buf_cnt_++) % num_workers_]->Add(std::make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEoe)));
       RETURN_IF_NOT_OK(
-        io_block_queues_[(buf_cnt_++) % num_workers_]->Add(make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEof)));
+        io_block_queues_[(buf_cnt_++) % num_workers_]->Add(std::make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEof)));
       for (int32_t i = 0; i < num_workers_; ++i) {
         RETURN_IF_NOT_OK(
-          io_block_queues_[i]->Add(make_unique<IOBlock>(std::vector<int64_t>(), IOBlock::kDeIoBlockNone)));
+          io_block_queues_[i]->Add(std::make_unique<IOBlock>(std::vector<int64_t>(), IOBlock::kDeIoBlockNone)));
       }
       return Status::OK();
     } else {
       RETURN_IF_NOT_OK(
-        io_block_queues_[(buf_cnt_++) % num_workers_]->Add(make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEoe)));
+        io_block_queues_[(buf_cnt_++) % num_workers_]->Add(std::make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEoe)));
       RETURN_IF_NOT_OK(wp_.Wait());  // Master thread goes to sleep after it has made all the IOBlocks
       wp_.Clear();
       RETURN_IF_NOT_OK(sampler_->GetNextBuffer(&sampler_buffer));
@@ -145,15 +143,15 @@ Status MnistOp::WorkerEntry(int32_t worker_id) {
   RETURN_IF_NOT_OK(io_block_queues_[worker_id]->PopFront(&iOBlock));
   while (iOBlock != nullptr) {
     if (iOBlock->eoe() == true) {
-      RETURN_IF_NOT_OK(out_connector_->Add(worker_id, make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOE)));
+      RETURN_IF_NOT_OK(out_connector_->Add(worker_id, std::make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOE)));
       buffer_id = worker_id;
     } else if (iOBlock->eof() == true) {
-      RETURN_IF_NOT_OK(out_connector_->Add(worker_id, make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOF)));
+      RETURN_IF_NOT_OK(out_connector_->Add(worker_id, std::make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOF)));
     } else {
       std::vector<int64_t> keys;
       RETURN_IF_NOT_OK(iOBlock->GetKeys(&keys));
       if (keys.empty() == true) return Status::OK();  // empty key is a quit signal for workers
-      std::unique_ptr<DataBuffer> db = make_unique<DataBuffer>(buffer_id, DataBuffer::kDeBFlagNone);
+      std::unique_ptr<DataBuffer> db = std::make_unique<DataBuffer>(buffer_id, DataBuffer::kDeBFlagNone);
       RETURN_IF_NOT_OK(LoadBuffer(keys, &db));
       RETURN_IF_NOT_OK(out_connector_->Add(worker_id, std::move(db)));
       buffer_id += num_workers_;
@@ -169,7 +167,7 @@ Status MnistOp::LoadTensorRow(const MnistLabelPair &mnist_pair, TensorRow *trow)
   int32_t l = mnist_pair.second;
   // make a copy of cached tensor
   RETURN_IF_NOT_OK(Tensor::CreateTensor(&image, data_schema_->column(0).tensorImpl(), mnist_pair.first->shape(),
-                                        mnist_pair.first->type(), mnist_pair.first->StartAddr()));
+                                        mnist_pair.first->type(), mnist_pair.first->GetMutableBuffer()));
   RETURN_IF_NOT_OK(Tensor::CreateTensor(&label, data_schema_->column(1).tensorImpl(), data_schema_->column(1).shape(),
                                         data_schema_->column(1).type(), reinterpret_cast<unsigned char *>(&l)));
   (*trow) = {std::move(image), std::move(label)};
@@ -178,21 +176,30 @@ Status MnistOp::LoadTensorRow(const MnistLabelPair &mnist_pair, TensorRow *trow)
 
 // Looping over LoadTensorRow to make 1 DataBuffer. 1 function call produces 1 buffer
 Status MnistOp::LoadBuffer(const std::vector<int64_t> &keys, std::unique_ptr<DataBuffer> *db) {
-  std::unique_ptr<TensorQTable> deq = make_unique<TensorQTable>();
+  std::unique_ptr<TensorQTable> deq = std::make_unique<TensorQTable>();
   TensorRow trow;
   for (const int64_t &key : keys) {
     RETURN_IF_NOT_OK(this->LoadTensorRow(image_label_pairs_[key], &trow));
     deq->push_back(std::move(trow));
   }
   (*db)->set_tensor_table(std::move(deq));
-  (*db)->set_column_name_map(col_name_map_);
   return Status::OK();
 }
 
 void MnistOp::Print(std::ostream &out, bool show_all) const {
-  DatasetOp::Print(out, show_all);
-  out << "\nnumber of parallel workers:" << num_workers_ << "\nNumber of rows:" << num_rows_
-      << "\nMNIST Directory: " << folder_path_ << "\n-------------------------\n";
+  // Always show the id and name as first line regardless if this summary or detailed print
+  out << "(" << std::setw(2) << operator_id_ << ") <MnistOp>:";
+  if (!show_all) {
+    // Call the super class for displaying any common 1-liner info
+    ParallelOp::Print(out, show_all);
+    // Then show any custom derived-internal 1-liner info for this op
+    out << "\n";
+  } else {
+    // Call the super class for displaying any common detailed info
+    ParallelOp::Print(out, show_all);
+    // Then show any custom derived-internal stuff
+    out << "\nNumber of rows:" << num_rows_ << "\nMNIST Directory: " << folder_path_ << "\n\n";
+  }
 }
 
 // Reset Sampler and wakeup Master thread (functor)
@@ -205,16 +212,7 @@ Status MnistOp::Reset() {
 
 // hand shake with Sampler, allow Sampler to call RandomAccessOp's functions to get NumRows
 Status MnistOp::InitSampler() {
-  RETURN_IF_NOT_OK(sampler_->Init(this));
-  return Status::OK();
-}
-
-// Derived from RandomAccessOp
-Status MnistOp::GetNumSamples(int64_t *num) const {
-  if (num == nullptr || num_rows_ == 0) {
-    RETURN_STATUS_UNEXPECTED("NumRow not set");
-  }
-  (*num) = num_samples_;
+  RETURN_IF_NOT_OK(sampler_->HandshakeRandomAccessOp(this));
   return Status::OK();
 }
 
@@ -309,8 +307,8 @@ Status MnistOp::ReadImageAndLabel(std::ifstream *image_reader, std::ifstream *la
   CHECK_FAIL_RETURN_UNEXPECTED((num_images == num_labels), "num_images != num_labels");
   // The image size of the Mnist dataset is fixed at [28,28]
   int64_t size = kMnistImageRows * kMnistImageCols;
-  auto images_buf = mindspore::make_unique<char[]>(size * num_images);
-  auto labels_buf = mindspore::make_unique<char[]>(num_images);
+  auto images_buf = std::make_unique<char[]>(size * num_images);
+  auto labels_buf = std::make_unique<char[]>(num_images);
   if (images_buf == nullptr || labels_buf == nullptr) {
     std::string err_msg = "Fail to allocate memory for MNIST Buffer.";
     MS_LOG(ERROR) << err_msg.c_str();
@@ -352,7 +350,6 @@ Status MnistOp::ParseMnistData() {
   }
   image_label_pairs_.shrink_to_fit();
   num_rows_ = image_label_pairs_.size();
-  num_samples_ = (num_samples_ == 0 || num_samples_ > num_rows_) ? num_rows_ : num_samples_;
   return Status::OK();
 }
 
@@ -375,7 +372,7 @@ Status MnistOp::WalkAllFiles() {
       }
     }
   } else {
-    MS_LOG(INFO) << "Mnist operator unable to open directory " << dir.toString() << ".";
+    MS_LOG(WARNING) << "Mnist operator unable to open directory " << dir.toString() << ".";
   }
 
   std::sort(image_names_.begin(), image_names_.end());
@@ -393,7 +390,7 @@ Status MnistOp::LaunchThreadsAndInitOp() {
     RETURN_STATUS_UNEXPECTED("tree_ not set");
   }
   RETURN_IF_NOT_OK(io_block_queues_.Register(tree_->AllTasks()));
-  wp_.Register(tree_->AllTasks());
+  RETURN_IF_NOT_OK(wp_.Register(tree_->AllTasks()));
   RETURN_IF_NOT_OK(tree_->LaunchWorkers(num_workers_, std::bind(&MnistOp::WorkerEntry, this, std::placeholders::_1)));
   TaskManager::FindMe()->Post();
   RETURN_IF_NOT_OK(this->WalkAllFiles());
@@ -402,11 +399,11 @@ Status MnistOp::LaunchThreadsAndInitOp() {
   return Status::OK();
 }
 
-Status MnistOp::CountTotalRows(const std::string &dir, int64_t numSamples, int64_t *count) {
+Status MnistOp::CountTotalRows(const std::string &dir, int64_t *count) {
   // the logic of counting the number of samples is copied from ParseMnistData() and uses CheckReader()
   std::shared_ptr<MnistOp> op;
   *count = 0;
-  RETURN_IF_NOT_OK(Builder().SetDir(dir).SetNumSamples(numSamples).Build(&op));
+  RETURN_IF_NOT_OK(Builder().SetDir(dir).Build(&op));
 
   RETURN_IF_NOT_OK(op->WalkAllFiles());
 
@@ -428,17 +425,6 @@ Status MnistOp::CountTotalRows(const std::string &dir, int64_t numSamples, int64
     label_reader.close();
   }
 
-  *count = (numSamples == 0 || *count < numSamples) ? *count : numSamples;
-
-  return Status::OK();
-}
-
-// Derived from RandomAccessOp
-Status MnistOp::GetNumRowsInDataset(int64_t *num) const {
-  if (num == nullptr || num_rows_ == 0) {
-    RETURN_STATUS_UNEXPECTED("NumRow not set");
-  }
-  (*num) = num_rows_;
   return Status::OK();
 }
 }  // namespace dataset

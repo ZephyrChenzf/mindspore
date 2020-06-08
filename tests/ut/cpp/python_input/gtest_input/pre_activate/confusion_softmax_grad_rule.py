@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from mindspore.ops import operations as P
 from mindspore.ops import Primitive
+from mindspore.ops import operations as P
 
 mul = P.Mul()
 reduce_sum = P.ReduceSum()
@@ -41,7 +41,7 @@ def test_confusion_softmax_grad_rule(tag):
 
     @fns
     def before(input0, input1):
-        res = mul(input0, input1)
+        res = mul(input1, input0)
         # input axis will be convert to attr in ConstructKernelGraph step
         res = reduce_sum(res, axis)
         res = sub(input0, res)

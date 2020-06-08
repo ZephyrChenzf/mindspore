@@ -30,41 +30,84 @@ namespace mindspore {
 namespace kernel {
 namespace tbe {
 static std::map<string, string> tbe_func_adapter_map = {
+  {"softmax", "softmax_v2"},
+  {"log_softmax", "log_softmax_v2"},
+  {"re_lu6", "relu6"},
+  {"re_lu6_grad", "relu6_grad"},
   {"re_lu", "relu"},
+  {"re_luv2", "relu_v2"},
+  {"p_re_lu", "prelu"},
+  {"p_re_lu_grad", "prelu_grad"},
   {"tensor_add", "add"},
   {"reduce_mean", "reduce_mean_d"},
   {"reduce_max", "reduce_max_d"},
+  {"reduce_min", "reduce_min_d"},
+  {"avg_pool_grad", "avg_pool_grad_d"},
   {"conv2d_backprop_filter", "conv2d_backprop_filter_d"},
   {"conv2d_backprop_input", "conv2d_backprop_input_d"},
-  {"top_kv2", "top_k"},
+  {"depthwise_conv2d_native", "depthwise_conv2d"},
+  {"depthwise_conv2d_native_backprop_filter", "depthwise_conv2d_backprop_filter_d"},
+  {"depthwise_conv2d_native_backprop_input", "depthwise_conv2d_backprop_input_d"},
   {"scatter_nd", "scatter_nd_d"},
   {"tile", "tile_d"},
   {"gather_v2", "gather_v2_d"},
   {"batch_mat_mul", "batch_matmul"},
   {"b_n_training_reduce", "bn_training_reduce"},
   {"b_n_training_update", "bn_training_update"},
+  {"b_n_training_update_v2", "bn_training_update_v2"},
+  {"b_n_training_update_v3", "bn_training_update_v3"},
   {"b_n_training_reduce_grad", "bn_training_reduce_grad"},
   {"b_n_training_update_grad", "bn_training_update_grad"},
+  {"b_n_infer", "bn_infer"},
+  {"b_n_infer_grad", "bn_infer_grad"},
   {"n_pu_clear_float_status", "n_p_u_clear_float_status"},
   {"n_pu_get_float_status", "n_p_u_get_float_status"},
   {"n_pu_alloc_float_status", "n_p_u_alloc_float_status"},
   {"dropout_do_mask", "drop_out_do_mask"},
   {"strided_slice", "strided_slice_d"},
   {"strided_slice_grad", "strided_slice_grad_d"},
+  {"sparse_apply_ftrl", "sparse_apply_ftrl_d"},
   {"transpose", "transpose_d"},
+  {"fill", "fill_d"},
   {"unsorted_segment_sum", "unsorted_segment_sum_d"},
   {"concat", "concat_d"},
   {"slice", "slice_d"},
   {"reduce_sum", "reduce_sum_d"},
   {"one_hot", "one_hot_d"},
   {"sum", "reduce_sum_d"},
-  {"lamb_next_mv_with_decay_v1", "lamb_next_m_v_with_decay_v1"},
+  {"lamb_next_mv_with_decay", "lamb_next_m_v_with_decay"},
   {"lamb_next_mv", "lamb_next_m_v"},
   {"split", "split_d"},
-  {"resize_nearest_neighbor", "resize_nearest_neighbor_d"},
-  {"resize_nearest_neighbor_grad", "resize_nearest_neighbor_grad_d"},
+  {"resize_nearest_neighbor", "resize_nearest_neighbor_v2_d"},
+  {"resize_nearest_neighbor_grad", "resize_nearest_neighbor_v2_grad_d"},
   {"pad", "pad_d"},
-  {"adam", "apply_adam"}};
+  {"argmax", "arg_max_d"},
+  {"argmin", "arg_min_d"},
+  {"space_to_batch", "space_to_batch_d"},
+  {"batch_to_space", "batch_to_space_d"},
+  {"space_to_batch_nd", "space_to_batch_nd_d"},
+  {"batch_to_space_nd", "batch_to_space_nd_d"},
+  {"resize_bilinear", "resize_bilinear_v2_d"},
+  {"resize_bilinear_grad", "resize_bilinear_v2_grad"},
+  {"adam", "apply_adam"},
+  {"r_oi_align", "roi_align"},
+  {"r_oi_align_grad", "roi_align_grad"},
+  {"i_ou", "iou"},
+  {"s_gd", "sgd"},
+  {"l_ars_update", "lars_v2_update"},
+  {"n_ms_with_mask", "nms_with_mask"},
+  {"square_sum_all", "square_sum_all"},
+  {"cum_sum", "cumsum_d"},
+  {"inv_grad", "inv_grad"},
+  {"apply_rms_prop", "apply_rms_prop_d"},
+  {"cum_prod", "cumprod_d"},
+  {"reduce_all", "reduce_all_d"},
+  {"sparse_apply_adagrad", "sparse_apply_adagrad_d"},
+  {"unsorted_segment_min", "unsorted_segment_min_d"},
+  {"reduce_prod", "reduce_prod_d"},
+  {"a_cos", "acos"},
+  {"a_cos_grad", "acos_grad"},
+  {"broadcast_to", "broadcast_to_d"}};
 
 void TbeAdapter::NormalizeFuncName(std::string *func_name) {
   if (func_name == nullptr) {
@@ -98,7 +141,7 @@ void TbeAdapter::NormalizeFuncName(std::string *func_name) {
   *func_name = name_tmp;
   auto iter = tbe_func_adapter_map.find(*func_name);
   if (iter != tbe_func_adapter_map.end()) {
-    MS_LOG(INFO) << "map actual op fron me " << func_name << "to tbe op" << iter->second;
+    MS_LOG(INFO) << "map actual op from me " << *func_name << " to tbe op" << iter->second;
     *func_name = iter->second;
   }
 }
@@ -120,8 +163,8 @@ void TbeAdapter::SetTbeAttrsForTransDataOp(const mindspore::AnfNodePtr &anf_node
 }
 
 std::unordered_set<std::string> input_order_adjusted_ops = {
-  "Conv2DBackpropInput", "Conv2DBackpropFilter",       "LogSoftmaxGrad", "LayerNormGrad",
-  "LayerNormXBackprop",  "LayerNormBetaGammaBackprop", "MinimumGrad",    "MaximumGrad"};
+  "Conv2DBackpropInput",        "Conv2DBackpropFilter", "LogSoftmaxGrad", "LayerNormGrad",       "LayerNormXBackprop",
+  "LayerNormBetaGammaBackprop", "MinimumGrad",          "MaximumGrad",    "ApplyCenteredRMSProp"};
 
 void TbeAdapter::InputOrderPass(const std::string &op_name, std::vector<std::vector<nlohmann::json>> const &inputs_list,
                                 nlohmann::json *inputs_json) {
@@ -136,6 +179,18 @@ void TbeAdapter::InputOrderPass(const std::string &op_name, std::vector<std::vec
       for (size_t i = 3; i < inputs_list.size(); ++i) {
         inputs_json->push_back(inputs_list[i]);
       }
+    } else if (op_name == "ApplyCenteredRMSProp") {
+      // Parameter order of ApplyCenteredRMSProp's TBE implementation is different from python API, so map
+      // TBE parameter to correspond python API parameter by latter's index using hardcode
+      inputs_json->push_back(inputs_list[0]);
+      inputs_json->push_back(inputs_list[1]);
+      inputs_json->push_back(inputs_list[2]);
+      inputs_json->push_back(inputs_list[3]);
+      inputs_json->push_back(inputs_list[5]);
+      inputs_json->push_back(inputs_list[6]);
+      inputs_json->push_back(inputs_list[7]);
+      inputs_json->push_back(inputs_list[8]);
+      inputs_json->push_back(inputs_list[4]);
     } else {
       inputs_json->push_back(inputs_list[1]);
       inputs_json->push_back(inputs_list[0]);
@@ -146,12 +201,53 @@ void TbeAdapter::InputOrderPass(const std::string &op_name, std::vector<std::vec
   }
 }
 
+void TbeAdapter::FusionInputOrderPass(const std::string &op_name, const std::vector<nlohmann::json> &inputs_list,
+                                      std::vector<nlohmann::json> *inputs_json) {
+  MS_EXCEPTION_IF_NULL(inputs_json);
+  if (input_order_adjusted_ops.find(op_name) == input_order_adjusted_ops.end()) {
+    (void)std::copy(inputs_list.begin(), inputs_list.end(), std::back_inserter((*inputs_json)));
+  } else {
+    if (op_name == "MinimumGrad" || op_name == "MaximumGrad") {
+      inputs_json->emplace_back(inputs_list[2]);
+      inputs_json->emplace_back(inputs_list[0]);
+      inputs_json->emplace_back(inputs_list[1]);
+      for (size_t i = 3; i < inputs_list.size(); ++i) {
+        inputs_json->emplace_back(inputs_list[i]);
+      }
+    } else {
+      inputs_json->emplace_back(inputs_list[1]);
+      inputs_json->emplace_back(inputs_list[0]);
+      for (size_t i = 2; i < inputs_list.size(); ++i) {
+        inputs_json->emplace_back(inputs_list[i]);
+      }
+    }
+  }
+}
+
+void TbeAdapter::FusionDataOrderPass(const std::string &op_name, const std::vector<AnfNodePtr> &data_layer,
+                                     std::vector<AnfNodePtr> *reorder_data_layer) {
+  MS_EXCEPTION_IF_NULL(reorder_data_layer);
+  if (input_order_adjusted_ops.find(op_name) == input_order_adjusted_ops.end()) {
+    (void)std::copy(data_layer.begin(), data_layer.end(), std::back_inserter((*reorder_data_layer)));
+  } else {
+    if (op_name == "MinimumGrad" || op_name == "MaximumGrad") {
+      reorder_data_layer->emplace_back(data_layer[2]);
+      reorder_data_layer->emplace_back(data_layer[0]);
+      reorder_data_layer->emplace_back(data_layer[1]);
+      for (size_t i = 3; i < data_layer.size(); ++i) {
+        reorder_data_layer->emplace_back(data_layer[i]);
+      }
+    } else {
+      reorder_data_layer->emplace_back(data_layer[1]);
+      reorder_data_layer->emplace_back(data_layer[0]);
+      for (size_t i = 2; i < data_layer.size(); ++i) {
+        reorder_data_layer->emplace_back(data_layer[i]);
+      }
+    }
+  }
+}
+
 std::map<std::string, FAttrsPass> TbeAdapter::build_json_attr_pass_map_ = {
-  {"MaxPoolWithArgmax", TbeAdapter::MaxPoolWithArgmaxAttrJsonPass},
-  {"MaxPoolGradWithArgmax", TbeAdapter::MaxPoolGradWithArgmaxAttrJsonPass},
-  {"Conv2D", TbeAdapter::Conv2DAttrJsonPass},
-  {"Conv2DBackpropFilter", TbeAdapter::Conv2DBackpropFilterAttrJsonPass},
-  {"Conv2DBackpropInput", TbeAdapter::Conv2DBackpropInputAttrJsonPass},
   {"MaximumGrad", TbeAdapter::MaximumGradAttrJsonPass},
   {"MinimumGrad", TbeAdapter::MinimumGradAttrJsonPass},
   {"Cast", TbeAdapter::CastAttrJsonPass}};
@@ -167,177 +263,6 @@ bool TbeAdapter::RunAttrPass(const mindspore::AnfNodePtr &anf_node,
     return true;
   }
   return false;
-}
-
-void TbeAdapter::MaxPoolWithArgmaxAttrJsonPass(
-  const mindspore::AnfNodePtr &anf_node, const std::vector<std::shared_ptr<mindspore::kernel::OpAttr>> &op_info_attrs,
-  nlohmann::json *attrs_json) {
-  MS_EXCEPTION_IF_NULL(anf_node);
-  MS_EXCEPTION_IF_NULL(attrs_json);
-  auto attr_num = op_info_attrs.size();
-  auto primitive = AnfAlgo::GetCNodePrimitive(anf_node);
-  MS_EXCEPTION_IF_NULL(primitive);
-  for (size_t i = 0; i < attr_num; i++) {
-    nlohmann::json attr_obj;
-    MS_EXCEPTION_IF_NULL(op_info_attrs[i]);
-    std::string attr_name = op_info_attrs[i]->name();
-    if (primitive->GetAttr(attr_name) != nullptr) {
-      auto value = primitive->GetAttr(attr_name);
-      if (attr_name == "pad_mode") {
-        std::string attr_value = GetValue<std::string>(value);
-        (void)transform(attr_value.begin(), attr_value.end(), attr_value.begin(), ::toupper);
-        attr_obj["value"] = attr_value;
-      } else {
-        std::vector<int> attr_value;
-        int data = GetValue<int>(value);
-        attr_value.push_back(1);
-        attr_value.push_back(data);
-        attr_value.push_back(data);
-        attr_value.push_back(1);
-        attr_obj["value"] = attr_value;
-      }
-      attr_obj["valid"] = true;
-    } else {
-      attr_obj["valid"] = false;
-    }
-    attr_obj["name"] = attr_name;
-    attrs_json->push_back(attr_obj);
-  }
-}
-
-void TbeAdapter::MaxPoolGradWithArgmaxAttrJsonPass(
-  const mindspore::AnfNodePtr &anf_node, const std::vector<std::shared_ptr<mindspore::kernel::OpAttr>> &op_info_attrs,
-  nlohmann::json *attrs_json) {
-  MaxPoolWithArgmaxAttrJsonPass(anf_node, op_info_attrs, attrs_json);
-}
-
-void TbeAdapter::Conv2DAttrJsonPass(const mindspore::AnfNodePtr &anf_node,
-                                    const std::vector<std::shared_ptr<mindspore::kernel::OpAttr>> &op_info_attrs,
-                                    nlohmann::json *attrs_json) {
-  MS_EXCEPTION_IF_NULL(anf_node);
-  MS_EXCEPTION_IF_NULL(attrs_json);
-  auto attr_num = op_info_attrs.size();
-  auto primitive = AnfAlgo::GetCNodePrimitive(anf_node);
-  MS_EXCEPTION_IF_NULL(primitive);
-  for (size_t i = 0; i < attr_num; i++) {
-    nlohmann::json attr_obj;
-    MS_EXCEPTION_IF_NULL(op_info_attrs[i]);
-    std::string attr_name = op_info_attrs[i]->name();
-    std::vector<int> attr_value;
-    if (primitive->GetAttr(attr_name) != nullptr) {
-      auto value = primitive->GetAttr(attr_name);
-      int data = GetValue<int>(value);
-      size_t list_int_size = 0;
-      if (attr_name == "stride") {
-        list_int_size = 4;
-      } else if (attr_name == "dilation") {
-        list_int_size = 4;
-      } else if (attr_name == "pad") {
-        value = primitive->GetAttr("pad_list");
-        attr_value = GetValue<std::vector<int>>(value);
-      }
-      for (size_t j = 0; j < list_int_size; j++) {
-        attr_value.push_back(data);
-      }
-      attr_obj["value"] = attr_value;
-    } else {
-      attr_obj["value"] = 0;
-    }
-    attr_obj["name"] = attr_name;
-    attr_obj["valid"] = true;
-    (*attrs_json).push_back(attr_obj);
-  }
-  MS_LOG(INFO) << "Conv2DAttrPass done.";
-}
-
-void TbeAdapter::Conv2DBackpropFilterAttrJsonPass(
-  const mindspore::AnfNodePtr &anf_node, const std::vector<std::shared_ptr<mindspore::kernel::OpAttr>> &op_info_attrs,
-  nlohmann::json *attrs_json) {
-  MS_EXCEPTION_IF_NULL(anf_node);
-  MS_EXCEPTION_IF_NULL(attrs_json);
-  auto attr_num = op_info_attrs.size();
-  auto primitive = AnfAlgo::GetCNodePrimitive(anf_node);
-  MS_EXCEPTION_IF_NULL(primitive);
-  for (size_t i = 0; i < attr_num; i++) {
-    nlohmann::json attr_obj;
-    MS_EXCEPTION_IF_NULL(op_info_attrs[i]);
-    std::string attr_name = op_info_attrs[i]->name();
-    if (primitive->GetAttr(attr_name) != nullptr) {
-      auto value = primitive->GetAttr(attr_name);
-      if (attr_name == "pad_mode") {
-        std::string attr_value = GetValue<std::string>(value);
-        (void)transform(attr_value.begin(), attr_value.end(), attr_value.begin(), ::toupper);
-        attr_obj["value"] = attr_value;
-      } else if (attr_name == "filter_sizes") {
-        std::vector<int> attr_value = GetValue<std::vector<int>>(value);
-        attr_obj["value"] = attr_value;
-      } else {
-        std::vector<int> attr_value;
-        int data = GetValue<int>(value);
-        size_t list_int_size = 0;
-        if (attr_name == "stride") {
-          list_int_size = 2;
-        } else if (attr_name == "dilation") {
-          list_int_size = 4;
-        }
-        for (size_t j = 0; j < list_int_size; j++) {
-          attr_value.push_back(data);
-        }
-        attr_obj["value"] = attr_value;
-      }
-      attr_obj["valid"] = true;
-    } else {
-      attr_obj["valid"] = false;
-    }
-    attr_obj["name"] = attr_name;
-    attrs_json->push_back(attr_obj);
-  }
-  MS_LOG(INFO) << "Conv2DBackpropFilterAttrJsonPass done.";
-}
-
-void TbeAdapter::Conv2DBackpropInputAttrJsonPass(
-  const mindspore::AnfNodePtr &anf_node, const std::vector<std::shared_ptr<mindspore::kernel::OpAttr>> &op_info_attrs,
-  nlohmann::json *attrs_json) {
-  MS_EXCEPTION_IF_NULL(anf_node);
-  MS_EXCEPTION_IF_NULL(attrs_json);
-  auto attr_num = op_info_attrs.size();
-  auto primitive = AnfAlgo::GetCNodePrimitive(anf_node);
-  MS_EXCEPTION_IF_NULL(primitive);
-  for (size_t i = 0; i < attr_num; i++) {
-    nlohmann::json attr_obj;
-    MS_EXCEPTION_IF_NULL(op_info_attrs[i]);
-    std::string attr_name = op_info_attrs[i]->name();
-    if (primitive->GetAttr(attr_name) != nullptr) {
-      auto value = primitive->GetAttr(attr_name);
-      if (attr_name == "pad_mode") {
-        std::string attr_value = GetValue<std::string>(value);
-        (void)transform(attr_value.begin(), attr_value.end(), attr_value.begin(), ::toupper);
-        attr_obj["value"] = attr_value;
-      } else if (attr_name == "input_sizes") {
-        std::vector<int> attr_value = GetValue<std::vector<int>>(value);
-        attr_obj["value"] = attr_value;
-      } else {
-        std::vector<int> attr_value;
-        int data = GetValue<int>(value);
-        size_t list_int_size = 0;
-        if (attr_name == "stride") {
-          list_int_size = 2;
-        } else if (attr_name == "dilation") {
-          list_int_size = 4;
-        }
-        for (size_t j = 0; j < list_int_size; j++) {
-          attr_value.push_back(data);
-        }
-        attr_obj["value"] = attr_value;
-      }
-      attr_obj["valid"] = true;
-    } else {
-      attr_obj["valid"] = false;
-    }
-    attr_obj["name"] = attr_name;
-    attrs_json->push_back(attr_obj);
-  }
-  MS_LOG(INFO) << "Conv2DBackpropInputAttrJsonPass done.";
 }
 
 void TbeAdapter::MaximumGradAttrJsonPass(const mindspore::AnfNodePtr &anf_node,

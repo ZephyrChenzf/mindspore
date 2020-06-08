@@ -34,6 +34,7 @@ class KernelBuildInfo {
     kernel_type_ = AUTO_DIFF_KERNEL;
     fusion_type_ = OPAQUE;
     processor_ = AICORE;
+    op_pattern_ = kCommonPattern;
     input_reshape_type_ = {};
     output_reshape_type_ = {};
     inputs_format_ = {};
@@ -54,9 +55,13 @@ class KernelBuildInfo {
 
   TypeId GetOutputDeviceType(size_t output_index) const;
 
-  bool GetInputReshapeType(size_t input_index, std::vector<Axis> *reshape_type) const;
+  std::vector<Axis> GetInputReshapeType(size_t input_index) const;
 
-  bool GetOutputReshapeType(size_t input_index, std::vector<Axis> *reshape_type) const;
+  bool IsInputDefaultPadding() const;
+
+  bool IsOutputDefaultPadding() const;
+
+  std::vector<Axis> GetOutputReshapeType(size_t input_index) const;
 
   std::vector<std::string> GetAllInputFormats() const;
 
@@ -65,6 +70,8 @@ class KernelBuildInfo {
   std::vector<TypeId> GetAllInputDeviceTypes() const;
 
   std::vector<TypeId> GetAllOutputDeviceTypes() const;
+
+  OpPattern op_pattern() const { return op_pattern_; }
 
   FusionType fusion_type() const { return fusion_type_; }
 
@@ -78,9 +85,13 @@ class KernelBuildInfo {
 
   bool operator==(const KernelBuildInfo &other) const;
 
+ public:
+  static auto constexpr kInvalidFormat = "InvalidFormat";
+
  private:
   KernelType kernel_type_;
   std::vector<std::string> inputs_format_;
+  OpPattern op_pattern_;
   std::vector<std::string> outputs_format_;
   std::vector<std::vector<Axis>> input_reshape_type_;
   std::vector<std::vector<Axis>> output_reshape_type_;
@@ -117,6 +128,12 @@ class KernelBuildInfo::KernelBuildInfoBuilder {
   void SetFusionType(FusionType fusion_type);
 
   void SetProcessor(Processor processor);
+
+  void SetOpPattern(OpPattern pattern);
+
+  void SetInputFormat(const std::string &format, size_t index);
+
+  void SetOutputFormat(const std::string &format, size_t index);
 
   std::shared_ptr<KernelBuildInfo> Build();
 

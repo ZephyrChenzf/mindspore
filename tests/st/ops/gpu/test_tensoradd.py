@@ -13,22 +13,20 @@
 # limitations under the License.
 # ============================================================================
 
-import pytest
-from mindspore import Tensor
-from mindspore.ops import operations as P
-import mindspore.nn as nn
-from mindspore.common.api import ms_function
 import numpy as np
+import pytest
+
 import mindspore.context as context
+import mindspore.nn as nn
+from mindspore import Tensor
+from mindspore.common.api import ms_function
 from mindspore.common.initializer import initializer
 from mindspore.common.parameter import Parameter
+from mindspore.ops import operations as P
 
 context.set_context(device_target='GPU')
 
 
-@pytest.mark.level0
-@pytest.mark.platform_x86_gpu_training
-@pytest.mark.env_onecard
 class TensroAdd(nn.Cell):
     def __init__(self):
         super(TensroAdd, self).__init__()
@@ -62,6 +60,9 @@ class TensroAdd(nn.Cell):
             self.add(self.x3, self.y3))
 
 
+@pytest.mark.level0
+@pytest.mark.platform_x86_gpu_training
+@pytest.mark.env_onecard
 def test_TensroAdd():
     add = TensroAdd()
     output = add()

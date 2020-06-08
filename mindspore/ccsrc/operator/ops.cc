@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2020 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,6 @@
 #include "operator/ops.h"
 #include <memory>
 #include <string>
-#include "pipeline/parse/python_adapter.h"
-#include "pipeline/parse/data_converter.h"
 
 namespace mindspore {
 // namespace to support primitive operators
@@ -28,6 +26,7 @@ const PrimitivePtr kPrimScalarAdd = std::make_shared<Primitive>("scalar_add");
 const PrimitivePtr kPrimScalarSub = std::make_shared<Primitive>("scalar_sub");
 const PrimitivePtr kPrimScalarMul = std::make_shared<Primitive>("scalar_mul");
 const PrimitivePtr kPrimScalarDiv = std::make_shared<Primitive>("scalar_div");
+const PrimitivePtr kPrimScalarFloordiv = std::make_shared<Primitive>("scalar_floordiv");
 const PrimitivePtr kPrimScalarMod = std::make_shared<Primitive>("scalar_mod");
 const PrimitivePtr kPrimScalarPow = std::make_shared<Primitive>("scalar_pow");
 const PrimitivePtr kPrimScalarTrunc = std::make_shared<Primitive>("scalar_trunc");
@@ -58,11 +57,13 @@ const PrimitivePtr kPrimHasType = std::make_shared<Primitive>("hastype");
 
 // Statements
 const PrimitivePtr kPrimSwitch = std::make_shared<Primitive>("switch");
+const PrimitivePtr kPrimSwitchLayer = std::make_shared<Primitive>("switch_layer");
 const PrimitivePtr kPrimReturn = std::make_shared<Primitive>("return");
 const PrimitivePtr kPrimAssign = std::make_shared<Primitive>("Assign");
 const PrimitivePtr kPrimAssignAdd = std::make_shared<Primitive>("AssignAdd");
 const PrimitivePtr kPrimAssignSub = std::make_shared<Primitive>("AssignSub");
 const PrimitivePtr kPrimSelect = std::make_shared<Primitive>("Select");
+const PrimitivePtr kPrimCall = std::make_shared<Primitive>("call");
 
 const PrimitivePtr kPrimDistribute = std::make_shared<Primitive>("distribute");
 const PrimitivePtr kPrimDot = std::make_shared<Primitive>("dot");
@@ -76,8 +77,13 @@ const PrimitivePtr kPrimEmbed = std::make_shared<Primitive>("embed");
 const PrimitivePtr kPrimRefToEmbed = std::make_shared<Primitive>("RefToEmbed");
 const PrimitivePtr kPrimCreateInstance = std::make_shared<Primitive>("create_instance");
 
+const PrimitivePtr kPrimLabelGoto = std::make_shared<Primitive>("LabelGoto");
+const PrimitivePtr kPrimLabelSwitch = std::make_shared<Primitive>("LabelSwitch");
+const PrimitivePtr kPrimLabelSet = std::make_shared<Primitive>("LabelSet");
+
 // Structure
 const PrimitivePtr kPrimStringEqual = std::make_shared<Primitive>("string_equal");
+const PrimitivePtr kPrimStringConcat = std::make_shared<Primitive>("string_concat");
 const PrimitivePtr kPrimMakeTuple = std::make_shared<Primitive>("make_tuple");
 const PrimitivePtr kPrimMakeList = std::make_shared<Primitive>("make_list");
 const PrimitivePtr kPrimMakeDict = std::make_shared<Primitive>("make_dict");
@@ -127,15 +133,20 @@ const PrimitivePtr kPrimConcat = std::make_shared<Primitive>("Concat");
 const PrimitivePtr kPrimSqueeze = std::make_shared<Primitive>("Squeeze");
 const PrimitivePtr kPrimTranspose = std::make_shared<Primitive>("Transpose");
 const PrimitivePtr kPrimGatherV2 = std::make_shared<Primitive>("GatherV2");
+const PrimitivePtr kPrimEmbeddingLookup = std::make_shared<Primitive>("EmbeddingLookup");
+const PrimitivePtr kPrimEmbeddingLookupCommGrad = std::make_shared<Primitive>("EmbeddingLookupCommGrad");
 const PrimitivePtr kPrimSize = std::make_shared<Primitive>("Size");
 const PrimitivePtr kPrimArgMax = std::make_shared<Primitive>("Argmax");
 const PrimitivePtr kPrimPack = std::make_shared<Primitive>("Pack");
 const PrimitivePtr kPrimUnsortedSegmentSum = std::make_shared<Primitive>("UnsortedSegmentSum");
+const PrimitivePtr kPrimUnsortedSegmentMin = std::make_shared<Primitive>("UnsortedSegmentMin");
 const PrimitivePtr kPrimConcatOffset = std::make_shared<Primitive>("ConcatOffset");
 const PrimitivePtr kPrimReshape = std::make_shared<Primitive>("Reshape");
 const PrimitivePtr kPrimTile = std::make_shared<Primitive>("Tile");
 const PrimitivePtr kPrimAddN = std::make_shared<Primitive>("AddN");
 const PrimitivePtr KPrimTransData = std::make_shared<Primitive>("TransData");
+const PrimitivePtr kPrimNMSWithMask = std::make_shared<Primitive>("NMSWithMask");
+const PrimitivePtr kPrimPad = std::make_shared<Primitive>("Pad");
 
 // Maths
 const PrimitivePtr kPrimTensorAdd = std::make_shared<Primitive>("TensorAdd");
@@ -154,6 +165,12 @@ const PrimitivePtr kPrimMul = std::make_shared<Primitive>("Mul");
 const PrimitivePtr kPrimMinimum = std::make_shared<Primitive>("Minimum");
 const PrimitivePtr kPrimMaximum = std::make_shared<Primitive>("Maximum");
 const PrimitivePtr kPrimSquare = std::make_shared<Primitive>("Square");
+const PrimitivePtr kPrimEqual = std::make_shared<Primitive>("Equal");
+const PrimitivePtr kPrimLess = std::make_shared<Primitive>("Less");
+const PrimitivePtr kPrimLessEqual = std::make_shared<Primitive>("LessEqual");
+const PrimitivePtr kPrimCumSum = std::make_shared<Primitive>("CumSum");
+const PrimitivePtr kPrimCumProd = std::make_shared<Primitive>("CumProd");
+const PrimitivePtr kPrimSubscalar = std::make_shared<Primitive>("Subscalar");
 
 // NN
 const PrimitivePtr kPrimFlatten = std::make_shared<Primitive>("Flatten");
@@ -165,9 +182,13 @@ const PrimitivePtr kPrimPooling = std::make_shared<Primitive>("Pooling");
 const PrimitivePtr kPrimPoolingGrad = std::make_shared<Primitive>("PoolingGrad");
 const PrimitivePtr kPrimMaxPool = std::make_shared<Primitive>("MaxPool");
 const PrimitivePtr kPrimMaxPoolGrad = std::make_shared<Primitive>("MaxPoolGrad");
+const PrimitivePtr kPrimApplyCenteredRMSProp = std::make_shared<Primitive>("ApplyCenteredRMSProp");
+const PrimitivePtr kPrimAvgPoolGrad = std::make_shared<Primitive>("AvgPoolGrad");
 const PrimitivePtr kPrimFusedBatchNorm = std::make_shared<Primitive>("FusedBatchNorm");
 const PrimitivePtr kPrimConv2D = std::make_shared<Primitive>("Conv2D");
 const PrimitivePtr kPrimFusedBatchNormGrad = std::make_shared<Primitive>("FusedBatchNormGrad");
+const PrimitivePtr kPrimBatchNorm = std::make_shared<Primitive>("BatchNorm");
+const PrimitivePtr kPrimBatchNormGrad = std::make_shared<Primitive>("BatchNormGrad");
 const PrimitivePtr kPrimReluGrad = std::make_shared<Primitive>("ReluGrad");
 const PrimitivePtr kPrimConv2DBackpropInput = std::make_shared<Primitive>("Conv2DBackpropInput");
 const PrimitivePtr kPrimConv2DBackpropFilter = std::make_shared<Primitive>("Conv2DBackpropFilter");
@@ -187,12 +208,15 @@ const PrimitivePtr kPrimLayerNormGrad = std::make_shared<Primitive>("LayerNormGr
 const PrimitivePtr kPrimLayerNormXBackprop = std::make_shared<Primitive>("LayerNormXBackprop");
 const PrimitivePtr kPrimLayerNormBetaGammaBackprop = std::make_shared<Primitive>("LayerNormBetaGammaBackprop");
 const PrimitivePtr kPrimDropoutGenMask = std::make_shared<Primitive>("DropoutGenMask");
+const PrimitivePtr kPrimDropoutDoMask = std::make_shared<Primitive>("DropoutDoMask");
 const PrimitivePtr kPrimOneHot = std::make_shared<Primitive>("OneHot");
 const PrimitivePtr kPrimGelu = std::make_shared<Primitive>("Gelu");
 const PrimitivePtr kPrimGeluGrad = std::make_shared<Primitive>("GeluGrad");
 const PrimitivePtr kPrimRelu = std::make_shared<Primitive>("ReLU");
-const PrimitivePtr kPrimZerosLikeTensor = std::make_shared<Primitive>("zeros_like_tensor");
+const PrimitivePtr kPrimReluV2 = std::make_shared<Primitive>("ReLUV2");
+const PrimitivePtr kPrimZerosLike = std::make_shared<Primitive>("ZerosLike");
 const PrimitivePtr kPrimFakeBprop = std::make_shared<Primitive>("fake_bprop");
+const PrimitivePtr kPrimBpropCut = std::make_shared<Primitive>("bprop_cut");
 
 // Other miscellaneous
 const PrimitivePtr kPrimIdentity = std::make_shared<Primitive>("identity");
@@ -206,8 +230,10 @@ const PrimitivePtr kPrimGetRefKey = std::make_shared<Primitive>("get_ref_key");
 const PrimitivePtr kPrimGetRefValue = std::make_shared<Primitive>("get_ref_value");
 const PrimitivePtr kPrimGetRefOrigin = std::make_shared<Primitive>("get_ref_origin");
 const PrimitivePtr kPrimInsertGradientOf = std::make_shared<Primitive>("InsertGradientOf");
+const PrimitivePtr kPrimHookBackward = std::make_shared<Primitive>("HookBackward");
 const PrimitivePtr kPrimPrintShapeType = std::make_shared<Primitive>("PrintShapeType");
 const PrimitivePtr kPrimSameTypeShape = std::make_shared<Primitive>("SameTypeShape");
+const PrimitivePtr kPrimCheckBprop = std::make_shared<Primitive>("CheckBprop");
 const PrimitivePtr kPrimPrint = std::make_shared<Primitive>("Print");
 
 const PrimitivePtr kPrimMakeRef = std::make_shared<Primitive>("make_ref");
@@ -218,6 +244,10 @@ const PrimitivePtr kPrimBroadcastGradientArgs = std::make_shared<Primitive>("Bro
 const PrimitivePtr kPrimControlDepend = std::make_shared<Primitive>("ControlDepend");
 const PrimitivePtr kPrimIs_ = std::make_shared<Primitive>("is_");
 const PrimitivePtr kPrimIsNot = std::make_shared<Primitive>("is_not");
+const PrimitivePtr kPrimInDict = std::make_shared<Primitive>("in_dict");
+const PrimitivePtr kPrimNotInDict = std::make_shared<Primitive>("not_in_dict");
+const PrimitivePtr kPrimMixedPrecisionCast = std::make_shared<Primitive>("mixed_precision_cast");
+const PrimitivePtr kPrimIsConsant = std::make_shared<Primitive>("is_constant");
 
 // Comm ops
 const PrimitivePtr kPrimMirror = std::make_shared<Primitive>("_MirrorOperator");
@@ -228,15 +258,6 @@ const PrimitivePtr kPrimVirtualDataset = std::make_shared<Primitive>("_VirtualDa
 const PrimitivePtr kPrimScalarSummary = std::make_shared<Primitive>("ScalarSummary");
 const PrimitivePtr kPrimImageSummary = std::make_shared<Primitive>("ImageSummary");
 const PrimitivePtr kPrimTensorSummary = std::make_shared<Primitive>("TensorSummary");
-
-ValuePtr GetPythonOps(const std::string& op_name, const std::string& module_name) {
-  py::object obj = parse::python_adapter::GetPyFn(module_name, op_name);
-  ValuePtr node = nullptr;
-  bool succ = parse::ConvertData(obj, &node);
-  if (!succ) {
-    MS_LOG(EXCEPTION) << "get Python op " << op_name << " from " << module_name << " fail";
-  }
-  return node;
-}
+const PrimitivePtr kPrimHistogramSummary = std::make_shared<Primitive>("HistogramSummary");
 }  // namespace prim
 }  // namespace mindspore

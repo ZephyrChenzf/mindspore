@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-import mindspore.dataset.transforms.vision.c_transforms as vision
-import mindspore._c_dataengine as de_map
-from util import ordered_save_and_check
+from util import save_and_check_tuple
 
 import mindspore.dataset as ds
+import mindspore.dataset.transforms.c_transforms as C
+from mindspore.common import dtype as mstype
 
 DATA_DIR_TF = ["../data/dataset/testTFTestAllTypes/test.data"]
 SCHEMA_DIR_TF = "../data/dataset/testTFTestAllTypes/datasetSchema.json"
@@ -31,7 +31,7 @@ def test_case_project_single_column():
     data1 = data1.project(columns=columns)
 
     filename = "project_single_column_result.npz"
-    ordered_save_and_check(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_tuple(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
 
 
 def test_case_project_multiple_columns_in_order():
@@ -42,7 +42,7 @@ def test_case_project_multiple_columns_in_order():
     data1 = data1.project(columns=columns)
 
     filename = "project_multiple_columns_in_order_result.npz"
-    ordered_save_and_check(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_tuple(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
 
 
 def test_case_project_multiple_columns_out_of_order():
@@ -53,7 +53,7 @@ def test_case_project_multiple_columns_out_of_order():
     data1 = data1.project(columns=columns)
 
     filename = "project_multiple_columns_out_of_order_result.npz"
-    ordered_save_and_check(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_tuple(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
 
 
 def test_case_project_map():
@@ -63,12 +63,11 @@ def test_case_project_map():
     data1 = ds.TFRecordDataset(DATA_DIR_TF, SCHEMA_DIR_TF, shuffle=False)
     data1 = data1.project(columns=columns)
 
-    no_op = de_map.NoOp()
-
-    data1 = data1.map(input_columns=["col_3d"], operations=no_op)
+    type_cast_op = C.TypeCast(mstype.int64)
+    data1 = data1.map(input_columns=["col_3d"], operations=type_cast_op)
 
     filename = "project_map_after_result.npz"
-    ordered_save_and_check(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_tuple(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
 
 
 def test_case_map_project():
@@ -77,13 +76,13 @@ def test_case_map_project():
 
     data1 = ds.TFRecordDataset(DATA_DIR_TF, SCHEMA_DIR_TF, shuffle=False)
 
-    no_op = de_map.NoOp()
-    data1 = data1.map(input_columns=["col_sint64"], operations=no_op)
+    type_cast_op = C.TypeCast(mstype.int64)
+    data1 = data1.map(input_columns=["col_sint64"], operations=type_cast_op)
 
     data1 = data1.project(columns=columns)
 
     filename = "project_map_before_result.npz"
-    ordered_save_and_check(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_tuple(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
 
 
 def test_case_project_between_maps():
@@ -92,22 +91,22 @@ def test_case_project_between_maps():
 
     data1 = ds.TFRecordDataset(DATA_DIR_TF, SCHEMA_DIR_TF, shuffle=False)
 
-    no_op = de_map.NoOp()
-    data1 = data1.map(input_columns=["col_3d"], operations=no_op)
-    data1 = data1.map(input_columns=["col_3d"], operations=no_op)
-    data1 = data1.map(input_columns=["col_3d"], operations=no_op)
-    data1 = data1.map(input_columns=["col_3d"], operations=no_op)
+    type_cast_op = C.TypeCast(mstype.int64)
+    data1 = data1.map(input_columns=["col_3d"], operations=type_cast_op)
+    data1 = data1.map(input_columns=["col_3d"], operations=type_cast_op)
+    data1 = data1.map(input_columns=["col_3d"], operations=type_cast_op)
+    data1 = data1.map(input_columns=["col_3d"], operations=type_cast_op)
 
     data1 = data1.project(columns=columns)
 
-    data1 = data1.map(input_columns=["col_3d"], operations=no_op)
-    data1 = data1.map(input_columns=["col_3d"], operations=no_op)
-    data1 = data1.map(input_columns=["col_3d"], operations=no_op)
-    data1 = data1.map(input_columns=["col_3d"], operations=no_op)
-    data1 = data1.map(input_columns=["col_3d"], operations=no_op)
+    data1 = data1.map(input_columns=["col_3d"], operations=type_cast_op)
+    data1 = data1.map(input_columns=["col_3d"], operations=type_cast_op)
+    data1 = data1.map(input_columns=["col_3d"], operations=type_cast_op)
+    data1 = data1.map(input_columns=["col_3d"], operations=type_cast_op)
+    data1 = data1.map(input_columns=["col_3d"], operations=type_cast_op)
 
     filename = "project_between_maps_result.npz"
-    ordered_save_and_check(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_tuple(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
 
 
 def test_case_project_repeat():
@@ -121,7 +120,7 @@ def test_case_project_repeat():
     data1 = data1.repeat(repeat_count)
 
     filename = "project_before_repeat_result.npz"
-    ordered_save_and_check(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_tuple(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
 
 
 def test_case_repeat_project():
@@ -136,7 +135,7 @@ def test_case_repeat_project():
     data1 = data1.project(columns=columns)
 
     filename = "project_after_repeat_result.npz"
-    ordered_save_and_check(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_tuple(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
 
 
 def test_case_map_project_map_project():
@@ -145,14 +144,14 @@ def test_case_map_project_map_project():
 
     data1 = ds.TFRecordDataset(DATA_DIR_TF, SCHEMA_DIR_TF, shuffle=False)
 
-    no_op = de_map.NoOp()
-    data1 = data1.map(input_columns=["col_sint64"], operations=no_op)
+    type_cast_op = C.TypeCast(mstype.int64)
+    data1 = data1.map(input_columns=["col_sint64"], operations=type_cast_op)
 
     data1 = data1.project(columns=columns)
 
-    data1 = data1.map(input_columns=["col_2d"], operations=no_op)
+    data1 = data1.map(input_columns=["col_2d"], operations=type_cast_op)
 
     data1 = data1.project(columns=columns)
 
     filename = "project_alternate_parallel_inline_result.npz"
-    ordered_save_and_check(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_tuple(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)

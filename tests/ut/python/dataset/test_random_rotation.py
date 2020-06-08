@@ -15,12 +15,12 @@
 """
 Testing RandomRotation op in DE
 """
-import cv2
 import matplotlib.pyplot as plt
-import mindspore.dataset.transforms.vision.c_transforms as c_vision
 import numpy as np
+import cv2
 
 import mindspore.dataset as ds
+import mindspore.dataset.transforms.vision.c_transforms as c_vision
 import mindspore.dataset.transforms.vision.py_transforms as py_vision
 from mindspore import log as logger
 

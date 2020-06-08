@@ -19,13 +19,13 @@ from collections import OrderedDict
 from mindspore import log as logger
 from .. import context
 from ..common import dtype as mstype
-from ..common.api import _executor
+from ..common.api import _executor, _pynative_exec
 from .._checkparam import _check_str_by_regular
 from ..common.parameter import Parameter, ParameterTuple
-from .._c_expression import init_ge
+from .._c_expression import init_backend
 from ..ops.primitive import Primitive
+from ..ops.operations import HookBackward
 from ..parallel._tensor import _load_tensor_by_layout
-from ..parallel._utils import _get_parallel_mode
 from ..common.tensor import Tensor
 
 
@@ -56,24 +56,39 @@ class Cell:
         >>>    def construct(self, x):
         >>>        return self.relu(x)
     """
-    def __init__(self, auto_prefix=True):
+    def __init__(self, auto_prefix=True, flags=None):
         self._params = OrderedDict()
         self._cells = OrderedDict()
         self.training = False
+        self.requires_grad = False
         self.pynative = False
+        self._param_prefix = ''
         self._auto_prefix = auto_prefix
         self._scope = None
         self._phase = 'train'
         self._parameter_layout_dict = {}
         self._create_time = int(time.time() * 1e9)
-        init_ge()
+        init_backend()
         # call gc to release GE session resources used by non-used cell objects
         gc.collect()
         self._construct_inputs_num = 0
         self._construct_inputs_names = []
-        if _get_parallel_mode() in ["auto_parallel", "semi_auto_parallel"]:
-            self._get_construct_inputs_number_and_name()
+        self._auto_parallel_mode = False
         self._parallel_inputs_run = None
+        if flags:
+            self.add_flags(**flags)
+        self._backward_hook = None
+        self.enable_hook = False
+        self._bprop_debug = False
+        self._is_run = False
+
+    @property
+    def is_run(self):
+        return self._is_run
+
+    @is_run.setter
+    def is_run(self, value):
+        self._is_run = value
 
     @property
     def create_time(self):
@@ -82,6 +97,48 @@ class Cell:
     @property
     def cell_init_args(self):
         return self._cell_init_args
+
+    @property
+    def param_prefix(self):
+        """
+        Param prefix is the prefix of current cell's direct child parameter.
+        """
+        return self._param_prefix
+
+    @property
+    def bprop_debug(self):
+        """
+        Get whether cell custom bprop debug is enabled.
+        """
+        return self._bprop_debug
+
+    @bprop_debug.setter
+    def bprop_debug(self, value):
+        """
+        Set whether to enable cell custom bprop debug.
+
+        Note:
+            When bprop is defined in cell, the bprop function will be executed
+            in python interpreter when bprop debug is true, and will be parsed
+            and add to graph when bprop debug is false.
+
+        Args:
+            value (bool): Specifies whether to enable bprop debug. Default: False.
+        """
+        if not isinstance(value, bool):
+            raise TypeError("'bprop debug' value must be bool type.")
+        self._bprop_debug = value
+
+    def update_cell_prefix(self):
+        """
+        Update the all child cells' self.param_prefix.
+
+        After invoked, can get all the cell's children's name prefix by '_param_prefix'.
+        """
+        cells_name = self.cells_and_names()
+
+        for cell_name, cell in cells_name:
+            cell._param_prefix = cell_name
 
     @cell_init_args.setter
     def cell_init_args(self, value):
@@ -102,6 +159,10 @@ class Cell:
     @property
     def parameter_layout_dict(self):
         return self._parameter_layout_dict
+
+    @property
+    def cls_name(self):
+        return self.__class__.__name__
 
     @parameter_layout_dict.setter
     def parameter_layout_dict(self, value):
@@ -140,7 +201,22 @@ class Cell:
         if context.get_context("mode") == context.GRAPH_MODE:
             out = self.compile_and_run(*inputs)
             return out
-        return self.construct(*inputs)
+        self.init_parameters_data()
+        if self.requires_grad is True:
+            _pynative_exec.set_grad_flag(True)
+            _pynative_exec.new_graph(self, *inputs)
+        else:
+            _pynative_exec.set_grad_flag(False)
+        if self.enable_hook:
+            output = self._hook_construct(*inputs)
+        else:
+            output = self.construct(*inputs)
+        if isinstance(output, Parameter):
+            output = output.data
+        if self.requires_grad is True:
+            _pynative_exec.end_graph(self, output, *inputs)
+        self._is_run = True
+        return output
 
     def __setattr__(self, name, value):
         cells = self.__dict__.get('_cells')
@@ -216,25 +292,32 @@ class Cell:
         Args:
             params (dict): The parameters dictionary used for init data graph.
         """
-
         if params is None:
             for key in self.parameters_dict():
                 tensor = self.parameters_dict()[key].data
                 if key not in self.parameter_layout_dict:
                     logger.info("layout dict does not contain the key %s", key)
                     continue
+                if self.parameters_dict()[key].sliced:
+                    logger.info("Param %s is already sliced.", key)
+                    continue
                 layout = self.parameter_layout_dict[key]
                 new_tensor = _load_tensor_by_layout(tensor, layout)
                 self.parameters_dict()[key].set_parameter_data(new_tensor)
+                self.parameters_dict()[key].sliced = True
         elif isinstance(params, OrderedDict):
             for key in params:
                 tensor = params[key].data
                 if key not in self.parameter_layout_dict:
                     logger.info("layout dict does not contain the key %s", key)
                     continue
+                if params[key].sliced:
+                    logger.info("Param %s is already sliced.", key)
+                    continue
                 layout = self.parameter_layout_dict[key]
                 new_tensor = _load_tensor_by_layout(tensor, layout)
                 params[key].set_parameter_data(new_tensor)
+                params[key].sliced = True
         else:
             raise TypeError('Parameters need OrderedDict type, but got {}'.
                             format(type(params)))
@@ -246,7 +329,6 @@ class Cell:
         Args:
             inputs (Function or Cell): inputs of construct method.
         """
-
         parallel_inputs_run = []
         if len(inputs) > self._construct_inputs_num:
             raise ValueError('Len of inputs: {} is bigger than self._construct_inputs_num: {}.'.
@@ -262,6 +344,15 @@ class Cell:
                 new_tensor = _load_tensor_by_layout(tensor, layout)
                 parallel_inputs_run.append(new_tensor)
         return tuple(parallel_inputs_run)
+
+    def set_parallel_input_with_inputs(self, *inputs):
+        """
+        Slice inputs tensors by parallel strategies, and set the sliced inputs to `_parallel_input_run`
+
+        Args:
+            inputs (tuple): inputs of construct method.
+        """
+        self._parallel_inputs_run = self._load_inputs(*inputs)
 
     def _get_construct_inputs_number_and_name(self):
         """Compute self._construct_inputs_names and self._construct_inputs_num"""
@@ -279,6 +370,15 @@ class Cell:
         self._construct_inputs_names = self._construct_inputs_names[1:self._construct_inputs_num]
         self._construct_inputs_num = self._construct_inputs_num - 1
 
+    def compile(self, *inputs):
+        """
+        Compiles cell.
+
+        Args:
+            inputs (tuple): Input parameters.
+        """
+        _executor.compile(self, *inputs, phase=self.phase, auto_parallel_mode=self._auto_parallel_mode)
+
     def compile_and_run(self, *inputs):
         """
         Compiles and runs cell.
@@ -289,12 +389,14 @@ class Cell:
         Returns:
             Object, the result of executing.
         """
-        _, compile_flag = _executor.compile(self, *inputs, phase=self.phase)
+        _executor.compile(self, *inputs, phase=self.phase, auto_parallel_mode=self._auto_parallel_mode)
 
-        if _get_parallel_mode() in ["auto_parallel", "semi_auto_parallel"]:
-            if inputs and isinstance(inputs[0], Tensor) and inputs[0].virtual_flag and (not compile_flag):
+        if self._auto_parallel_mode:
+            if inputs and isinstance(inputs[0], Tensor) and inputs[0].virtual_flag:
+                # get parallel inputs in sink mode, parallel inputs set in _executor.compile
                 parallel_inputs_run = self._parallel_inputs_run
             else:
+                # set parallel inputs in normal mode
                 self._parallel_inputs_run = self._load_inputs(*inputs)
                 parallel_inputs_run = self._parallel_inputs_run
             return _executor(self, *parallel_inputs_run, phase=self.phase)
@@ -369,6 +471,18 @@ class Cell:
             Tensor, returns the computed result.
         """
         raise NotImplementedError
+
+    def init_parameters_data(self, recurse=True, auto_parallel_mode=False):
+        """Init parameters' data."""
+        for param in self.get_parameters(expand=recurse):
+            if not auto_parallel_mode:
+                param.init_data()
+            elif param.name not in self.parameter_layout_dict:
+                logger.info("Layout dict does not contain the key %s.", param.name)
+                param.init_data(set_sliced=True)
+            else:
+                layout = self.parameter_layout_dict[param.name]
+                param.init_data(layout, set_sliced=True)
 
     def parameters_dict(self, recurse=True):
         """
@@ -600,6 +714,11 @@ class Cell:
             cell.add_flags_recursive(**flags)
         return self
 
+    def get_flags(self):
+        if not hasattr(self, "_mindspore_flags"):
+            self._mindspore_flags = {}
+        return self._mindspore_flags
+
     def to_float(self, dst_type):
         """
         Add cast on all inputs of cell and child cells to run with certain float type.
@@ -622,6 +741,10 @@ class Cell:
             raise ValueError("dst_type should inside float32 or float16.")
         flags = {'fp16': dst_type == mstype.float16, 'fp32': dst_type == mstype.float32}
         self.add_flags_recursive(**flags)
+        return self
+
+    def set_grad(self, mode=True):
+        self.add_flags_recursive(requires_grad=mode)
         return self
 
     def set_train(self, mode=True):
@@ -651,3 +774,39 @@ class Cell:
         """
         self.add_flags_recursive(broadcast_flag=mode)
         return self
+
+    def set_auto_parallel(self):
+        """
+        Set the cell to auto parallel mode.
+
+        Note:
+            If a cell needs to use auto parallel or semi auto parallel mode for training, evaluation or prediction,
+            this interface needs to be called for the cell.
+        """
+        self._auto_parallel_mode = True
+        self.add_flags(auto_parallel=True)
+        self._get_construct_inputs_number_and_name()
+
+    def _hook_construct(self, *inputs):
+        """Hook construct method to replace original construct method when hook function enabled."""
+        inputs = self._backward_hook(*inputs)
+        inputs = self.construct(inputs)
+        outputs = self._backward_hook(inputs)
+        return outputs
+
+    def register_backward_hook(self, fn):
+        """
+        Set the cell backward hook function.
+
+        Note:
+            fn should be defined as following code shows, `cell_name` is the name of registered cell,
+            `grad_input` is gradient passed to the cell, `grad_output` is the gradient computed and pass to
+            next cell or primitve, which may be modified and return.
+            >>> hook_fn(cell_name, grad_input, grad_output) -> Tensor or None
+
+        Args:
+            fn (function): Specifies the hook function with grad as input.
+
+        """
+        self._backward_hook = HookBackward(fn, self.cls_name + "(" + str(id(self)) + ")")
+        self._enable_hook = True

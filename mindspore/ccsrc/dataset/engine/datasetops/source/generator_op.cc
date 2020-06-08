@@ -13,12 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "dataset/core/global_context.h"
 #include "dataset/engine/datasetops/source/generator_op.h"
+#include <iomanip>
+#include "dataset/core/global_context.h"
 #include "dataset/engine/db_connector.h"
 #include "dataset/engine/data_buffer.h"
 #include "dataset/engine/execution_tree.h"
 #include "dataset/util/task_manager.h"
+#include "dataset/engine/opt/pass.h"
 
 namespace mindspore {
 namespace dataset {
@@ -31,7 +33,7 @@ GeneratorOp::Builder::Builder() {
 
 Status GeneratorOp::Builder::SanityCheck() {
   // Update queue size to fit the prefetch requirement
-  MS_LOG(INFO) << "Generator operator sanity check, prefetch size is " << build_prefetch_size_ << ".";
+  MS_LOG(DEBUG) << "Generator operator sanity check, prefetch size is " << build_prefetch_size_ << ".";
   if (build_prefetch_size_ > 0) {
     build_op_connector_size_ = (build_prefetch_size_ + build_buffer_size_ - 1) / build_buffer_size_;
   }
@@ -58,6 +60,26 @@ GeneratorOp::GeneratorOp(py::function generator_function, std::vector<std::strin
 
 GeneratorOp::~GeneratorOp() { this->Dealloc(); }
 
+void GeneratorOp::Print(std::ostream &out, bool show_all) const {
+  // Always show the id and name as first line regardless if this summary or detailed print
+  out << "(" << std::setw(2) << operator_id_ << ") <GeneratorOp>:";
+  if (!show_all) {
+    // Call the super class for displaying any common 1-liner info
+    PipelineOp::Print(out, show_all);
+    // Then show any custom derived-internal 1-liner info for this op
+    out << "\n";
+  } else {
+    // Call the super class for displaying any common detailed info
+    PipelineOp::Print(out, show_all);
+    // Then show any custom derived-internal stuff
+    out << "\nColumn names:\n";
+    for (int i = 0; i < column_names_.size(); ++i) {
+      out << "\n  " << column_names_[i];
+    }
+    out << "\n\n";
+  }
+}
+
 void GeneratorOp::Dealloc() noexcept {
   // Setup GIL state
   PyGILState_STATE gstate;
@@ -72,10 +94,10 @@ void GeneratorOp::Dealloc() noexcept {
 Status GeneratorOp::Init() {
   // Reset BufferID
   buffer_id_ = 0;
-  // Setup column names map.
-  if (column_names_map_.empty()) {
+  // Setup column names map (base class field)
+  if (column_name_id_map_.empty()) {
     for (int i = 0; i < column_names_.size(); ++i) {
-      (void)column_names_map_.insert(std::make_pair(column_names_[i], i));
+      column_name_id_map_[column_names_[i]] = i;
     }
   }
   Status ret;
@@ -168,14 +190,13 @@ Status GeneratorOp::FillBuffer(TensorQTable *tt) {
 Status GeneratorOp::operator()() {
   // Handshake with TaskManager to synchronize thread creation
   TaskManager::FindMe()->Post();
-  wp_.Register(tree_->AllTasks());
+  RETURN_IF_NOT_OK(wp_.Register(tree_->AllTasks()));
   std::unique_ptr<DataBuffer> fetched_buffer;
   bool eof = false;
   while (!eof) {
     // Create new buffer each iteration
-    fetched_buffer = mindspore::make_unique<DataBuffer>(buffer_id_++, DataBuffer::kDeBFlagNone);
-    fetched_buffer->set_column_name_map(column_names_map_);
-    std::unique_ptr<TensorQTable> fetched_table = mindspore::make_unique<TensorQTable>();
+    fetched_buffer = std::make_unique<DataBuffer>(buffer_id_++, DataBuffer::kDeBFlagNone);
+    std::unique_ptr<TensorQTable> fetched_table = std::make_unique<TensorQTable>();
     bool eoe = false;
     {
       py::gil_scoped_acquire gil_acquire;
@@ -200,15 +221,15 @@ Status GeneratorOp::operator()() {
     }
     if (eoe) {
       // Push out EOE upon StopIteration exception from generator
-      MS_LOG(INFO) << "Generator operator sends out EOE.";
-      std::unique_ptr<DataBuffer> eoe_buffer = mindspore::make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOE);
+      MS_LOG(DEBUG) << "Generator operator sends out EOE.";
+      std::unique_ptr<DataBuffer> eoe_buffer = std::make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOE);
       RETURN_IF_NOT_OK(out_connector_->Add(0, std::move(eoe_buffer)));
       if (!BitTest(op_ctrl_flags_, kDeOpRepeated) || BitTest(op_ctrl_flags_, kDeOpLastRepeat)) {
         // If last repeat or not repeated, push out EOF and exit master loop
-        MS_LOG(INFO) << "Generator operator sends out EOF.";
-        std::unique_ptr<DataBuffer> eof_buffer = mindspore::make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOF);
+        MS_LOG(DEBUG) << "Generator operator sends out EOF.";
+        std::unique_ptr<DataBuffer> eof_buffer = std::make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOF);
         RETURN_IF_NOT_OK(out_connector_->Add(0, std::move(eof_buffer)));
-        MS_LOG(INFO) << "Generator operator main execution loop complete.";
+        MS_LOG(DEBUG) << "Generator operator main execution loop complete.";
         eof = true;
       } else {
         // Waiting for repeatOp to start new epoch
@@ -229,6 +250,12 @@ Status GeneratorOp::Reset() {
   // Wake up master thread
   wp_.Set();
   return Status(StatusCode::kOK, "GeneratorOp Reset Succeed");
+}
+
+// Visitor accept method for NodePass
+Status GeneratorOp::Accept(NodePass *p, bool *modified) {
+  // Downcast shared pointer then call visitor
+  return p->RunOnNode(std::static_pointer_cast<GeneratorOp>(shared_from_this()), modified);
 }
 }  // namespace dataset
 }  // namespace mindspore

@@ -127,15 +127,9 @@ class NestingSpecs {
       return;
     }
 
-    auto counter_p = dynamic_pointer_cast<CounterAnfNodeCollector>(results);
+    auto counter_p = dynamic_pointer_cast<CounterAnfNodeCollector<AnfNodePtr>>(results);
     if (counter_p != nullptr) {
       CheckAnfNodeCounter(counter_p);
-      return;
-    }
-
-    auto nodes = dynamic_pointer_cast<NodesCollector>(results);
-    if (nodes != nullptr) {
-      CheckNodes(nodes);
       return;
     }
   }
@@ -199,34 +193,8 @@ class NestingSpecs {
     ASSERT_EQ(clean_results, expected_);
   }
 
-  void CheckNodes(std::shared_ptr<NodesCollector> results) {
-    std::map<std::string, std::set<std::string>> clean_results;
-    for (auto& iter : results->nodes_analysis()) {
-      auto key = iter.first;
-      auto value = iter.second;
-      if (key == nullptr) {
-        continue;
-      }
-      std::string k = Name(key);
-
-      std::set<std::string> v;
-      for (auto& node : value) {
-        if (!node->isa<CNode>() && !Name(node).empty()) {
-          v.insert(Name(node));
-        }
-      }
-
-      if (!v.empty()) {
-        clean_results[k] = v;
-      }
-    }
-
-    ASSERT_EQ(clean_results, expected_);
-  }
-
   // Add CheckNesting function
-
-  void CheckAnfNodeCounter(std::shared_ptr<CounterAnfNodeCollector> results) {
+  void CheckAnfNodeCounter(std::shared_ptr<CounterAnfNodeCollector<AnfNodePtr>> results) {
     std::map<std::string, std::set<std::string>> clean_results;
     for (auto& iter : results->count_nodes_map()) {
       auto key = iter.first;
@@ -439,18 +407,10 @@ std::vector<FuncGraphPtr> MakeNestedGraph2() {
 }
 
 // Add TestManager::CheckManager function to checkout the result
-
 void TestManager::CheckAnalysisSize(std::shared_ptr<FuncGraphManager> mng) {
   auto size = mng->func_graphs().size();
 
-  ASSERT_EQ(size + 1, mng->nodes().size());
   ASSERT_EQ(size, mng->free_variables_total().size());
-  ASSERT_EQ(size, mng->valuenodes().size());
-  ASSERT_EQ(size, mng->free_variables_direct().size());
-  ASSERT_EQ(size, mng->func_graph_valuenodes().size());
-  ASSERT_EQ(size, mng->func_graph_parents_direct().size());
-  ASSERT_EQ(size, mng->func_graph_users().size());
-  ASSERT_EQ(size, mng->func_graphs_used().size());
 }
 
 TEST_F(TestManager, test_scalar_add_manual) {
@@ -494,35 +454,26 @@ TEST_F(TestManager, test_nested_manual) {
   ASSERT_EQ(1, mng->roots().size());
   CheckAnalysisSize(mng);
 
-  auto nodes = mng->nodes();
-  ASSERT_EQ(3, nodes[nullptr].size());
-  ASSERT_EQ(2, nodes[f].size());
-  ASSERT_EQ(1, nodes[g].size());
+  ASSERT_EQ(2, f->nodes().size());
+  ASSERT_EQ(1, g->nodes().size());
 
   auto users = mng->node_users();
   for (auto& iter : users) {
     ASSERT_EQ(1, iter.second.size());
   }
 
-  auto graphs_used = mng->func_graphs_used();
-  ASSERT_EQ(1, graphs_used[f].size());
-  ASSERT_EQ(0, graphs_used[g].size());
+  ASSERT_EQ(1, f->func_graphs_used().size());
+  ASSERT_EQ(0, g->func_graphs_used().size());
 
-  auto graph_users = mng->func_graph_users();
-  ASSERT_EQ(0, graph_users[f].size());
-  ASSERT_EQ(1, graph_users[g].size());
-
-  auto fv_direct = mng->free_variables_direct();
-  ASSERT_EQ(0, fv_direct[f].size());
-  ASSERT_EQ(1, fv_direct[g].size());
+  ASSERT_EQ(0, f->free_variables().size());
+  ASSERT_EQ(1, g->free_variables().size());
 
   auto fv_total = mng->free_variables_total();
   ASSERT_EQ(0, fv_total[f].size());
   ASSERT_EQ(1, fv_total[g].size());
 
-  auto graph_valuenodes = mng->func_graph_valuenodes();
-  ASSERT_EQ(0, graph_valuenodes[f].size());
-  ASSERT_EQ(1, graph_valuenodes[g].size());
+  ASSERT_EQ(0, f->func_graph_cnodes_index().size());
+  ASSERT_EQ(1, g->func_graph_cnodes_index().size());
 }
 
 TEST_F(TestManager, test_deep_nested2_manual) {
@@ -540,7 +491,7 @@ TEST_F(TestManager, test_deep_nested2_manual) {
 
   ASSERT_EQ(3, mng->func_graphs().size());
   ASSERT_EQ(1, mng->roots().size());
-  ASSERT_EQ(4, mng->nodes().size());
+  ASSERT_EQ(4, gfn->nodes().size());
   ASSERT_EQ(20, mng->all_nodes().size());
   ASSERT_EQ(25, mng->node_users().size());
   CheckAnalysisSize(mng);
@@ -604,7 +555,6 @@ TEST_F(TestManager, test_deep_nested_manual) {
 
   ASSERT_EQ(3, mng->func_graphs().size());
   ASSERT_EQ(1, mng->roots().size());
-  ASSERT_EQ(4, mng->nodes().size());
   ASSERT_EQ(20, mng->all_nodes().size());
   CheckAnalysisSize(mng);
 }
@@ -689,12 +639,12 @@ TEST_F(TestManager, test_drop_root) {
   FuncGraphPtr fg = getPyFun("ir_get_fn");
 
   auto mng = Manage(fg);
-  const FuncGraphToAnfNodeMap& nodes = mng->nodes();
-  ASSERT_TRUE(nodes.find(fg) != nodes.end());
+  const auto &fgs = mng->func_graphs();
+  ASSERT_TRUE(fgs.contains(fg));
   FuncGraphSet s;
   s.add(fg);
   mng->MaybeDropFuncGraphs(s);
-  ASSERT_TRUE(nodes.find(fg) != nodes.end());
+  ASSERT_TRUE(fgs.contains(fg));
 }
 
 TEST_F(TestManager, test_keep_roots) {

@@ -67,10 +67,8 @@ AnfNodePtr GetMixedPrecisionCastHelp(const FuncGraphPtr &func_graph, const AnfNo
   } else {
     return param;
   }
-  auto cast_helper = prim::GetPythonOps("_mp_cast_helper", "mindspore.ops.composite.base");
-  auto partial =
-    func_graph->NewCNode({NewValueNode(prim::kPrimPartial), NewValueNode(cast_helper), NewValueNode(dst_type)});
-  auto cast = func_graph->NewCNode({NewValueNode(prim::kCompositeHyperMap), partial, param});
+  auto cast_helper = prim::kPrimMixedPrecisionCast;
+  auto cast = func_graph->NewCNode({NewValueNode(cast_helper), NewValueNode(dst_type), param});
   return cast;
 }
 
@@ -91,6 +89,9 @@ void Parser::BuildMethodMap() {
   stmt_method_map_["FunctionDef"] = &Parser::ParseFunctionDef;
   stmt_method_map_["AugAssign"] = &Parser::ParseAugAssign;
   stmt_method_map_["Global"] = &Parser::ParseGlobal;
+  stmt_method_map_["Break"] = &Parser::ParseBreak;
+  stmt_method_map_["Continue"] = &Parser::ParseContinue;
+  stmt_method_map_["Pass"] = &Parser::ParsePass;
   expr_method_map_["NoneType"] = &Parser::ParseNone;
   expr_method_map_["BinOp"] = &Parser::ParseBinOp;
   expr_method_map_["Name"] = &Parser::ParseName;
@@ -111,6 +112,7 @@ void Parser::BuildMethodMap() {
   expr_method_map_["Index"] = &Parser::ParseIndex;
   expr_method_map_["UnaryOp"] = &Parser::ParseUnaryOp;
   expr_method_map_["Dict"] = &Parser::ParseDict;
+  expr_method_map_["Ellipsis"] = &Parser::ParseEllipsis;
 }
 
 void Parser::UpdateTopFuncGraph(const FuncGraphPtr &func_graph) { top_func_graph_ = FuncGraphWeakPtr(func_graph); }
@@ -189,7 +191,7 @@ void Parser::GenerateArgsDefaultValueForFunction(const FunctionBlockPtr &block, 
 
     namelist_for_default_value.push_back(arg_name);
     if (py::isinstance<py::none>(defaults[i])) {
-      default_values.push_back(NewValueNode(kNullObj));
+      default_values.push_back(NewValueNode(kNull));
     } else {
       default_values.push_back(ParseExprNode(block, defaults[i]));
     }
@@ -271,6 +273,8 @@ FunctionBlockPtr Parser::ParseStatements(FunctionBlockPtr fn_block, const py::ob
     // insert appropriate depended items for the function block if it has a return node
     if (fn_block->func_graph()->get_return() != nullptr) {
       fn_block->InsertDependItemsBeforeReturn();
+      // Skip statements after 'return' (or 'break', 'continue').
+      break;
     }
   }
   return fn_block;
@@ -294,14 +298,14 @@ FunctionBlockPtr Parser::ParseStatement(const FunctionBlockPtr &block, const py:
     TraceManager::EndTrace();
     return stmt_block;
   } else {
-    errcode_ = PARSE_NODE_METHOD_UNSUPPORT;
+    errcode_ = PARSE_NODE_METHOD_UNSUPPORTED;
     py::list location = ast_->CallParserObjMethod(PYTHON_PARSE_GET_LOCATION, node);
     if (location.size() < 2) {
       MS_LOG(EXCEPTION) << "List size should not be less than 2.";
     }
     auto filename = location[0].cast<std::string>();
     auto line_no = location[1].cast<int>();
-    MS_LOG(EXCEPTION) << "unsupported syntax '" << node_name << "' at " << filename << ":" << line_no;
+    MS_LOG(EXCEPTION) << "Unsupported syntax '" << node_name << "' at " << filename << ":" << line_no;
   }
 }
 
@@ -324,11 +328,11 @@ AnfNodePtr Parser::ParseExprNode(const FunctionBlockPtr &block, const py::object
     TraceManager::EndTrace();
     return expr_node;
   } else {
-    errcode_ = PARSE_NODE_METHOD_UNSUPPORT;
+    errcode_ = PARSE_NODE_METHOD_UNSUPPORTED;
     py::list ret = ast_->CallParserObjMethod(PYTHON_PARSE_GET_LOCATION, node);
     auto filename = ret[0].cast<std::string>();
     auto line_no = ret[1].cast<int>();
-    MS_LOG(EXCEPTION) << "unsupported syntax '" << node_name << "' at " << filename << ":" << line_no;
+    MS_LOG(EXCEPTION) << "Unsupported syntax '" << node_name << "' at " << filename << ":" << line_no;
   }
 }
 
@@ -339,7 +343,7 @@ FunctionBlockPtr Parser::ParseExpr(const FunctionBlockPtr &block, const py::obje
   // Expr only have value , no target
   py::tuple expand_info = ast_->CallParserObjMethod(PYTHON_PARSE_EXPAND_EXPR_STATEMENT, node);
 
-  // refer pypthon function expand_expr_statement, expand_info is one of the following:
+  // refer python function expand_expr_statement, expand_info is one of the following:
   // True, expr.value, x
   // True, expr.value
   // False, None, None
@@ -439,6 +443,11 @@ AnfNodePtr Parser::ParseNone(const FunctionBlockPtr &, const py::object &) {
   return NewValueNode(kNone);
 }
 
+AnfNodePtr Parser::ParseEllipsis(const FunctionBlockPtr &, const py::object &) {
+  MS_LOG(DEBUG) << "Process ast Ellipsis";
+  return NewValueNode(kEllipsis);
+}
+
 AnfNodePtr Parser::ParseNum(const FunctionBlockPtr &, const py::object &node) {
   MS_LOG(DEBUG) << "Process ast Num";
   py::object obj = python_adapter::GetPyObjAttr(node, "n");
@@ -453,8 +462,8 @@ AnfNodePtr Parser::ParseNum(const FunctionBlockPtr &, const py::object &node) {
     return NewValueNode(data);
   } else {
     // no else actually
-    MS_LOG(ERROR) << "unsupported Num type : " << (std::string)py::str(obj) << GetLocation(node)->ToString();
-    errcode_ = PARSE_NODE_TYPE_UNKONW;
+    MS_LOG(ERROR) << "Unsupported Num type : " << (std::string)py::str(obj) << GetLocation(node)->ToString();
+    errcode_ = PARSE_NODE_TYPE_UNKOWN;
     return nullptr;
   }
 }
@@ -478,8 +487,8 @@ AnfNodePtr Parser::ParseNameConstant(const FunctionBlockPtr &, const py::object 
     return NewValueNode(kNone);
   } else {
     // no else actually
-    MS_LOG(ERROR) << "unsupported NameConstant type: " << (std::string)py::str(obj) << GetLocation(node)->ToString();
-    errcode_ = PARSE_NODE_TYPE_UNKONW;
+    MS_LOG(ERROR) << "Unsupported NameConstant type: " << (std::string)py::str(obj) << GetLocation(node)->ToString();
+    errcode_ = PARSE_NODE_TYPE_UNKOWN;
     return nullptr;
   }
 }
@@ -497,7 +506,7 @@ AnfNodePtr Parser::ParseCall(const FunctionBlockPtr &block, const py::object &no
   // process function call
   py::object function_ast_node = python_adapter::GetPyObjAttr(node, "func");
   AnfNodePtr call_function_anf_node = ParseExprNode(block, function_ast_node);
-  // function call arguments should be passed in as groups and upacked later using unpack call
+  // function call arguments should be passed in as groups and unpacked later using unpack call
   py::list args = python_adapter::GetPyObjAttr(node, "args");
   std::vector<AnfNodePtr> packed_arguments;
   std::vector<AnfNodePtr> group_arguments;
@@ -596,8 +605,11 @@ AnfNodePtr Parser::ParseAttribute(const FunctionBlockPtr &block, const py::objec
       std::string var_name = "self.";
       std::string attr_name = node.attr("attr").cast<std::string>();
       (void)var_name.append(attr_name);
+      auto attr_obj = ast()->obj().attr(attr_name.c_str());
       if (py::hasattr(ast()->obj(), attr_name.c_str()) &&
-          py::hasattr(ast()->obj().attr(attr_name.c_str()), PYTHON_PRIMITIVE_FLAG)) {
+          (py::hasattr(attr_obj, PYTHON_PRIMITIVE_FLAG) || py::isinstance<py::int_>(attr_obj) ||
+           py::isinstance<py::float_>(attr_obj) || py::isinstance<py::bool_>(attr_obj) ||
+           py::isinstance<py::str>(attr_obj) || data_converter::IsCellInstance(attr_obj))) {
         return block->MakeResolveSymbol(var_name);
       } else {
         return block->ReadVariable(var_name);
@@ -614,7 +626,7 @@ AnfNodePtr Parser::ParseAttribute(const FunctionBlockPtr &block, const py::objec
   py::object value_body = python_adapter::GetPyObjAttr(node, "value");
   AnfNodePtr value_node = ParseExprNode(block, value_body);
   if (value_node == nullptr) {
-    MS_LOG(WARNING) << "Parse Attribut failed";
+    MS_LOG(WARNING) << "Parse attribute failed";
     return nullptr;
   }
 
@@ -637,7 +649,7 @@ AnfNodePtr Parser::ParseCompare(const FunctionBlockPtr &block, const py::object 
   // which there is two ops , but we only support one now
   py::list ops = python_adapter::GetPyObjAttr(node, "ops");
   if (ops.size() > MAX_COMPARISON_OPS_SUPPORTED) {
-    MS_LOG(ERROR) << "mindspore does not support comparison with operators more than one now, ops size =" << ops.size();
+    MS_LOG(ERROR) << "MindSpore does not support comparison with operators more than one now, ops size =" << ops.size();
     return nullptr;
   }
 
@@ -817,7 +829,7 @@ AnfNodePtr Parser::ParseIndex(const FunctionBlockPtr &block, const py::object &n
 
 // process a  UnaryOp, +a, -b
 AnfNodePtr Parser::ParseUnaryOp(const FunctionBlockPtr &block, const py::object &node) {
-  MS_LOG(DEBUG) << "process ast UnaryOp";
+  MS_LOG(DEBUG) << "Process ast UnaryOp";
   py::object op = python_adapter::GetPyObjAttr(node, "op");
 
   MS_EXCEPTION_IF_NULL(block);
@@ -831,7 +843,7 @@ AnfNodePtr Parser::ParseUnaryOp(const FunctionBlockPtr &block, const py::object 
 
 // process a dict ast node expression
 AnfNodePtr Parser::ParseDict(const FunctionBlockPtr &block, const py::object &node) {
-  MS_LOG(DEBUG) << "process ast Dict";
+  MS_LOG(DEBUG) << "Process ast Dict";
   py::list keys = node.attr("keys");
   py::list values = node.attr("values");
   std::vector<AnfNodePtr> key_nodes;
@@ -849,7 +861,7 @@ AnfNodePtr Parser::ParseDict(const FunctionBlockPtr &block, const py::object &no
 
 // process a  augment assign such as a += b;
 FunctionBlockPtr Parser::ParseAugAssign(const FunctionBlockPtr &block, const py::object &node) {
-  MS_LOG(DEBUG) << "process ast AugAssign";
+  MS_LOG(DEBUG) << "Process ast AugAssign";
   py::object op = python_adapter::GetPyObjAttr(node, "op");
 
   MS_EXCEPTION_IF_NULL(block);
@@ -864,10 +876,10 @@ FunctionBlockPtr Parser::ParseAugAssign(const FunctionBlockPtr &block, const py:
   } else if (ast_->IsClassMember(target_node)) {
     read_node = ParseAttribute(block, target_node);
   } else {
-    MS_LOG(EXCEPTION) << "not supported augassign";
+    MS_LOG(EXCEPTION) << "Not supported augassign";
   }
   if (read_node == nullptr) {
-    MS_LOG(EXCEPTION) << "can not get target node ";
+    MS_LOG(EXCEPTION) << "Can not get target node ";
   }
 
   py::object value = python_adapter::GetPyObjAttr(node, "value");
@@ -879,7 +891,7 @@ FunctionBlockPtr Parser::ParseAugAssign(const FunctionBlockPtr &block, const py:
 
 // process global declaration such as 'global x';
 FunctionBlockPtr Parser::ParseGlobal(const FunctionBlockPtr &block, const py::object &node) {
-  MS_LOG(DEBUG) << "process ast Global";
+  MS_LOG(DEBUG) << "Process ast Global";
   MS_EXCEPTION_IF_NULL(block);
   py::list vars = python_adapter::GetPyObjAttr(node, "names");
   for (auto &item : vars) {
@@ -890,7 +902,7 @@ FunctionBlockPtr Parser::ParseGlobal(const FunctionBlockPtr &block, const py::ob
 
 // process a if statement
 FunctionBlockPtr Parser::ParseIf(const FunctionBlockPtr &block, const py::object &node) {
-  MS_LOG(DEBUG) << "process ast If";
+  MS_LOG(DEBUG) << "Process ast If";
   py::object test_node = python_adapter::GetPyObjAttr(node, "test");
   AnfNodePtr condition_node = ParseExprNode(block, test_node);
   MS_EXCEPTION_IF_NULL(block);
@@ -934,14 +946,11 @@ FunctionBlockPtr Parser::ParseIf(const FunctionBlockPtr &block, const py::object
 }
 
 FunctionBlockPtr Parser::ParseWhile(const FunctionBlockPtr &block, const py::object &node) {
-  MS_LOG(DEBUG) << "process ast While";
+  MS_LOG(DEBUG) << "Process ast While";
   MS_EXCEPTION_IF_NULL(block);
   MS_LOG(INFO) << "Parse while statement";
   TraceManager::DebugTrace(std::make_shared<TraceWhileHeader>(block->func_graph()->debug_info()));
   FunctionBlockPtr header_block = MakeFunctionBlock(*this);
-  if (MsContext::GetInstance()->is_multi_graph_sink()) {
-    header_block->func_graph()->set_flags(FUNC_GRAPH_FLAG_IGNORE_VALUES, true);
-  }
   TraceManager::EndTrace();
 
   TraceManager::DebugTrace(std::make_shared<TraceWhileBody>(block->func_graph()->debug_info()));
@@ -958,16 +967,28 @@ FunctionBlockPtr Parser::ParseWhile(const FunctionBlockPtr &block, const py::obj
 
   py::object test_node = python_adapter::GetPyObjAttr(node, "test");
   AnfNodePtr condition_node = ParseExprNode(header_block, test_node);
+  condition_node = header_block->ForceToWhileCond(condition_node);
   body_block->Mature();
   header_block->ConditionalJump(condition_node, body_block, after_block);
 
+  // Parse loop body statements with loop context.
+  LoopContext loop_context{&loops_, header_block, nullptr};
   py::object body_node = python_adapter::GetPyObjAttr(node, "body");
   FunctionBlockPtr after_body = ParseStatements(body_block, body_node);
   if (after_body->func_graph()->get_return() == nullptr) {
     after_body->Jump(header_block, nullptr);
   }
+
   header_block->Mature();
   after_block->Mature();
+  auto &end_block = loop_context.EndBlock();
+  if (end_block) {
+    // end_block exists if we encounter 'break' in loop body.
+    after_block->Jump(end_block, nullptr);
+    end_block->Mature();
+    return end_block;
+  }
+  // No 'break', no end_block.
   return after_block;
 }
 
@@ -999,7 +1020,7 @@ FunctionBlockPtr Parser::GenerateBlockInFor(const TraceInfoPtr &trace_info) {
 //    x, it = next(it)
 //    body
 FunctionBlockPtr Parser::ParseFor(const FunctionBlockPtr &block, const py::object &node) {
-  MS_LOG(DEBUG) << "process ast For";
+  MS_LOG(DEBUG) << "Process ast For";
   MS_EXCEPTION_IF_NULL(block);
   AnfNodePtr op_iter = block->MakeResolveOperation(NAMED_PRIMITIVE_ITER);
   AnfNodePtr op_next = block->MakeResolveOperation(NAMED_PRIMITIVE_NEXT);
@@ -1044,17 +1065,28 @@ FunctionBlockPtr Parser::ParseFor(const FunctionBlockPtr &block, const py::objec
   body_block->Mature();
   header_block->ConditionalJump(cond_apply, body_block, after_block);
 
+  // Parse loop body statements with loop context.
+  LoopContext loop_context{&loops_, header_block, iter2_app};
   py::object body_node = python_adapter::GetPyObjAttr(node, "body");
   FunctionBlockPtr after_body_block = ParseStatements(body_block, body_node);
   if (after_body_block->func_graph()->get_return() == nullptr) {
     after_body_block->Jump(header_block, iter2_app);
   }
+
   header_block->Mature();
   after_block->Mature();
+  auto &end_block = loop_context.EndBlock();
+  if (end_block) {
+    // end_block exists if we encounter 'break' in loop body.
+    after_block->Jump(end_block, nullptr);
+    end_block->Mature();
+    return end_block;
+  }
+  // No 'break', no end_block.
   return after_block;
 }
 AnfNodePtr Parser::ParseIfExp(const FunctionBlockPtr &block, const py::object &node) {
-  MS_LOG(DEBUG) << "process ast IfExp";
+  MS_LOG(DEBUG) << "Process ast IfExp";
   MS_EXCEPTION_IF_NULL(block);
   py::object test_node = python_adapter::GetPyObjAttr(node, "test");
   AnfNodePtr condition_node = ParseExprNode(block, test_node);
@@ -1131,9 +1163,30 @@ void Parser::HandleAssignClassMember(const FunctionBlockPtr &block, const py::ob
   AnfNodePtr target_node = ParseExprNode(block, targ);
   MS_EXCEPTION_IF_NULL(target_node);
 
+  std::string attr_name = targ.attr("attr").cast<std::string>();
   std::string var_name = "self.";
-  (void)var_name.append(targ.attr("attr").cast<std::string>());
+  (void)var_name.append(attr_name);
   MS_LOG(DEBUG) << "assign " << var_name;
+
+  // Get targ location info for error printing
+  py::list location = ast_->CallParserObjMethod(PYTHON_PARSE_GET_LOCATION, targ);
+  if (location.size() < 2) {
+    MS_LOG(EXCEPTION) << "List size should not be less than 2.";
+  }
+  auto filename = location[0].cast<std::string>();
+  auto line_no = location[1].cast<int>();
+  // Now only support the self.xxx = yyy, where self.xxx must be a defined Parameter type
+  if (!py::hasattr(ast()->obj(), common::SafeCStr(attr_name))) {
+    MS_EXCEPTION(TypeError) << "'" << var_name << "' should be a Parameter, but not defined, at " << filename << ":"
+                            << line_no;
+  }
+  auto obj = ast()->obj().attr(common::SafeCStr(attr_name));
+  auto obj_type = obj.attr("__class__").attr("__name__");
+  if (!py::hasattr(obj, "__parameter__")) {
+    MS_EXCEPTION(TypeError) << "'" << var_name << "' should be a Parameter, but got '"
+                            << py::str(obj).cast<std::string>() << "' with type '"
+                            << py::str(obj_type).cast<std::string>() << "' at " << filename << ":" << line_no;
+  }
 
   MS_EXCEPTION_IF_NULL(block);
   block->WriteVariable(var_name, assigned_node);
@@ -1153,8 +1206,18 @@ void Parser::HandleAssignSubscript(const FunctionBlockPtr &block, const py::obje
   // getitem apply should return the sequence data structure itself
   std::string var_name = "";
   if (ast_->IsClassMember(value_obj)) {
-    var_name = "self.";
-    (void)var_name.append(value_obj.attr("attr").cast<std::string>());
+    std::string attr_name = value_obj.attr("attr").cast<std::string>();
+    var_name = "self." + attr_name;
+    if (!py::hasattr(ast()->obj(), common::SafeCStr(attr_name))) {
+      MS_EXCEPTION(TypeError) << "'" << var_name << "' was not defined in the class '__init__' function.";
+    }
+    auto obj = ast()->obj().attr(common::SafeCStr(attr_name));
+    auto obj_type = obj.attr("__class__").attr("__name__");
+    if (!py::hasattr(obj, "__parameter__")) {
+      MS_EXCEPTION(TypeError) << "'" << var_name << "' should be a Parameter, but got '"
+                              << py::str(obj).cast<std::string>() << "' with type '"
+                              << py::str(obj_type).cast<std::string>() << "'.";
+    }
   } else {
     var_name = value_obj.attr("id").cast<std::string>();
   }
@@ -1163,7 +1226,7 @@ void Parser::HandleAssignSubscript(const FunctionBlockPtr &block, const py::obje
 
 void Parser::WriteAssignVars(const FunctionBlockPtr &block, const py::object &targ, const AnfNodePtr &value_node) {
   MS_EXCEPTION_IF_NULL(value_node);
-  MS_LOG(DEBUG) << "process WriteAssignVars";
+  MS_LOG(DEBUG) << "Process WriteAssignVars";
   auto ast_type = AstSubType(py::cast<int32_t>(ast_->CallParserObjMethod(PYTHON_PARSE_GET_AST_TYPE, targ)));
   if (ast_type == AST_SUB_TYPE_NAME) {
     HandleAssignName(block, targ, value_node);
@@ -1174,12 +1237,12 @@ void Parser::WriteAssignVars(const FunctionBlockPtr &block, const py::object &ta
   } else if (ast_->IsClassMember(targ)) {
     HandleAssignClassMember(block, targ, value_node);
   } else {
-    MS_LOG(EXCEPTION) << "not supported assign type: " << ast_type
+    MS_LOG(EXCEPTION) << "Not supported assign type: " << ast_type
                       << " NodeInfo: " << trace::GetDebugInfo(value_node->debug_info());
   }
 }
 
-// process a assign statement , such as a =b,  a,b = tup
+// process a assign statement, such as a =b,  a,b = tup
 FunctionBlockPtr Parser::ParseAssign(const FunctionBlockPtr &block, const py::object &node) {
   MS_LOG(DEBUG) << "Process ast assgin";
   py::object value_object = python_adapter::GetPyObjAttr(node, "value");
@@ -1193,6 +1256,52 @@ FunctionBlockPtr Parser::ParseAssign(const FunctionBlockPtr &block, const py::ob
     WriteAssignVars(block, target_node, value_node);
   }
 
+  return block;
+}
+
+FunctionBlockPtr Parser::ParseBreak(const FunctionBlockPtr &block, const py::object &node) {
+  if (loops_.empty()) {
+    // Report error if loop context not set for the 'break' statement.
+    py::list location = ast_->CallParserObjMethod(PYTHON_PARSE_GET_LOCATION, node);
+    if (location.size() < 2) {
+      MS_LOG(EXCEPTION) << "List size should not be less than 2.";
+    }
+    auto filename = location[0].cast<std::string>();
+    auto line_no = location[1].cast<int>();
+    MS_LOG(EXCEPTION) << "Unexpected 'break' at " << filename << ":" << line_no;
+  }
+  // Get current loop.
+  Loop &loop = loops_.top();
+  if (loop.end == nullptr) {
+    // Create end_block if it is not existed.
+    TraceManager::DebugTrace(std::make_shared<TraceLoopEnd>(block->func_graph()->debug_info()));
+    loop.end = MakeFunctionBlock(*this);
+    TraceManager::EndTrace();
+  }
+  // Jump to the end_block.
+  block->Jump(loop.end, nullptr);
+  return block;
+}
+
+FunctionBlockPtr Parser::ParseContinue(const FunctionBlockPtr &block, const py::object &node) {
+  if (loops_.empty()) {
+    // Report error if loop context not set for the 'continue' statement.
+    py::list location = ast_->CallParserObjMethod(PYTHON_PARSE_GET_LOCATION, node);
+    if (location.size() < 2) {
+      MS_LOG(EXCEPTION) << "List size should not be less than 2.";
+    }
+    auto filename = location[0].cast<std::string>();
+    auto line_no = location[1].cast<int>();
+    MS_LOG(EXCEPTION) << "Unexpected 'continue' at " << filename << ":" << line_no;
+  }
+  // Jump to the header of the loop with iterator called.
+  Loop &loop = loops_.top();
+  block->Jump(loop.header, loop.iterator);
+  return block;
+}
+
+FunctionBlockPtr Parser::ParsePass(const FunctionBlockPtr &block, const py::object &node) {
+  // We just bypass 'pass' statement.
   return block;
 }
 
@@ -1340,7 +1449,7 @@ bool ParseAst::UpdateFuncGraphFlags(const FuncGraphPtr &func_graph) {
   py::dict flags = python_adapter::GetPyObjAttr(obj_, PYTHON_EXTERN_MINDSPORE_FLAG);
   for (auto &item : flags) {
     if (!py::isinstance<py::str>(item.first) || !py::isinstance<py::bool_>(item.second)) {
-      MS_LOG(ERROR) << "type error in flags dict convert";
+      MS_LOG(ERROR) << "Type error in flags dict convert";
       return false;
     }
     auto name = py::cast<std::string>(item.first);

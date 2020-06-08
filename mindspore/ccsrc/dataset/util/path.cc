@@ -27,7 +27,7 @@
 namespace mindspore {
 namespace dataset {
 #ifdef _WIN32
-char Path::_separator = '\\';
+char Path::separator_ = '\\';
 #else
 char Path::separator_ = '/';
 #endif
@@ -112,7 +112,7 @@ bool Path::Exists() {
   struct stat sb;
   int rc = stat(common::SafeCStr(path_), &sb);
   if (rc == -1 && errno != ENOENT) {
-    MS_LOG(INFO) << "Unable to query the status of " << path_ << ". Errno = " << errno << ".";
+    MS_LOG(WARNING) << "Unable to query the status of " << path_ << ". Errno = " << errno << ".";
   }
   return (rc == 0);
 }
@@ -129,7 +129,11 @@ bool Path::IsDirectory() {
 
 Status Path::CreateDirectory() {
   if (!Exists()) {
+#if defined(_WIN32) || defined(_WIN64)
+    int rc = mkdir(common::SafeCStr(path_));
+#else
     int rc = mkdir(common::SafeCStr(path_), 0700);
+#endif
     if (rc) {
       std::ostringstream oss;
       oss << "Unable to create directory " << path_ << ". Errno = " << errno;
@@ -162,10 +166,10 @@ std::string Path::ParentPath() {
 
 Status Path::CreateDirectories() {
   if (IsDirectory()) {
-    MS_LOG(INFO) << "Directory " << toString() << " already exists.";
+    MS_LOG(DEBUG) << "Directory " << toString() << " already exists.";
     return Status::OK();
   } else {
-    MS_LOG(INFO) << "Creating directory " << toString() << ".";
+    MS_LOG(DEBUG) << "Creating directory " << toString() << ".";
     std::string parent = ParentPath();
     if (!parent.empty()) {
       if (Path(parent).CreateDirectories()) {
@@ -203,7 +207,7 @@ Path::DirIterator::~DirIterator() {
 }
 
 Path::DirIterator::DirIterator(Path *f) : dir_(f), dp_(nullptr), entry_(nullptr) {
-  MS_LOG(INFO) << "Open directory " << f->toString() << ".";
+  MS_LOG(DEBUG) << "Open directory " << f->toString() << ".";
   dp_ = opendir(common::SafeCStr(f->toString()));
 }
 

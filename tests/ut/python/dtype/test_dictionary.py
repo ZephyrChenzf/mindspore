@@ -17,6 +17,7 @@
 @Desc   : test_dictionary
 """
 import numpy as np
+import pytest
 
 from mindspore import Tensor, context
 from mindspore.nn import Cell
@@ -28,6 +29,7 @@ context.set_context(mode=context.GRAPH_MODE)
 def Xtest_arg_dict():
     class DictNet(Cell):
         """DictNet definition"""
+
         def __init__(self):
             super(DictNet, self).__init__()
             self.max = P.Maximum()
@@ -48,6 +50,7 @@ def Xtest_arg_dict():
 def test_const_dict():
     class DictNet(Cell):
         """DictNet1 definition"""
+
         def __init__(self):
             super(DictNet, self).__init__()
             self.max = P.Maximum()
@@ -58,6 +61,7 @@ def test_const_dict():
             a = self.max(self.dictionary["x"], self.dictionary["y"])
             b = self.min(self.dictionary["x"], self.dictionary["y"])
             return a + b
+
     net = DictNet()
     net()
 
@@ -65,6 +69,7 @@ def test_const_dict():
 def test_dict_set_or_get_item():
     class DictNet(Cell):
         """DictNet1 definition"""
+
         def __init__(self):
             super(DictNet, self).__init__()
             self.dict_ = {"x": 1, "y": 2}
@@ -85,12 +90,15 @@ def test_dict_set_or_get_item():
             return ret
 
     net = DictNet()
-    assert net() == (88, 99, 4, 5, 6)
+    with pytest.raises(TypeError) as ex:
+        net()
+    assert "'self.dict_' should be a Parameter" in str(ex.value)
 
 
 def test_dict_set_or_get_item_2():
     class DictNet(Cell):
         """DictNet1 definition"""
+
         def __init__(self):
             super(DictNet, self).__init__()
 
@@ -117,6 +125,7 @@ def test_dict_set_or_get_item_2():
 def test_dict_set_or_get_item_3():
     class DictNet(Cell):
         """DictNet1 definition"""
+
         def __init__(self):
             super(DictNet, self).__init__()
             self.dict_ = {"x": Tensor(np.ones([2, 2, 3], np.float32)), "y": 1}
@@ -129,6 +138,39 @@ def test_dict_set_or_get_item_3():
             return self.dict_["x"]
 
     net = DictNet()
-    assert net() == Tensor(np.ones([4, 2, 3], np.float32))
+    with pytest.raises(TypeError) as ex:
+        net()
+    assert "'self.dict_' should be a Parameter" in str(ex.value)
 
 
+def test_dict_set_item():
+    class DictSetNet(Cell):
+        def __init__(self):
+            super(DictSetNet, self).__init__()
+            self.attrs = ("abc", "edf", "ghi", "jkl")
+
+        def construct(self, x):
+            my_dict = {"def": x, "abc": x, "edf": x, "ghi": x, "jkl": x}
+            for i in range(len(self.attrs)):
+                my_dict[self.attrs[i]] = x - i
+            return my_dict["jkl"], my_dict["edf"]
+
+    x = Tensor(np.ones([2, 2, 3], np.float32))
+    net = DictSetNet()
+    _ = net(x)
+
+
+# if the dictionary item does not exist, create a new one
+def test_dict_set_item_create_new():
+    class DictSetNet(Cell):
+        def __init__(self):
+            super(DictSetNet, self).__init__()
+            self.attrs = ("abc", "edf", "ghi", "jkl")
+        def construct(self, x):
+            my_dict = {"def": x}
+            for i in range(len(self.attrs)):
+                my_dict[self.attrs[i]] = x - i
+            return my_dict
+    x = Tensor(np.ones([2, 2, 3], np.float32))
+    net = DictSetNet()
+    _ = net(x)

@@ -12,22 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from mindspore.train.model import Model
+import numpy as np
+
+import mindspore as ms
+import mindspore.common.dtype as DT
+import mindspore.nn as nn
+from mindspore import Tensor
+from mindspore import context
+from mindspore.common.initializer import initializer
+from mindspore.common.parameter import Parameter
+from mindspore.nn import WithLossCell
 from mindspore.nn.loss import SoftmaxCrossEntropyWithLogits
 from mindspore.nn.optim.momentum import Momentum
-from mindspore import Tensor
-import mindspore as ms
-import numpy as np
-from mindspore.ops import operations as P
-import mindspore.nn as nn
-from mindspore.common.parameter import Parameter
-from mindspore.common.initializer import initializer
 from mindspore.ops import functional as F
-from mindspore.nn import WithLossCell
-import mindspore.common.dtype as DT
-from tests.dataset_mock import MindData
+from mindspore.ops import operations as P
+from mindspore.train.model import Model
 from mindspore.train.parallel_utils import ParallelMode
-from mindspore import context
+from tests.dataset_mock import MindData
 
 
 class Dataset(MindData):
@@ -53,6 +54,7 @@ class Dataset(MindData):
 
 class FusedBatchNorm(nn.Cell):
     """Batch Normalization base class."""
+
     def __init__(self,
                  num_features,
                  eps=1e-5,
@@ -87,9 +89,9 @@ class FusedBatchNorm(nn.Cell):
                                     epsilon=self.eps)
         self.sub_mean = P.Sub().set_strategy(((1), (1)))
         self.sub_var = P.Sub().set_strategy(((1), (1)))
-        self.mul_mean = P.Mul().set_strategy(((1, ), ()))
-        self.mul_var = P.Mul().set_strategy(((1, ), ()))
-        self.assign_sub_mean = P.AssignSub().set_strategy(((1, ), (1,)))
+        self.mul_mean = P.Mul().set_strategy(((1,), ()))
+        self.mul_var = P.Mul().set_strategy(((1,), ()))
+        self.assign_sub_mean = P.AssignSub().set_strategy(((1,), (1,)))
         self.assign_sub_var = P.AssignSub().set_strategy(((1), (1)))
         self.sub_mean2 = P.Sub().set_strategy(((1), (1)))
         self.sub_var2 = P.Sub().set_strategy(((1), (1)))
@@ -138,7 +140,6 @@ class FusedBatchNorm(nn.Cell):
                     self.moving_variance)
 
 
-
 class PReLU(nn.Cell):
     """
     PReLU activation function.
@@ -158,6 +159,7 @@ class PReLU(nn.Cell):
         input_data = Tensor(np.random.rand(1, 33, 4, 4), ms.float32)
         output = prelu.construct(input_data)
     """
+
     def __init__(self, channel=1, w=0.25):
         super(PReLU, self).__init__()
         if isinstance(w, (np.float32, float)):
@@ -179,11 +181,10 @@ class PReLU(nn.Cell):
 
 
 class BNNet(nn.Cell):
-    def __init__(self, strategy0, strategy1, strategy2):
+    def __init__(self):
         super(BNNet, self).__init__()
         self.bn = FusedBatchNorm(512)
         self.prelu = PReLU(512)
-
 
     def construct(self, x):
         x = self.bn(x)
@@ -191,13 +192,12 @@ class BNNet(nn.Cell):
         return x
 
 
-def bn_net(strategy0, strategy1, strategy2):
-    return BNNet(strategy0=strategy0, strategy1=strategy1, strategy2=strategy2)
+def bn_net():
+    return BNNet()
 
 
-def bn_common(parallel_mode, train_flag, strategy0=None, strategy1=None, strategy2=None, strategy_loss=None):
+def bn_common(parallel_mode, train_flag, strategy_loss=None):
     context.set_context(mode=context.GRAPH_MODE)
-    batch_size = 32
     learning_rate = 0.1
     momentum = 0.9
     epoch_size = 2
@@ -206,7 +206,7 @@ def bn_common(parallel_mode, train_flag, strategy0=None, strategy1=None, strateg
     predict = Tensor(np.ones([32, 512]), dtype=ms.float32)
     label = Tensor(np.ones([32]), dtype=ms.int32)
     dataset = Dataset(predict, label, 2)
-    net = bn_net(strategy0, strategy1, strategy2)
+    net = bn_net()
 
     loss = SoftmaxCrossEntropyWithLogits(is_grad=False, sparse=True)
     loss.softmax_cross_entropy.set_strategy(strategy_loss)

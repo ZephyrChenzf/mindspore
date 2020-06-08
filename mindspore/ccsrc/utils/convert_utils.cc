@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2020 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,10 +25,13 @@
 #include <cfloat>
 
 #include "pybind11/pybind11.h"
-
-#include "ir/meta_tensor.h"
+#include "pipeline/static_analysis/abstract_value.h"
 #include "pipeline/parse/parse.h"
+#include "pipeline/parse/parse_base.h"
 #include "ir/value.h"
+#include "ir/tensor.h"
+#include "ir/param_value_py.h"
+#include "utils/base_ref_extends.h"
 
 namespace mindspore {
 py::object BuiltinsToPyData(const Any &value);
@@ -70,6 +73,11 @@ py::object ValuePtrToPyData(const ValuePtr &value) {
     py::tuple v(1);
     v[0] = value->cast<tensor::TensorPtr>();
     ret = v[0];
+  } else if (value->isa<tensor::MetaTensor>()) {
+    MS_LOG(DEBUG) << "MetaTensor";
+    py::tuple v(1);
+    v[0] = value->cast<tensor::MetaTensorPtr>();
+    ret = v[0];
   } else if (value->isa<RefKey>()) {
     MS_LOG(DEBUG) << "RefKey";
     py::tuple v(1);
@@ -97,6 +105,15 @@ py::object ValuePtrToPyData(const ValuePtr &value) {
       i++;
     }
     ret = rets;
+  } else if (value->isa<EllipsisObj>()) {
+    ret = parse::python_adapter::CallPyFn(parse::PYTHON_MOD_PARSE_MODULE, parse::PYTHON_PARSE_CLASS_ELLIPSIS);
+  } else if (value->isa<ValueSlice>()) {
+    auto slice = value->cast<ValueSlicePtr>();
+    auto start = ValuePtrToPyData(slice->start());
+    auto end = ValuePtrToPyData(slice->stop());
+    auto step = ValuePtrToPyData(slice->step());
+    ret = parse::python_adapter::CallPyFn(parse::PYTHON_MOD_PARSE_MODULE, parse::PYTHON_PARSE_CLASS_SLICE, start, end,
+                                          step);
   } else if (value->isa<Type>()) {
     py::tuple v(1);
     v[0] = value->cast<TypePtr>();
@@ -106,7 +123,7 @@ py::object ValuePtrToPyData(const ValuePtr &value) {
   } else if (value->isa<None>()) {
     ret = py::none();
   } else {
-    MS_LOG(EXCEPTION) << "Unsupported convert value: " << value->ToString() << " to a PyData.";
+    MS_LOG(INFO) << "Unsupported convert value: " << value->ToString() << " to a PyData.";
   }
   return ret;
 }
@@ -157,7 +174,7 @@ py::object AnyToPyData(const Any &value) {
 
 py::object BaseRefToPyData(const BaseRef &value) {
   py::object ret;
-  MS_LOG(DEBUG) << "BaseRefToPyData " << common::SafeCStr(value.ToString());
+  MS_LOG(DEBUG) << "BaseRefToPyData " << value.ToString();
   if (utils::isa<int>(value) || utils::isa<float>(value) || utils::isa<double>(value) || utils::isa<bool>(value)) {
     ret = BuiltinsToPyData(value);
   } else if (utils::isa<ValuePtr>(value)) {
@@ -201,7 +218,7 @@ bool ValueToBool(const ValuePtr &v, bool *value) {
   } else if (v->isa<tensor::Tensor>()) {
     auto tensor = v->cast<tensor::TensorPtr>();
     MS_EXCEPTION_IF_NULL(tensor);
-
+    (void)tensor->data_sync();
     bool *tensor_data = static_cast<bool *>(tensor->data_c());
     // maybe need to support if tensor is a bool array
     auto vb = tensor_data[0];
@@ -327,7 +344,7 @@ py::object VectorRefToPyData(const VectorRef &value_list) {
   py::object ret;
   MS_LOG(DEBUG) << "vector_ref";
   size_t value_size = value_list.size();
-  py::tuple ref_tuple = py::tuple(value_size);
+  auto ref_tuple = py::tuple(value_size);
   for (size_t i = 0; i < value_size; i++) {
     ref_tuple[i] = BaseRefToPyData(value_list[i]);
   }
@@ -372,5 +389,207 @@ AbstractBasePtr PyListDtype2AbstractTensor(const py::object &shape_obj, const py
   } else {
     MS_LOG(EXCEPTION) << "Python evaluator return invalid shape or type. " << (std::string)py::str(type_obj);
   }
+}
+bool IsGraphOutputValueNodeOrParameter(const AnfNodePtr &output, const py::tuple &args,
+                                       const std::shared_ptr<py::object> &ret_val) {
+  if (output->isa<ValueNode>()) {
+    MS_LOG(INFO) << "Graph's output is a constant. No need to execute.";
+    ValuePtr value = GetValueNode(output);
+    *ret_val = ValuePtrToPyData(value);
+    return true;
+  }
+
+  // Adapter will transform values in __init__() and construct() to parameters, this could cause
+  // inputs (a.k.a args in current function) size less than parameters'.
+  if (output->isa<Parameter>()) {
+    MS_LOG(INFO) << "Graph's output is a parameter. If all params are inputs, no need to execute.";
+    if (args.empty()) {
+      MS_LOG(EXCEPTION) << "Inputs size is 0, let graph to be executed.";
+    }
+    // Find the right parameter as ret_val.
+    auto func_graph = output->func_graph();
+    MS_EXCEPTION_IF_NULL(func_graph);
+    auto params = func_graph->parameters();
+    if (params.empty()) {
+      MS_EXCEPTION(UnknownError) << "Graph's parameters size is 0";
+    }
+    if ((args.size() + func_graph->hyper_param_count()) != params.size()) {
+      MS_LOG(EXCEPTION) << "Input size " << args.size() << " add Parameter count " << func_graph->hyper_param_count()
+                        << " not equal to graph input size " << params.size() << ", let graph to be executed.";
+    }
+
+    auto it = std::find(params.begin(), params.end(), output);
+    if (it == params.end()) {
+      MS_EXCEPTION(UnknownError) << "When graph output is Parameter,  it should be found in graph parameters";
+    }
+    size_t index = it - params.cbegin();
+    if (index >= args.size() + func_graph->hyper_param_count()) {
+      MS_EXCEPTION(UnknownError) << "Index " << index << " equal or larger than args size " << args.size()
+                                 << " add Parameter count " << func_graph->hyper_param_count() << ".";
+    }
+    if (index < args.size()) {
+      *ret_val = args[index];
+    } else {
+      auto param = dyn_cast<Parameter>(params[index]);
+      MS_EXCEPTION_IF_NULL(param);
+      if (!param->has_default()) {
+        MS_LOG(EXCEPTION) << "Can not determine value of Parameter " << index << " (" << param->name() << ")";
+      }
+      auto param_value = std::dynamic_pointer_cast<ParamValuePy>(param->default_param());
+      *ret_val = param_value->value().attr("data");
+    }
+    return true;
+  }
+  return false;
+}
+
+// Isomorphism
+static bool SameNodeShallow(const AnfNodePtr &node1, const AnfNodePtr &node2, FuncGraphPairMapEquiv *equiv_func_graph,
+                            NodeMapEquiv *const equiv_node) {
+  if (equiv_node == nullptr) {
+    MS_LOG(ERROR) << "Invalid equiv_node";
+    return false;
+  }
+  if (equiv_node->count(node1) > 0 && (*equiv_node)[node1] == node2) {
+    return true;
+  }
+  if (IsValueNode<FuncGraph>(node1) && IsValueNode<FuncGraph>(node2)) {
+    return Isomorphic(GetValueNode<FuncGraphPtr>(node1), GetValueNode<FuncGraphPtr>(node2), equiv_func_graph,
+                      equiv_node);
+  }
+  if (node1->isa<ValueNode>() && node2->isa<ValueNode>()) {
+    auto a1 = GetValueNode(node1);
+    auto a2 = GetValueNode(node2);
+    if (a1->isa<Primitive>() && a2->isa<Primitive>()) {
+      return a1->cast<PrimitivePtr>()->name() == a2->cast<PrimitivePtr>()->name();
+    } else if (a1->isa<tensor::Tensor>() && a2->isa<tensor::Tensor>()) {
+      return a1->cast<tensor::TensorPtr>()->ValueEqual(*(a2->cast<tensor::TensorPtr>()));
+    } else {
+      return *a1 == *a2;
+    }
+  }
+  if (node1->isa<Parameter>() && node2->isa<Parameter>()) {
+    auto para1 = node1->cast<ParameterPtr>();
+    auto para2 = node2->cast<ParameterPtr>();
+    if (para1->name() == para2->name()) {
+      return true;
+    }
+    MS_LOG(DEBUG) << "two parameters are not equal.";
+    return false;
+  }
+  MS_LOG(ERROR) << "type error";
+  return false;
+}
+
+static bool SameNode(const AnfNodePtr &node1, const AnfNodePtr &node2, FuncGraphPairMapEquiv *equiv_func_graph,
+                     NodeMapEquiv *const equiv_node) {
+  MS_EXCEPTION_IF_NULL(node1);
+  MS_EXCEPTION_IF_NULL(node2);
+  if (node1->isa<CNode>() && node2->isa<CNode>()) {
+    auto &inputs1 = node1->cast<CNodePtr>()->inputs();
+    auto &inputs2 = node2->cast<CNodePtr>()->inputs();
+    for (std::size_t i = 0; i < inputs1.size(); ++i) {
+      if (!SameNodeShallow(inputs1[i], inputs2[i], equiv_func_graph, equiv_node)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return SameNodeShallow(node1, node2, equiv_func_graph, equiv_node);
+}
+
+static bool SameSubgraph(AnfNodePtr root1, AnfNodePtr root2, FuncGraphPairMapEquiv *equiv_func_graph,
+                         NodeMapEquiv *const equiv_node) {
+  std::unordered_set<AnfNodePtr> done;
+  std::stack<std::pair<AnfNodePtr, AnfNodePtr>> todo;
+
+  todo.push(std::make_pair(root1, root2));
+  while (todo.size() > 0) {
+    AnfNodePtr node1 = todo.top().first;
+    if (done.count(node1) > 0) {
+      todo.pop();
+      continue;
+    }
+    AnfNodePtr node2 = todo.top().second;
+
+    bool condition = false;
+    std::vector<AnfNodePtr> s1 = SuccIncoming(node1);
+    std::vector<AnfNodePtr> s2 = SuccIncoming(node2);
+
+    if (s1.size() != s2.size()) {
+      return false;
+    }
+    for (std::size_t i = 0; i < s1.size(); ++i) {
+      if (done.count(s1[i]) == 0) {
+        todo.push(std::make_pair(s1[i], s2[i]));
+        condition = true;
+      }
+    }
+    if (condition) {
+      continue;
+    }
+    (void)done.insert(node1);
+
+    auto res = SameNode(node1, node2, equiv_func_graph, equiv_node);
+    if (res) {
+      (*equiv_node)[node1] = node2;
+    } else {
+      return false;
+    }
+    todo.pop();
+  }
+  return true;
+}
+
+bool Isomorphic(FuncGraphPtr fg1, FuncGraphPtr fg2, FuncGraphPairMapEquiv *equiv_func_graph,
+                NodeMapEquiv *const equiv_node) {
+  auto fg1_fg2 = std::make_pair(fg1, fg2);
+  if (equiv_func_graph == nullptr) {
+    MS_LOG(ERROR) << "equiv_func_graph not init";
+    return false;
+  }
+  if (equiv_func_graph->find(fg1_fg2) != equiv_func_graph->end()) {
+    return (*equiv_func_graph)[fg1_fg2] != kNotEquiv;
+  }
+  if (fg1 == nullptr || fg2 == nullptr) {
+    MS_LOG(ERROR) << "Invalid function graph";
+    return false;
+  }
+  if (fg1->parameters().size() != fg2->parameters().size()) {
+    MS_LOG(DEBUG) << "parameters size not match";
+    return false;
+  }
+  if (equiv_node != nullptr) {
+    for (std::size_t i = 0; i < fg1->parameters().size(); ++i) {
+      (*equiv_node)[fg1->parameters()[i]] = fg2->parameters()[i];
+    }
+    (*equiv_func_graph)[fg1_fg2] = kPending;
+    auto result = SameSubgraph(fg1->get_return(), fg2->get_return(), equiv_func_graph, equiv_node);
+    (*equiv_func_graph)[fg1_fg2] = EquivState(result);
+    return result;
+  }
+
+  MS_LOG(ERROR) << "equiv_node not init";
+  return false;
+}
+
+tensor::TensorPtr ScalarToTensor(const ScalarPtr &scalar) {
+  if (scalar == nullptr) {
+    MS_EXCEPTION(ArgumentError) << "Nullptr Error!";
+  }
+  tensor::TensorPtr tensor = nullptr;
+  if (scalar->isa<FloatImm>()) {
+    tensor = std::make_shared<tensor::Tensor>(py::float_(GetValue<float>(scalar)), kFloat32);
+  } else if (scalar->isa<IntergerImm>()) {
+    tensor = std::make_shared<tensor::Tensor>(py::int_(GetValue<int>(scalar)), kInt32);
+  } else if (scalar->isa<BoolImm>()) {
+    tensor = std::make_shared<tensor::Tensor>(py::array(py::bool_(GetValue<bool>(scalar))), kBool);
+  } else {
+    auto type = scalar->type();
+    auto type_str = (type == nullptr) ? "nullptr" : type->ToString();
+    MS_LOG(EXCEPTION) << "Invalid scalar type: " << type_str;
+  }
+  MS_EXCEPTION_IF_NULL(tensor);
+  return tensor;
 }
 }  // namespace mindspore

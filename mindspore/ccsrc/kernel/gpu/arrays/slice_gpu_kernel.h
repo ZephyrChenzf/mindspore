@@ -27,22 +27,27 @@ namespace kernel {
 template <typename T>
 class SliceGpuFwdKernel : public GpuKernel {
  public:
-  SliceGpuFwdKernel() : is_strided_slice_(false), input_size_(0), output_size_(0), workspace_size_(0) {}
+  SliceGpuFwdKernel()
+      : is_strided_slice_(false), is_null_input_(false), input_size_(0), output_size_(0), workspace_size_(0) {}
   ~SliceGpuFwdKernel() override = default;
   const std::vector<size_t> &GetInputSizeList() const override { return input_size_list_; }
   const std::vector<size_t> &GetOutputSizeList() const override { return output_size_list_; }
   const std::vector<size_t> &GetWorkspaceSizeList() const override { return workspace_size_list_; }
 
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
-              const std::vector<AddressPtr> &outputs, uintptr_t stream_ptr) override {
+              const std::vector<AddressPtr> &outputs, void *stream_ptr) override {
+    if (is_null_input_) {
+      return true;
+    }
     T *input = GetDeviceAddress<T>(inputs, 0);
     T *output = GetDeviceAddress<T>(outputs, 0);
     if (is_strided_slice_) {
       CalStridedSlice(output_size_ / sizeof(T), input, input_shape_, begin_, size_, strides_, output,
                       reinterpret_cast<cudaStream_t>(stream_ptr));
     } else {
-      CalSlice(output_size_ / sizeof(T), input, input_shape_, begin_, size_, output,
-               reinterpret_cast<cudaStream_t>(stream_ptr));
+      Slice4DKernel(begin_[0], begin_[1], begin_[2], begin_[3], size_[0], size_[1], size_[2], size_[3], input_shape_[0],
+                    input_shape_[1], input_shape_[2], input_shape_[3], input, output,
+                    reinterpret_cast<cudaStream_t>(stream_ptr));
     }
     return true;
   }
@@ -51,15 +56,7 @@ class SliceGpuFwdKernel : public GpuKernel {
       return false;
     }
     auto input_shape = AnfAlgo::GetPrevNodeOutputInferShape(kernel_node, 0);
-    int shape_n = input_shape.size() < 4 ? 1 : SizeToInt(input_shape[input_shape.size() - 4]);
-    int shape_c = input_shape.size() < 3 ? 1 : SizeToInt(input_shape[input_shape.size() - 3]);
-    int shape_h = input_shape.size() < 2 ? 1 : SizeToInt(input_shape[input_shape.size() - 2]);
-    int shape_w = SizeToInt(input_shape[input_shape.size() - 1]);
-    input_shape_.push_back(shape_n);
-    input_shape_.push_back(shape_c);
-    input_shape_.push_back(shape_h);
-    input_shape_.push_back(shape_w);
-
+    ShapeNdTo4d(input_shape, &input_shape_);
     auto strides = AnfAlgo::GetCNodePrimitive(kernel_node)->GetAttr("strides");
     if (strides) {
       strides_ = GetAttr<std::vector<int>>(kernel_node, "strides");
@@ -86,9 +83,16 @@ class SliceGpuFwdKernel : public GpuKernel {
       if (size_[i] < 0) {
         size_[i] = (size_[i] + input_shape_[i]) > 0 ? (size_[i] + input_shape_[i]) : 0;
       }
+      if (begin_[i] == size_[i] && is_strided_slice_) {
+        MS_LOG(WARNING) << "Output is null.";
+        is_null_input_ = true;
+      }
+      if (size_[i] == 0 && strides_[i] > 0) {
+        size_[i] = begin_[i] + 1;
+      }
     }
 
-    input_size_ = IntToSize(shape_n * shape_c * shape_h * shape_w) * sizeof(T);
+    input_size_ = IntToSize(input_shape_[0] * input_shape_[1] * input_shape_[2] * input_shape_[3]) * sizeof(T);
     auto out_shape = AnfAlgo::GetOutputInferShape(kernel_node, 0);
 
     output_size_ = sizeof(T);
@@ -129,10 +133,10 @@ class SliceGpuFwdKernel : public GpuKernel {
     }
     begin_ = GetAttr<std::vector<int>>(kernel_node, "begin");
     for (size_t i = 0; i < input_shape.size(); i++) {
-      if ((begin_[i] > 0 && (begin_[i] >= SizeToInt(input_shape[i]))) ||
+      if ((begin_[i] > 0 && (begin_[i] > SizeToInt(input_shape[i]))) ||
           (begin_[i] < 0 && (std::abs(begin_[i]) > SizeToInt(input_shape[i])))) {
-        MS_LOG(ERROR) << "Error input, out of bounds " << input_shape[i] << " in axis " << i << ".";
-        return false;
+        MS_LOG(INFO) << "Input out of bounds " << input_shape[i] << " in axis " << i << ".";
+        begin_[i] = 0;
       }
     }
     return true;
@@ -147,6 +151,7 @@ class SliceGpuFwdKernel : public GpuKernel {
   std::vector<size_t> workspace_size_list_;
 
   bool is_strided_slice_;
+  bool is_null_input_;
   size_t input_size_;
   size_t output_size_;
   size_t workspace_size_;

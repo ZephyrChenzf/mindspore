@@ -52,14 +52,14 @@ class SoftmaxCrossEntropyWithLogitsGpuKernel : public GpuKernel {
   const std::vector<size_t> &GetOutputSizeList() const override { return output_size_list_; }
   const std::vector<size_t> &GetWorkspaceSizeList() const override { return workspace_size_list_; }
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
-              const std::vector<AddressPtr> &outputs, uintptr_t stream_ptr) override {
+              const std::vector<AddressPtr> &outputs, void *stream_ptr) override {
     if (is_null_input_) {
       return true;
     }
     T *logits_addr = GetDeviceAddress<T>(inputs, 0);
     S *labels_addr = GetDeviceAddress<S>(inputs, 1);
-    T *output1_addr = GetDeviceAddress<T>(outputs, 0);
-    T *output2_addr = GetDeviceAddress<T>(outputs, 1);
+    T *loss_addr = GetDeviceAddress<T>(outputs, 0);
+    T *dlogits_addr = GetDeviceAddress<T>(outputs, 1);
     T *softmax_output_logits = GetDeviceAddress<T>(workspace, 0);
 
     const float alpha = 1;
@@ -69,10 +69,8 @@ class SoftmaxCrossEntropyWithLogitsGpuKernel : public GpuKernel {
                           softmax_output_descriptor_, softmax_output_logits),
       "cudnnSoftmaxForward failed.");
 
-    CrossEntropyWithoutSparse(softmax_output_logits, labels_addr, batch_size_, channel_size_, output1_addr,
-                              reinterpret_cast<cudaStream_t>(stream_ptr));
-    CrossEntropyGradWithoutSparse(softmax_output_logits, labels_addr, batch_size_, channel_size_, output2_addr,
-                                  reinterpret_cast<cudaStream_t>(stream_ptr));
+    CrossEntropy(softmax_output_logits, labels_addr, batch_size_, channel_size_, loss_addr, dlogits_addr,
+                 reinterpret_cast<cudaStream_t>(stream_ptr));
     return true;
   }
   bool Init(const CNodePtr &kernel_node) override {

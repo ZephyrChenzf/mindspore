@@ -12,23 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from mindspore import Tensor
-from mindspore.ops import operations as P
-import mindspore.nn as nn
 import numpy as np
+
 import mindspore.context as context
+import mindspore.nn as nn
+from mindspore import Tensor
 from mindspore.common.initializer import initializer
 from mindspore.common.parameter import Parameter
 from mindspore.communication.management import init, NCCL_WORLD_COMM_GROUP, get_rank, get_group_size
+from mindspore.ops import operations as P
+
 context.set_context(mode=context.GRAPH_MODE, device_target='GPU')
 
 init('nccl')
 rank = get_rank()
 size = get_group_size()
-x = np.ones([3,1,3,3]).astype(np.float32) * 0.01 * (rank + 1)
+x = np.ones([3, 1, 3, 3]).astype(np.float32) * 0.01 * (rank + 1)
+
 
 class Net(nn.Cell):
-    def __init__( self):
+    def __init__(self):
         super(Net, self).__init__()
         self.x1 = Parameter(initializer(Tensor(x), x.shape), name='x1')
         self.x2 = Parameter(initializer(Tensor(x), x.shape), name='x2')
@@ -47,6 +50,7 @@ class Net(nn.Cell):
                 self.all_reduce2(self.x2),
                 self.all_reduce3(self.x3))
 
+
 def test_AllReduce():
     all_reduce = Net()
     output = all_reduce()
@@ -58,16 +62,62 @@ def test_AllReduce():
     diff0 = output[0].asnumpy() - expect0
     error0 = np.ones(shape=expect0.shape) * 1.0e-5
     assert np.all(diff0 < error0)
-    assert (output[0].shape() == expect0.shape)
+    assert output[0].shape() == expect0.shape
 
     expect1 = expect0
     diff1 = output[1].asnumpy() - expect1
     error1 = np.ones(shape=expect1.shape) * 1.0e-5
     assert np.all(diff1 < error1)
-    assert (output[1].shape() == expect1.shape)
+    assert output[1].shape() == expect1.shape
 
     expect2 = expect1
     diff2 = output[2].asnumpy() - expect2
     error2 = np.ones(shape=expect2.shape) * 1.0e-5
     assert np.all(diff2 < error2)
-    assert (output[2].shape() == expect2.shape)
+    assert output[2].shape() == expect2.shape
+
+
+class Net2(nn.Cell):
+    def __init__(self):
+        super(Net2, self).__init__()
+        self.x1 = Parameter(initializer(Tensor(x), x.shape), name='x1')
+
+        self.op0 = "sum"
+        self.op1 = "sum"
+        self.op2 = "sum"
+
+        self.all_reduce1 = P.AllReduce(self.op0, group=NCCL_WORLD_COMM_GROUP)
+        self.all_reduce2 = P.AllReduce(self.op1, group=NCCL_WORLD_COMM_GROUP)
+        self.all_reduce3 = P.AllReduce(self.op2, group=NCCL_WORLD_COMM_GROUP)
+
+    def construct(self):
+        x_ = self.all_reduce1(self.x1)
+        y = self.all_reduce2(x_)
+        z = self.all_reduce3(y)
+        return (x_, y, z)
+
+
+def test_AllReduce2():
+    all_reduce = Net2()
+    output = all_reduce()
+
+    expect0 = np.ones([3, 1, 3, 3]).astype(np.float32) * 0
+    for i in range(size):
+        part = np.ones([3, 1, 3, 3]).astype(np.float32) * 0.01 * (i + 1)
+        expect0 += part
+    diff0 = abs(output[0].asnumpy() - expect0)
+    error0 = np.ones(shape=expect0.shape) * 1.0e-5
+    assert np.all(diff0 < error0)
+    assert output[0].shape() == expect0.shape
+
+    expect1 = expect0 * size
+    diff1 = abs(output[1].asnumpy() - expect1)
+    error1 = np.ones(shape=expect1.shape) * 1.0e-5
+    assert np.all(diff1 < error1)
+    assert output[1].shape() == expect1.shape
+
+    expect2 = expect1 * size
+    diff2 = abs(output[2].asnumpy() - expect2)
+    error2 = np.ones(shape=expect2.shape) * 1.0e-5
+    assert np.all(diff2 < error2)
+    assert output[2].shape() == expect2.shape

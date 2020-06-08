@@ -13,18 +13,18 @@
 # limitations under the License.
 # ============================================================================
 import numpy as np
-from mindspore.ops import prim_attr_register, PrimitiveWithInfer
 from mindspore import Tensor
-
+from mindspore.ops import prim_attr_register, PrimitiveWithInfer
 
 # y = x^2
 class CusSquare(PrimitiveWithInfer):
     """CusSquare definition"""
+    from square_impl import CusSquareImpl
+
     @prim_attr_register
     def __init__(self):
         """init CusSquare"""
         self.init_prim_io_names(inputs=['x'], outputs=['y'])
-        from .square_impl import CusSquare
 
     def vm_impl(self, x):
         x = x.asnumpy()
@@ -35,3 +35,10 @@ class CusSquare(PrimitiveWithInfer):
 
     def infer_dtype(self, data_dtype):
         return data_dtype
+
+    def get_bprop(self):
+        def bprop(data, out, dout):
+            gradient = data * 2
+            dx = gradient * dout
+            return (dx,)
+        return bprop

@@ -27,6 +27,7 @@
 #include "utils/log_adapter.h"
 #include "utils/context/ms_context.h"
 #include "common/utils.h"
+#include "utils/convert_utils.h"
 
 using std::vector;
 using Json = nlohmann::json;
@@ -34,7 +35,7 @@ using Json = nlohmann::json;
 namespace mindspore {
 namespace device {
 namespace ascend {
-ProfilingManager& ProfilingManager::GetInstance() {
+ProfilingManager &ProfilingManager::GetInstance() {
   static ProfilingManager inst;
   return inst;
 }
@@ -44,11 +45,11 @@ ProfilingManager::ProfilingManager() : device_id_(0), prof_handle_(nullptr) {
 }
 
 uint64_t ProfilingManager::GetJobId() const {
-  const char* job_id = std::getenv("JOB_ID");
+  const char *job_id = std::getenv("JOB_ID");
   return ((job_id != nullptr) ? std::strtoul(job_id, nullptr, 10) : 0);
 }
 
-bool ProfilingManager::ReportProfilingData(const map<uint32_t, string>& op_taskId_map) const {
+bool ProfilingManager::ReportProfilingData(const map<uint32_t, string> &op_taskId_map) const {
   if (!IsProfiling()) {
     MS_LOG(INFO) << "No need profiling. please export PROFILING_MODE and in train mode.";
     return false;
@@ -65,10 +66,10 @@ bool ProfilingManager::ReportProfilingData(const map<uint32_t, string>& op_taskI
   MS_LOG(INFO) << "DistributeTask: op tasId map size = " << op_taskId_map.size();
 
   Msprof::Engine::ReporterData reporter_data = {};
-  for (const auto& iter : op_taskId_map) {
+  for (const auto &iter : op_taskId_map) {
     auto data = iter.second + ' ' + std::to_string(iter.first) + ';';
     reporter_data.deviceId = UintToInt(device_id_);
-    reporter_data.data = (unsigned char*)(const_cast<char*>(data.c_str()));
+    reporter_data.data = (unsigned char *)(const_cast<char *>(data.c_str()));
     reporter_data.dataLen = data.size();
     auto ret = memcpy_s(reporter_data.tag, MSPROF_ENGINE_MAX_TAG_LEN + 1, "framework", sizeof("framework"));
     if (ret != 0) {
@@ -84,7 +85,7 @@ bool ProfilingManager::ReportProfilingData(const map<uint32_t, string>& op_taskI
   return true;
 }
 
-static std::vector<std::string> Split(const std::string& str, const char delim) {
+static std::vector<std::string> Split(const std::string &str, const char delim) {
   std::vector<std::string> elems;
 
   if (str.empty()) {
@@ -113,9 +114,6 @@ bool ProfilingManager::StartupProfiling(uint32_t device_id) {
     return true;
   }
   device_id_ = device_id;
-  // exp: export PROFILING_MODE=true
-  // export PROFILING_OPTIONS=training_trace
-  const char* prof_options_str = std::getenv("PROFILING_OPTIONS");
   // register Framework to profiling
   int result = Msprof::Engine::RegisterEngine("Framework", engine_0_.get());
   if (result != 0) {
@@ -123,49 +121,51 @@ bool ProfilingManager::StartupProfiling(uint32_t device_id) {
     return false;
   }
 
-  if (prof_options_str != nullptr) {
-    const string prof_options_str_tmp = prof_options_str;
-    vector<string> opts = Split(prof_options_str_tmp, ':');
-    if (!opts.empty()) {
-      // current one docker only use one device`
-      Json p_device;
-
-      // device_id
-      p_device["deviceID"] = std::to_string(device_id);
-
-      // features:'training_trace', 'task_trace'  etc
-      Json features;
-      for (vector<string>::size_type i = 0; i < opts.size(); i++) {
-        Json f;
-        f["name"] = opts[i];
-        features[i] = f;
-      }
-      p_device["features"] = features;
-
-      // only one device, but sProfMgrStartUp API require for device list
-      Json devices;
-      devices[0] = p_device;
-
-      Json startCfg;
-      startCfg["startCfg"] = devices;
-
-      // convert json to string
-      std::stringstream ss;
-      ss << startCfg;
-      std::string cfg = ss.str();
-
-      MS_LOG(INFO) << "profiling config " << cfg;
-
-      // call profiling startup API
-      ProfMgrCfg prof_cfg = {cfg};
-      prof_handle_ = ProfMgrStartUp(&prof_cfg);
-      if (prof_handle_ == nullptr) {
-        MS_LOG(ERROR) << "Startup profiling failed.";
-        return false;
-      }
-    }
+  auto context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(context);
+  const string prof_options_str = context->profiling_options();
+  vector<string> opts = Split(prof_options_str, ':');
+  if (opts.empty()) {
+    MS_LOG(WARNING) << "Profiling is enabled, but profiling option is not set!";
+    return true;
   }
 
+  // current one docker only use one device`
+  Json p_device;
+  // JOBID
+  auto job_id = GetJobId();
+  p_device["jobID"] = std::to_string(job_id);
+  // device_id
+  p_device["deviceID"] = std::to_string(device_id);
+  // features:'training_trace', 'task_trace'  etc
+  Json features;
+  for (vector<string>::size_type i = 0; i < opts.size(); i++) {
+    Json f;
+    f["name"] = opts[i];
+    features[i] = f;
+  }
+  p_device["features"] = features;
+  // only one device, but sProfMgrStartUp API require for device list
+  Json devices;
+  devices[0] = p_device;
+
+  Json startCfg;
+  startCfg["startCfg"] = devices;
+
+  // convert json to string
+  std::stringstream ss;
+  ss << startCfg;
+  std::string cfg = ss.str();
+
+  MS_LOG(INFO) << "profiling config " << cfg;
+
+  // call profiling startup API
+  ProfMgrCfg prof_cfg = {cfg};
+  prof_handle_ = ProfMgrStartUp(&prof_cfg);
+  if (prof_handle_ == nullptr) {
+    MS_LOG(ERROR) << "Startup profiling failed.";
+    return false;
+  }
   return true;
 }
 
@@ -175,7 +175,7 @@ bool ProfilingManager::StopProfiling() const {
     MS_LOG(INFO) << "No need profiling. please export PROFILING_MODE and in train mode.";
     return true;
   }
-  Msprof::Engine::Reporter* reporter = PluginImpl::GetPluginReporter();
+  Msprof::Engine::Reporter *reporter = PluginImpl::GetPluginReporter();
   if (reporter != nullptr) {
     MS_LOG(INFO) << "report data end, ret = " << reporter->Flush();
   }

@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 #include "ir/anf.h"
 #include "ir/func_graph.h"
@@ -27,6 +28,7 @@
 #include "pre_activate/common/pattern_engine.h"
 #include "utils/graph_utils.h"
 #include "common/utils.h"
+#include "pre_activate/common/helper.h"
 
 namespace mindspore {
 namespace opt {
@@ -46,6 +48,26 @@ class PatternProcessPass : public NodePass {
   AnfNodePtr pattern_ = nullptr;
   bool multigraph_ = true;
   PatternEngine pattern_engine_;
+  PrimitiveVarMapPtr primitive_vars_;
+};
+
+class MultipleOutputPatternProcessPass : public PatternProcessPass {
+ public:
+  explicit MultipleOutputPatternProcessPass(const std::string &name = "", bool multigraph = true)
+      : PatternProcessPass(name, multigraph),
+        child_pattern_engine_(PatternEngine(std::make_shared<DefaultVisitor>(),
+                                            std::function<bool(const BaseRef &, const BaseRef &)>(AnfEqual),
+                                            std::function<bool(const BaseRef &, const BaseRef &)>(CNodeTypeEqual))),
+        child_primitive_vars_(std::make_shared<PrimitiveVarMap>()) {}
+  ~MultipleOutputPatternProcessPass() override = default;
+  virtual BaseRef DefineAnotherPattern() const = 0;
+  // check two patterns whether share the same nodes or not
+  virtual bool IsShareNodes(const EquivPtr &equiv1, const EquivPtr &equiv2) const = 0;
+
+ protected:
+  bool MatchAnotherPattern(const AnfNodePtr &node, const EquivPtr &equiv) const;
+  PatternEngine child_pattern_engine_;
+  PrimitiveVarMapPtr child_primitive_vars_;
 };
 
 class GraphOptimizer {

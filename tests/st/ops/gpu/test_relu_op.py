@@ -13,12 +13,13 @@
 # limitations under the License.
 # ============================================================================
 
+import numpy as np
 import pytest
+
+import mindspore.context as context
+import mindspore.nn as nn
 from mindspore import Tensor
 from mindspore.ops import operations as P
-import mindspore.nn as nn
-import numpy as np
-import mindspore.context as context
 
 
 class NetRelu(nn.Cell):
@@ -37,8 +38,8 @@ def test_relu():
     x = Tensor(np.array([[[[-1, 1, 10],
                            [1, -1, 1],
                            [10, 1, -1]]]]).astype(np.float32))
-    expect = np.array([[[[0, 1, 10, ],
-                         [1, 0, 1, ],
+    expect = np.array([[[[0, 1, 10,],
+                         [1, 0, 1,],
                          [10, 1, 0.]]]]).astype(np.float32)
 
     context.set_context(mode=context.PYNATIVE_MODE, device_target="GPU")

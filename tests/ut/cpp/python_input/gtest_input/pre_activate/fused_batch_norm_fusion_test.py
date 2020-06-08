@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-from mindspore.ops import operations as P
-from mindspore.ops import Primitive
 import mindspore.common.dtype as mstype
 from mindspore.common.tensor import Tensor
+from mindspore.ops import Primitive
+from mindspore.ops import operations as P
 
 AssignSub = P.AssignSub()
 Mul = P.Mul()
@@ -24,7 +24,9 @@ make_tuple = Primitive('make_tuple')
 tuple_getitem = Primitive('tuple_getitem')
 depend = Primitive('depend')
 BatchNorm = P.BatchNorm()
-FusedBatchNorm = P.FusedBatchNorm()
+Cast = P.Cast()
+BNTrainingReduce = Primitive('BNTrainingReduce')
+BNTrainingUpdate = Primitive('BNTrainingUpdate')
 constant0 = Tensor(0.1, mstype.float32)
 constant1 = Tensor(0.1, mstype.float32)
 
@@ -40,7 +42,7 @@ class FnDict:
         return self.fnDict[name]
 
 
-def useless_test_fused_batch_norm_fusion(tag):
+def test_fused_batch_norm_fusion(tag):
     fns = FnDict()
 
     @fns
@@ -59,10 +61,42 @@ def useless_test_fused_batch_norm_fusion(tag):
         return output
 
     @fns
+    def before_mix_precision0(input0, input1, input2, input3, input4, var0, var1):
+        batch_norm = BatchNorm(input0, input1, input2, input3, input4)
+        sub0 = Sub(Cast(var0, mstype.float32), tuple_getitem(batch_norm, 1))
+        sub1 = Sub(Cast(var1, mstype.float32), tuple_getitem(batch_norm, 2))
+        mul0 = Mul(sub0, constant0)
+        mul1 = Mul(sub1, constant1)
+        assign_sub0 = AssignSub(var0, Cast(mul0, mstype.float32))
+        assign_sub1 = AssignSub(var1, Cast(mul1, mstype.float32))
+        depend0 = depend(tuple_getitem(batch_norm, 0), assign_sub0)
+        depend1 = depend(depend0, assign_sub1)
+        outputs = make_tuple(depend1, tuple_getitem(batch_norm, 3), tuple_getitem(batch_norm, 4))
+        output = tuple_getitem(outputs, 0)
+        return output
+
+    @fns
+    def before_mix_precision1(input0, input1, input2, input3, input4, var0, var1):
+        batch_norm = BatchNorm(input0, input1, input2, input3, input4)
+        sub0 = Sub(Cast(var0, mstype.float32), tuple_getitem(batch_norm, 1))
+        sub1 = Sub(Cast(var1, mstype.float32), tuple_getitem(batch_norm, 2))
+        mul0 = Mul(Cast(sub0, mstype.float32), constant0)
+        mul1 = Mul(Cast(sub1, mstype.float32), constant1)
+        assign_sub0 = AssignSub(var0, mul0)
+        assign_sub1 = AssignSub(var1, mul1)
+        depend0 = depend(tuple_getitem(batch_norm, 0), assign_sub0)
+        depend1 = depend(depend0, assign_sub1)
+        outputs = make_tuple(depend1, tuple_getitem(batch_norm, 3), tuple_getitem(batch_norm, 4))
+        output = tuple_getitem(outputs, 0)
+        return output
+
+    @fns
     def after(input0, input1, input2, input3, input4, var0, var1):
-        fused_batch_norm = FusedBatchNorm(input0, input1, input2, var0, var1)
-        outputs = make_tuple(tuple_getitem(fused_batch_norm, 0), tuple_getitem(fused_batch_norm, 3),
-                             tuple_getitem(fused_batch_norm, 4))
+        bn_training_reduce = BNTrainingReduce(input0)
+        bn_training_update = BNTrainingUpdate(input0, tuple_getitem(bn_training_reduce, 0),
+                                              tuple_getitem(bn_training_reduce, 1), input1, input2, var0, var1)
+        outputs = make_tuple(tuple_getitem(bn_training_update, 0), tuple_getitem(bn_training_update, 3),
+                             tuple_getitem(bn_training_update, 4))
         output = tuple_getitem(outputs, 0)
         return make_tuple(output)
 

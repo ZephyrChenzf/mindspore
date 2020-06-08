@@ -13,9 +13,11 @@
 # limitations under the License.
 # ============================================================================
 import numpy as np
-from mindspore.common.tensor import Tensor
+
 import mindspore.nn as nn
-import mindspore.ops.operations as P
+from mindspore import Tensor
+from mindspore.ops import operations as P
+
 
 def weight_variable(shape):
     ones = np.ones(shape).astype(np.float32)
@@ -37,7 +39,7 @@ def conv3x3(in_channels, out_channels, stride=1, padding=0):
     weight_shape = (out_channels, in_channels, 3, 3)
     weight = weight_variable(weight_shape)
     return nn.Conv2d(in_channels, out_channels,
-                  kernel_size=3, stride=stride, padding=padding, weight_init=weight, has_bias=False, pad_mode="same")
+                     kernel_size=3, stride=stride, padding=padding, weight_init=weight, has_bias=False, pad_mode="same")
 
 
 def conv1x1(in_channels, out_channels, stride=1, padding=0):
@@ -45,7 +47,7 @@ def conv1x1(in_channels, out_channels, stride=1, padding=0):
     weight_shape = (out_channels, in_channels, 1, 1)
     weight = weight_variable(weight_shape)
     return nn.Conv2d(in_channels, out_channels,
-                  kernel_size=1, stride=stride, padding=padding, weight_init=weight, has_bias=False, pad_mode="same")
+                     kernel_size=1, stride=stride, padding=padding, weight_init=weight, has_bias=False, pad_mode="same")
 
 
 def conv7x7(in_channels, out_channels, stride=1, padding=0):
@@ -53,7 +55,7 @@ def conv7x7(in_channels, out_channels, stride=1, padding=0):
     weight_shape = (out_channels, in_channels, 7, 7)
     weight = weight_variable(weight_shape)
     return nn.Conv2d(in_channels, out_channels,
-                  kernel_size=7, stride=stride, padding=padding, weight_init=weight, has_bias=False, pad_mode="same")
+                     kernel_size=7, stride=stride, padding=padding, weight_init=weight, has_bias=False, pad_mode="same")
 
 
 def bn_with_initialize(out_channels):
@@ -63,7 +65,7 @@ def bn_with_initialize(out_channels):
     beta = weight_variable_0(shape)
     gamma = weight_variable_1(shape)
     bn = nn.BatchNorm2d(out_channels, momentum=0.1, eps=0.0001, gamma_init=gamma,
-                     beta_init=beta, moving_mean_init=mean, moving_var_init=var)
+                        beta_init=beta, moving_mean_init=mean, moving_var_init=var)
     return bn
 
 
@@ -74,7 +76,7 @@ def bn_with_initialize_last(out_channels):
     beta = weight_variable_0(shape)
     gamma = weight_variable_0(shape)
     bn = nn.BatchNorm2d(out_channels, momentum=0.1, eps=0.0001, gamma_init=gamma,
-                     beta_init=beta, moving_mean_init=mean, moving_var_init=var)
+                        beta_init=beta, moving_mean_init=mean, moving_var_init=var)
     return bn
 
 
@@ -93,8 +95,7 @@ class ResidualBlock(nn.Cell):
     def __init__(self,
                  in_channels,
                  out_channels,
-                 stride=1,
-                 down_sample=False):
+                 stride=1):
         super(ResidualBlock, self).__init__()
 
         out_chls = out_channels // self.expansion
@@ -182,7 +183,7 @@ class ResidualBlockWithDown(nn.Cell):
 
 class MakeLayer0(nn.Cell):
 
-    def __init__(self, block, layer_num, in_channels, out_channels, stride):
+    def __init__(self, block, in_channels, out_channels, stride):
         super(MakeLayer0, self).__init__()
         self.a = ResidualBlockWithDown(in_channels, out_channels, stride=1, down_sample=True)
         self.b = block(out_channels, out_channels, stride=stride)
@@ -198,7 +199,7 @@ class MakeLayer0(nn.Cell):
 
 class MakeLayer1(nn.Cell):
 
-    def __init__(self, block, layer_num, in_channels, out_channels, stride):
+    def __init__(self, block, in_channels, out_channels, stride):
         super(MakeLayer1, self).__init__()
         self.a = ResidualBlockWithDown(in_channels, out_channels, stride=stride, down_sample=True)
         self.b = block(out_channels, out_channels, stride=1)
@@ -216,7 +217,7 @@ class MakeLayer1(nn.Cell):
 
 class MakeLayer2(nn.Cell):
 
-    def __init__(self, block, layer_num, in_channels, out_channels, stride):
+    def __init__(self, block, in_channels, out_channels, stride):
         super(MakeLayer2, self).__init__()
         self.a = ResidualBlockWithDown(in_channels, out_channels, stride=stride, down_sample=True)
         self.b = block(out_channels, out_channels, stride=1)
@@ -238,7 +239,7 @@ class MakeLayer2(nn.Cell):
 
 class MakeLayer3(nn.Cell):
 
-    def __init__(self, block, layer_num, in_channels, out_channels, stride):
+    def __init__(self, block, in_channels, out_channels, stride):
         super(MakeLayer3, self).__init__()
         self.a = ResidualBlockWithDown(in_channels, out_channels, stride=stride, down_sample=True)
         self.b = block(out_channels, out_channels, stride=1)
@@ -254,7 +255,7 @@ class MakeLayer3(nn.Cell):
 
 class ResNet(nn.Cell):
 
-    def __init__(self, block, layer_num, num_classes=100, batch_size=32):
+    def __init__(self, block, num_classes=100, batch_size=32):
         super(ResNet, self).__init__()
         self.batch_size = batch_size
         self.num_classes = num_classes
@@ -265,14 +266,10 @@ class ResNet(nn.Cell):
         self.relu = P.ReLU()
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, pad_mode="SAME")
 
-        self.layer1 = MakeLayer0(
-            block, layer_num[0], in_channels=64, out_channels=256, stride=1)
-        self.layer2 = MakeLayer1(
-            block, layer_num[1], in_channels=256, out_channels=512, stride=2)
-        self.layer3 = MakeLayer2(
-            block, layer_num[2], in_channels=512, out_channels=1024, stride=2)
-        self.layer4 = MakeLayer3(
-            block, layer_num[3], in_channels=1024, out_channels=2048, stride=2)
+        self.layer1 = MakeLayer0(block, in_channels=64, out_channels=256, stride=1)
+        self.layer2 = MakeLayer1(block, in_channels=256, out_channels=512, stride=2)
+        self.layer3 = MakeLayer2(block, in_channels=512, out_channels=1024, stride=2)
+        self.layer4 = MakeLayer3(block, in_channels=1024, out_channels=2048, stride=2)
 
         self.pool = P.ReduceMean(keep_dims=True)
         self.fc = fc_with_initialize(512 * block.expansion, num_classes)
@@ -294,6 +291,6 @@ class ResNet(nn.Cell):
         x = self.fc(x)
         return x
 
-def resnet50(batch_size, num_classes):
-    return ResNet(ResidualBlock, [3, 4, 6, 3], num_classes, batch_size)
 
+def resnet50(batch_size, num_classes):
+    return ResNet(ResidualBlock, num_classes, batch_size)

@@ -15,11 +15,12 @@
 """VM implementations based on numpy."""
 
 import numpy as np
+
 from mindspore._checkparam import Rel
-from mindspore._checkparam import ParamValidator as validator
+from mindspore._checkparam import Validator as validator
 
 
-def avg_pooling(x, pool_h, pool_w, stride, pad):
+def avg_pooling(x, pool_h, pool_w, stride):
     """
     Applies average pooling over an input array.
 
@@ -28,26 +29,25 @@ def avg_pooling(x, pool_h, pool_w, stride, pad):
         pool_h (int): Height of the pooling window.
         pool_w (int): Width of the pooling window.
         stride (int): The stride of the sliding window.
-        pad (int): Padding to be added on height and width.
 
     Returns:
         numpy.ndarray, an output array after applying average pooling on input array.
     """
-    validator.check_integer("stride", stride, 0, Rel.GT)
+    validator.check_integer("stride", stride, 0, Rel.GT, None)
     num, channel, height, width = x.shape
-    out_h = (height + 2*pad - pool_h)//stride + 1
-    out_w = (width + 2*pad - pool_w)//stride + 1
+    out_h = (height - pool_h) // stride + 1
+    out_w = (width - pool_w) // stride + 1
 
-    col = im2col(x, pool_h, pool_w, stride, pad)
-    col = col.reshape(-1, pool_h*pool_w)
+    col = im2col(x, pool_h, pool_w, stride)
+    col = col.reshape(-1, pool_h * pool_w)
 
     out = np.mean(col, axis=1)
-    out = out.reshape(num, out_h, out_w, channel).transpose(0, 3, 1, 2)
+    out = out.reshape((num, out_h, out_w, channel)).transpose(0, 3, 1, 2)
 
     return out
 
 
-def avg_pool_grad(dout, origin_shape, pool_h, pool_w, stride, pad):
+def avg_pool_grad(dout, origin_shape, pool_h, pool_w, stride):
     """
     Gets grad of average pooling.
 
@@ -57,7 +57,6 @@ def avg_pool_grad(dout, origin_shape, pool_h, pool_w, stride, pad):
         pool_h (int): Height of the pooling window.
         pool_w (int): Width of the pooling window.
         stride (int): The stride of the sliding window.
-        pad (int): Padding to be added on height and width.
 
     Returns:
         numpy.ndarray, grad of avgerage pooling.
@@ -67,7 +66,7 @@ def avg_pool_grad(dout, origin_shape, pool_h, pool_w, stride, pad):
     dx = np.zeros(origin_shape)
     for i in range(height):
         for j in range(width):
-            dx[:, :, i:(i+pool_h), j:(j+pool_w)] += np.ones((pool_h, pool_w))
+            dx[:, :, i:(i + pool_h), j:(j + pool_w)] += np.ones((pool_h, pool_w))
     return dx
 
 
@@ -91,14 +90,14 @@ def _batch_norm(x, scale, shift, running_mean=None, running_var=None,
         x_var = np.var(x, axis=0)
 
         # Normalization followed by Affine transformation
-        x_norm = (x - x_mean)/np.sqrt(x_var + eps)
+        x_norm = (x - x_mean) / np.sqrt(x_var + eps)
 
         # Estimate running average of mean and variance to use at test time
         running_mean = momentum * running_mean + (1 - momentum) * x_mean
         running_var = momentum * running_var + (1 - momentum) * x_var
     else:
         # normalize using running average
-        x_norm = (x - running_mean)/np.sqrt(running_var + eps)
+        x_norm = (x - running_mean) / np.sqrt(running_var + eps)
         x_mean = running_mean
         x_var = running_var
 
@@ -134,11 +133,11 @@ def _batch_norm_grad(dout, x, scale, save_mean, save_inv_variance, \
                                               eps=eps, momentum=momentum, is_training=is_training)
     batch_size = x.shape[0]
     dx_norm = scale * dout
-    dvar = np.sum(dx_norm*(x - x_mean)*((x_var + eps)**(-3.0/2))*(-1.0/2), axis=0)
-    dmean = np.sum(dx_norm*(-1.0/np.sqrt(x_var + eps)), axis=0) \
-                            + dvar*(np.sum(-2*(x - x_mean), axis=0)*(1.0/batch_size))
-    dx = dx_norm*(1.0/np.sqrt(x_var + eps)) + dvar*(2.0*(x - x_mean)/batch_size) + dmean*(1.0/batch_size)
-    dgamma = np.sum(dout*x_norm, axis=0)
+    dvar = np.sum(dx_norm * (x - x_mean) * ((x_var + eps) ** (-3.0 / 2)) * (-1.0 / 2), axis=0)
+    dmean = np.sum(dx_norm * (-1.0 / np.sqrt(x_var + eps)), axis=0) \
+            + dvar * (np.sum(-2 * (x - x_mean), axis=0) * (1.0 / batch_size))
+    dx = dx_norm * (1.0 / np.sqrt(x_var + eps)) + dvar * (2.0 * (x - x_mean) / batch_size) + dmean * (1.0 / batch_size)
+    dgamma = np.sum(dout * x_norm, axis=0)
     dbeta = np.sum(dout, axis=0)
     return dx, dgamma, dbeta
 
@@ -157,23 +156,35 @@ def batch_norm_grad(dy, x, scale, save_mean, save_inv_variance):
 
 def col2im(col, input_shape, filter_h, filter_w, stride=1, pad=0):
     """Rearranges a row vector to an image."""
-    validator.check_integer("stride", stride, 0, Rel.GT)
+    if isinstance(stride, int):
+        stride_h = stride
+        stride_w = stride
+    elif isinstance(stride, tuple) and len(stride) == 2:
+        stride_h = stride[0]
+        stride_w = stride[1]
+    elif isinstance(stride, tuple) and len(stride) == 4:
+        stride_h = stride[2]
+        stride_w = stride[3]
+    else:
+        raise ValueError(f"The \'stride\' should be an int number or "
+                         f"a tuple of two or four int numbers, but got {stride}")
+
     batch_num, channel, height, width = input_shape
-    out_h = (height + 2*pad - filter_h)//stride + 1
-    out_w = (width + 2*pad - filter_w)//stride + 1
+    out_h = (height + 2 * pad - filter_h) // stride_h + 1
+    out_w = (width + 2 * pad - filter_w) // stride_w + 1
     col = col.reshape(batch_num, out_h, out_w, channel, filter_h, filter_w) \
-             .transpose(0, 3, 4, 5, 1, 2)
+        .transpose(0, 3, 4, 5, 1, 2)
 
     img = np.zeros((batch_num,
                     channel,
-                    height + 2*pad + stride - 1,
-                    width + 2*pad + stride - 1)) \
-            .astype(col.dtype)
+                    height + 2 * pad + stride_h - 1,
+                    width + 2 * pad + stride_w - 1)) \
+        .astype(col.dtype)
     for y in range(filter_h):
-        y_max = y + stride*out_h
+        y_max = y + stride_h * out_h
         for x in range(filter_w):
-            x_max = x + stride*out_w
-            img[:, :, y:y_max:stride, x:x_max:stride] += col[:, :, y, x, :, :]
+            x_max = x + stride_h * out_w
+            img[:, :, y:y_max:stride_h, x:x_max:stride_h] += col[:, :, y, x, :, :]
 
     return img[:, :, pad:height + pad, pad:width + pad]
 
@@ -207,11 +218,35 @@ def conv2d(x, weight, bias=None, stride=1, pad=0,
            dilation=1, groups=1, padding_mode='zeros'):
     """Convolution 2D."""
     # pylint: disable=unused-argument
-    validator.check_integer("stride", stride, 0, Rel.GT)
+    validator.check_value_type('stride', stride, (int, tuple), None)
+    if isinstance(stride, int):
+        stride = (stride, stride)
+    elif len(stride) == 4:
+        stride = (stride[2], stride[3])
+    if len(stride) != 2 or (not isinstance(stride[0], int)) or \
+            (not isinstance(stride[1], int)) or \
+            stride[0] < 1 or stride[1] < 1:
+        raise ValueError(f"The \'stride\' of \'conv2d\' should be an positive int number or "
+                         f"a tuple of two positive int numbers, but got {stride}")
+    stride_h = stride[0]
+    stride_w = stride[1]
+    validator.check_value_type('dilation', dilation, (int, tuple), None)
+    if isinstance(dilation, int):
+        dilation = (dilation, dilation)
+    elif len(dilation) == 4:
+        dilation = (dilation[2], dilation[3])
+    if len(dilation) != 2 or (not isinstance(dilation[0], int)) or \
+            (not isinstance(dilation[1], int)) or \
+            dilation[0] < 1 or dilation[1] < 1:
+        raise ValueError(f"The \'dilation\' of \'conv2d\' should be an positive int number or "
+                         f"a tuple of two positive int numbers, but got {dilation}")
+    dilation_h = dilation[0]
+    dilation_w = dilation[1]
+
     batch_num, _, x_h, x_w = x.shape
     filter_num, _, filter_h, filter_w = weight.shape
-    out_h = 1 + int((x_h + 2 * pad - filter_h - (filter_h - 1) * (dilation - 1)) / stride)
-    out_w = 1 + int((x_w + 2 * pad - filter_w - (filter_w - 1) * (dilation - 1)) / stride)
+    out_h = 1 + int((x_h + 2 * pad - filter_h - (filter_h - 1) * (dilation_h - 1)) / stride_h)
+    out_w = 1 + int((x_w + 2 * pad - filter_w - (filter_w - 1) * (dilation_w - 1)) / stride_w)
     col = im2col(x, filter_h, filter_w, stride, pad, dilation)
     col_w = np.reshape(weight, (filter_num, -1)).T
     out = np.dot(col, col_w)
@@ -288,21 +323,45 @@ def flatten_grad(dout, x):
 
 def im2col(img, filter_h, filter_w, stride=1, pad=0, dilation=1):
     """Rearranges an image to row vector."""
-    validator.check_integer("stride", stride, 0, Rel.GT)
+    if isinstance(stride, int):
+        stride_h = stride
+        stride_w = stride
+    elif isinstance(stride, tuple) and len(stride) == 2:
+        stride_h = stride[0]
+        stride_w = stride[1]
+    elif isinstance(stride, tuple) and len(stride) == 4:
+        stride_h = stride[2]
+        stride_w = stride[3]
+    else:
+        raise ValueError(f"The \'stride\' should be an int number or "
+                         f"a tuple of two or four int numbers, but got {stride}")
+    if isinstance(dilation, int):
+        dilation_h = dilation
+        dilation_w = dilation
+    elif isinstance(dilation, tuple) and len(dilation) == 2:
+        dilation_h = dilation[0]
+        dilation_w = dilation[1]
+    elif isinstance(dilation, tuple) and len(dilation) == 4:
+        dilation_h = dilation[2]
+        dilation_w = dilation[3]
+    else:
+        raise ValueError(f"The \'dilation\' should be an int number or "
+                         f"a tuple of two or four int numbers, but got {dilation}")
+
     batch_num, channel, height, width = img.shape
-    out_h = (height + 2*pad - filter_h- (filter_h - 1) * (dilation - 1))//stride + 1
-    out_w = (width + 2*pad - filter_w- (filter_w - 1) * (dilation - 1))//stride + 1
+    out_h = (height + 2 * pad - filter_h - (filter_h - 1) * (dilation_h - 1)) // stride_h + 1
+    out_w = (width + 2 * pad - filter_w - (filter_w - 1) * (dilation_w - 1)) // stride_w + 1
 
     img = np.pad(img, [(0, 0), (0, 0), (pad, pad), (pad, pad)], 'constant')
     col = np.zeros((batch_num, channel, filter_h, filter_w, out_h, out_w)).astype(img.dtype)
 
     for y in range(filter_h):
-        y_max = y + stride*out_h
+        y_max = y + stride_h * out_h
         for x in range(filter_w):
-            x_max = x + stride*out_w
-            col[:, :, y, x, :, :] = img[:, :, y:y_max:stride, x:x_max:stride]
+            x_max = x + stride_h * out_w
+            col[:, :, y, x, :, :] = img[:, :, y:y_max:stride_h, x:x_max:stride_h]
 
-    col = col.transpose(0, 4, 5, 1, 2, 3).reshape(batch_num*out_h*out_w, -1)
+    col = col.transpose(0, 4, 5, 1, 2, 3).reshape(batch_num * out_h * out_w, -1)
     return col
 
 
@@ -324,61 +383,61 @@ def matmul(x, w, b=None):
     return y
 
 
-def max_pooling(x, pool_h, pool_w, stride, pad):
+def max_pooling(x, pool_h, pool_w, stride):
     """Max pooling."""
-    validator.check_integer("stride", stride, 0, Rel.GT)
+    validator.check_integer("stride", stride, 0, Rel.GT, None)
     num, channel, height, width = x.shape
-    out_h = (height + 2*pad - pool_h)//stride + 1
-    out_w = (width + 2*pad - pool_w)//stride + 1
+    out_h = (height - pool_h) // stride + 1
+    out_w = (width - pool_w) // stride + 1
 
-    col = im2col(x, pool_h, pool_w, stride, pad)
-    col = col.reshape(-1, pool_h*pool_w)
+    col = im2col(x, pool_h, pool_w, stride)
+    col = col.reshape(-1, pool_h * pool_w)
 
     out = np.max(col, axis=1)
-    out = out.reshape(num, out_h, out_w, channel).transpose(0, 3, 1, 2)
+    out = out.reshape((num, out_h, out_w, channel)).transpose(0, 3, 1, 2)
 
     return out
 
 
-def max_pool_grad(x, dout, pool_h, pool_w, stride, pad):
+def max_pool_grad(x, dout, pool_h, pool_w, stride):
     """Grad of max pooling."""
     dout = dout.transpose(0, 2, 3, 1)
     pool_size = pool_h * pool_w
     dmax = np.zeros((dout.size, pool_size))
-    col = im2col(x, pool_h, pool_w, stride, pad)
-    col = col.reshape(-1, pool_h*pool_w)
+    col = im2col(x, pool_h, pool_w, stride)
+    col = col.reshape(-1, pool_h * pool_w)
     arg_max = np.argmax(col, axis=1)
     dmax[np.arange(arg_max.size), arg_max.flatten()] = dout.flatten()
     dmax = dmax.reshape(dout.shape + (pool_size,))
-    dcol = dmax.reshape(dmax.shape[0]*dmax.shape[1]*dmax.shape[2], -1)
-    dx = col2im(dcol, x.shape, pool_h, pool_w, stride, pad)
+    dcol = dmax.reshape(dmax.shape[0] * dmax.shape[1] * dmax.shape[2], -1)
+    dx = col2im(dcol, x.shape, pool_h, pool_w, stride)
     return dx
 
 
-def max_pool_grad_with_argmax(x, arg_max, dout, pool_h, pool_w, stride, pad):
+def max_pool_grad_with_argmax(x, dout, arg_max, pool_h, pool_w, stride):
     """Grad of max pooling with argmax."""
     dout = dout.transpose(0, 2, 3, 1)
     pool_size = pool_h * pool_w
     dmax = np.zeros((dout.size, pool_size))
     dmax[np.arange(arg_max.size), arg_max.flatten()] = dout.flatten()
     dmax = dmax.reshape(dout.shape + (pool_size,))
-    dcol = dmax.reshape(dmax.shape[0]*dmax.shape[1]*dmax.shape[2], -1)
-    dx = col2im(dcol, x.shape, pool_h, pool_w, stride, pad)
+    dcol = dmax.reshape(dmax.shape[0] * dmax.shape[1] * dmax.shape[2], -1)
+    dx = col2im(dcol, x.shape, pool_h, pool_w, stride)
     return dx
 
 
-def max_pool_with_argmax(x, pool_h, pool_w, stride, pad):
+def max_pool_with_argmax(x, pool_h, pool_w, stride):
     """Max pooling with argmax."""
-    validator.check_integer("stride", stride, 0, Rel.GT)
+    validator.check_integer("stride", stride, 0, Rel.GT, None)
     num, channel, height, width = x.shape
-    out_h = (height + 2*pad - pool_h)//stride + 1
-    out_w = (width + 2*pad - pool_w)//stride + 1
-    col = im2col(x, pool_h, pool_w, stride, pad)
-    col = col.reshape(-1, pool_h*pool_w)
+    out_h = (height - pool_h) // stride + 1
+    out_w = (width - pool_w) // stride + 1
+    col = im2col(x, pool_h, pool_w, stride)
+    col = col.reshape(-1, pool_h * pool_w)
     out = np.max(col, axis=1)
     out_argmax = np.argmax(col, axis=1)
-    out = out.reshape(num, out_h, out_w, channel).transpose(0, 3, 1, 2)
-    out_argmax = out_argmax.reshape(num, out_h, out_w, channel).transpose(0, 3, 1, 2)
+    out = out.reshape((num, out_h, out_w, channel)).transpose(0, 3, 1, 2)
+    out_argmax = out_argmax.reshape((num, out_h, out_w, channel)).transpose(0, 3, 1, 2)
     return out, out_argmax
 
 
@@ -457,7 +516,7 @@ def softmax_cross_entropy_with_logits(logits, labels):
     sample_num = labels.shape[0]
     prob = softmax(logits)
     log_likelihood = -np.log(prob[range(sample_num)]) * labels
-    #loss = np.sum(log_likelihood)
+    # loss = np.sum(log_likelihood)
     loss = log_likelihood
 
     dx = prob.copy()
@@ -646,6 +705,7 @@ def greater(x, y):
     """
     return np.greater(x, y)
 
+
 def less(x, y):
     """
     Get the truth value of (x < y) element-wise.
@@ -658,8 +718,6 @@ def less(x, y):
         Array, element-wise comparison of x and y.
     """
     return np.less(x, y)
-
-
 
 
 def logical_not(x):

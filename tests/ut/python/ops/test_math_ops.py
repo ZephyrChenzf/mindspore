@@ -15,21 +15,24 @@
 """ test math ops """
 import functools
 import numpy as np
+import pytest
+
 import mindspore as ms
+import mindspore.context as context
 import mindspore.nn as nn
-from mindspore.common import dtype as mstype
-from mindspore.ops import prim_attr_register, PrimitiveWithInfer
 from mindspore import Tensor
+from mindspore.common import dtype as mstype
 from mindspore.ops import composite as C
 from mindspore.ops import operations as P
-from mindspore.ops import functional as F
-import mindspore.context as context
+from mindspore.ops import prim_attr_register, PrimitiveWithInfer
 from ..ut_filter import non_graph_engine
 from ....mindspore_test_framework.mindspore_test import mindspore_test
 from ....mindspore_test_framework.pipeline.forward.compile_forward \
     import pipeline_for_compile_forward_ge_graph_for_case_by_case_config
 from ....mindspore_test_framework.pipeline.forward.verify_exception \
     import pipeline_for_verify_exception_for_case_by_case_config
+context.set_context(mode=context.GRAPH_MODE)
+
 # pylint: disable=W0613
 # pylint: disable=W0231
 # W0613: unused-argument
@@ -79,13 +82,27 @@ def test_sqrt():
     assert np.all(result.asnumpy() == expect)
 
 
+class PowNet(nn.Cell):
+    def __init__(self):
+        super(PowNet, self).__init__()
+        self.pow = P.Pow()
+
+    def construct(self, x, y):
+        return self.pow(x, y)
+
+
 def test_pow():
     """ test_pow """
     input_tensor = Tensor(np.array([[2, 2], [3, 3]]))
+    power = Tensor(np.array(3.0, np.int64))
+    power2 = Tensor(np.array(True, np.bool))
     testpow = P.Pow()
     expect = np.array([[8, 8], [27, 27]])
-    result = testpow(input_tensor, 3.0)
+    result = testpow(input_tensor, power)
     assert np.all(result.asnumpy() == expect)
+    net = PowNet()
+    net(input_tensor, True)
+    net(input_tensor, power2)
 
 
 def test_exp():
@@ -105,7 +122,7 @@ def test_realdiv():
     result = div(x, y)
     x = x.asnumpy()
     y = y.asnumpy()
-    expect = x/y
+    expect = x / y
     assert np.all(result.asnumpy() == expect)
 
 
@@ -121,6 +138,7 @@ def test_eye():
 
 class VirtualLossGrad(PrimitiveWithInfer):
     """ VirtualLossGrad definition """
+
     @prim_attr_register
     def __init__(self):
         """init VirtualLossGrad"""
@@ -137,6 +155,7 @@ class VirtualLossGrad(PrimitiveWithInfer):
 
 class VirtualLoss(PrimitiveWithInfer):
     """ VirtualLoss definition """
+
     @prim_attr_register
     def __init__(self):
         """init VirtualLoss"""
@@ -150,6 +169,7 @@ class VirtualLoss(PrimitiveWithInfer):
         def bprop(x, out, dout):
             dx = loss_grad(x, out, dout)
             return (dx,)
+
         return bprop
 
     def infer_shape(self, x_shape):
@@ -161,6 +181,7 @@ class VirtualLoss(PrimitiveWithInfer):
 
 class NetWithLoss(nn.Cell):
     """ NetWithLoss definition """
+
     def __init__(self, network):
         super(NetWithLoss, self).__init__()
         self.loss = VirtualLoss()
@@ -173,6 +194,7 @@ class NetWithLoss(nn.Cell):
 
 class GradWrap(nn.Cell):
     """ GradWrap definition """
+
     def __init__(self, network):
         super(GradWrap, self).__init__()
         self.network = network
@@ -183,6 +205,7 @@ class GradWrap(nn.Cell):
 
 class MatMulNet(nn.Cell):
     """ MatMulNet definition """
+
     def __init__(self):
         super(MatMulNet, self).__init__()
         self.matmul = P.MatMul()
@@ -194,6 +217,7 @@ class MatMulNet(nn.Cell):
 
 class NetWithLossSub(nn.Cell):
     """ NetWithLossSub definition """
+
     def __init__(self, network):
         super(NetWithLossSub, self).__init__()
         self.loss = VirtualLoss()
@@ -206,6 +230,7 @@ class NetWithLossSub(nn.Cell):
 
 class GradWrapSub(nn.Cell):
     """ GradWrapSub definition """
+
     def __init__(self, network):
         super(GradWrapSub, self).__init__()
         self.network = network
@@ -216,6 +241,7 @@ class GradWrapSub(nn.Cell):
 
 class SubNet(nn.Cell):
     """ SubNet definition """
+
     def __init__(self):
         super(SubNet, self).__init__()
         self.sub = P.Sub()
@@ -226,6 +252,7 @@ class SubNet(nn.Cell):
 
 class NpuFloatNet(nn.Cell):
     """ NpuFloat definition """
+
     def __init__(self):
         super(NpuFloatNet, self).__init__()
         self.mul = P.Mul()
@@ -257,6 +284,7 @@ class NpuFloatNet(nn.Cell):
 
 class DiagNet(nn.Cell):
     """ DiagNet definition """
+
     def __init__(self):
         super(DiagNet, self).__init__()
         self.fill = P.Fill()
@@ -268,35 +296,38 @@ class DiagNet(nn.Cell):
 
 class NetWithLossCumSum(nn.Cell):
     """ NetWithLossCumSum definition """
+
     def __init__(self, network):
         super(NetWithLossCumSum, self).__init__()
         self.loss = VirtualLoss()
         self.network = network
 
-    def construct(self, input):
-        predict = self.network(input)
+    def construct(self, input_):
+        predict = self.network(input_)
         return self.loss(predict)
 
 
 class GradWrapCumSum(nn.Cell):
     """ GradWrap definition """
+
     def __init__(self, network):
         super(GradWrapCumSum, self).__init__()
         self.network = network
 
-    def construct(self, input):
-        return C.grad(self.network)(input)
+    def construct(self, input_):
+        return C.grad(self.network)(input_)
 
 
 class NetCumSum(nn.Cell):
     """ NetCumSum definition """
+
     def __init__(self):
         super(NetCumSum, self).__init__()
         self.cumsum = P.CumSum()
         self.axis = 1
 
-    def construct(self, input):
-        return self.cumsum(input, self.axis)
+    def construct(self, input_):
+        return self.cumsum(input_, self.axis)
 
 
 class SignNet(nn.Cell):
@@ -306,6 +337,44 @@ class SignNet(nn.Cell):
 
     def construct(self, x):
         return self.sign(x)
+
+
+class AssignAdd(nn.Cell):
+    def __init__(self):
+        super().__init__()
+        self.op = P.AssignAdd()
+        self.inputdata = Parameter(initializer(1, [1], ms.float32), name="global_step")
+
+    def construct(self, input_):
+        self.inputdata = input_
+        return self.op(self.inputdata, input_)
+
+
+class FloorNet(nn.Cell):
+    def __init__(self):
+        super(FloorNet, self).__init__()
+        self.floor = P.Floor()
+
+    def construct(self, x):
+        return self.floor(x)
+
+
+class Log1pNet(nn.Cell):
+    def __init__(self):
+        super(Log1pNet, self).__init__()
+        self.log1p = P.Log1p()
+
+    def construct(self, x):
+        return self.log1p(x)
+
+
+class ErfcNet(nn.Cell):
+    def __init__(self):
+        super(ErfcNet, self).__init__()
+        self.erfc = P.Erfc()
+
+    def construct(self, x):
+        return self.erfc(x)
 
 
 test_case_math_ops = [
@@ -320,8 +389,8 @@ test_case_math_ops = [
         'skip': ['backward']}),
     ('CumSumGrad', {
         'block': GradWrapCumSum(NetWithLossCumSum(NetCumSum())),
-        'desc_inputs': [Tensor(np.array([[3, 4, 6, 10],[1, 6, 7, 9],[4, 3, 8, 7],[1, 3, 7, 9]]).astype(np.float16))],
-        'desc_bprop': [Tensor(np.array([[3, 4, 6, 10],[1, 6, 7, 9],[4, 3, 8, 7],[1, 3, 7, 9]]).astype(np.float16))],
+        'desc_inputs': [Tensor(np.array([[3, 4, 6, 10], [1, 6, 7, 9], [4, 3, 8, 7], [1, 3, 7, 9]]).astype(np.float16))],
+        'desc_bprop': [Tensor(np.array([[3, 4, 6, 10], [1, 6, 7, 9], [4, 3, 8, 7], [1, 3, 7, 9]]).astype(np.float16))],
         'skip': ['backward']}),
     ('Diag', {
         'block': DiagNet(),
@@ -348,16 +417,28 @@ test_case_math_ops = [
         'desc_inputs': [Tensor(np.array([[1., 0., -2.]], np.float32))],
         'desc_bprop': [Tensor(np.array([[1., 0., -2.]], np.float32))],
         'skip': ['backward']}),
+    ('Floor', {
+        'block': FloorNet(),
+        'desc_inputs': [Tensor(np.array([[1., 0., -2.]], np.float32))],
+        'desc_bprop': [Tensor(np.array([[1., 0., -2.]], np.float32))],
+        'skip': ['backward']}),
+    ('Log1p', {
+        'block': Log1pNet(),
+        'desc_inputs': [Tensor(np.array([[1.0, 2.0, 4.0]], np.float32))],
+        'desc_bprop': [Tensor(np.array([[1.0, 2.0, 4.0]], np.float32))],
+        'skip': ['backward']}),
+    ('Erfc', {
+        'block': ErfcNet(),
+        'desc_inputs': [Tensor(np.array([[1.0, 2.0, 4.0]], np.float32))],
+        'desc_bprop': [Tensor(np.array([[1.0, 2.0, 4.0]], np.float32))],
+    }),
 ]
-
 
 test_case_lists = [test_case_math_ops]
 test_exec_case = functools.reduce(lambda x, y: x + y, test_case_lists)
 # use -k to select certain testcast
 # pytest tests/python/ops/test_ops.py::test_backward -k LayerNorm
 
-
-import mindspore.context as context
 
 @non_graph_engine
 @mindspore_test(pipeline_for_compile_forward_ge_graph_for_case_by_case_config)
@@ -368,17 +449,20 @@ def test_exec():
 
 raise_set = [
     ('StridedSlice_1_Error', {
-        'block': (lambda x : P.StridedSlice(begin_mask="1"), {'exception': ValueError}),
+        'block': (lambda x: P.StridedSlice(begin_mask="1"), {'exception': TypeError}),
         'desc_inputs': [0]}),
     ('StridedSlice_2_Error', {
-        'block': (lambda x : P.StridedSlice(end_mask="1"), {'exception': ValueError}),
+        'block': (lambda x: P.StridedSlice(end_mask="1"), {'exception': TypeError}),
         'desc_inputs': [0]}),
     ('StridedSlice_3_Error', {
-        'block': (lambda x : P.StridedSlice(ellipsis_mask=1.1), {'exception': ValueError}),
+        'block': (lambda x: P.StridedSlice(ellipsis_mask=1.1), {'exception': TypeError}),
         'desc_inputs': [0]}),
     ('StridedSlice_4_Error', {
-        'block': (lambda x : P.StridedSlice(new_axis_mask="1.1"), {'exception': ValueError}),
+        'block': (lambda x: P.StridedSlice(new_axis_mask="1.1"), {'exception': TypeError}),
         'desc_inputs': [0]}),
+    ('AssignAdd_Error', {
+        'block': (P.AssignAdd(), {'exception': IndexError}),
+        'desc_inputs': [[1]]}),
 ]
 
 

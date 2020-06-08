@@ -16,9 +16,9 @@
 Testing RgbToHsv and HsvToRgb op in DE
 """
 
+import colorsys
 import numpy as np
 from numpy.testing import assert_allclose
-import colorsys
 
 import mindspore.dataset as ds
 import mindspore.dataset.transforms.vision.py_transforms as vision
@@ -26,6 +26,7 @@ import mindspore.dataset.transforms.vision.py_transforms_util as util
 
 DATA_DIR = ["../data/dataset/test_tf_file_3_images/train-0000-of-0001.data"]
 SCHEMA_DIR = "../data/dataset/test_tf_file_3_images/datasetSchema.json"
+
 
 def generate_numpy_random_rgb(shape):
     # Only generate floating points that are fractions like n / 256, since they
@@ -133,6 +134,7 @@ def test_rgb_hsv_pipeline():
     # First dataset
     transforms1 = [
         vision.Decode(),
+        vision.Resize([64, 64]),
         vision.ToTensor()
     ]
     transforms1 = vision.ComposeOp(transforms1)
@@ -142,6 +144,7 @@ def test_rgb_hsv_pipeline():
     # Second dataset
     transforms2 = [
         vision.Decode(),
+        vision.Resize([64, 64]),
         vision.ToTensor(),
         vision.RgbToHsv(),
         vision.HsvToRgb()
@@ -156,7 +159,7 @@ def test_rgb_hsv_pipeline():
         ori_img = data1["image"]
         cvt_img = data2["image"]
         assert_allclose(ori_img.flatten(), cvt_img.flatten(), rtol=1e-5, atol=0)
-        assert (ori_img.shape == cvt_img.shape)
+        assert ori_img.shape == cvt_img.shape
 
 
 if __name__ == "__main__":
@@ -165,4 +168,3 @@ if __name__ == "__main__":
     test_rgb_hsv_chw()
     test_rgb_hsv_batch_chw()
     test_rgb_hsv_pipeline()
-

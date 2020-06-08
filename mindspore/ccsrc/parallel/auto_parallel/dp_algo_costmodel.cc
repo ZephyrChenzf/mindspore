@@ -17,12 +17,12 @@
 #include "parallel/auto_parallel/dp_algo_costmodel.h"
 
 #include <memory>
-#include <vector>
 #include <utility>
+#include <vector>
 
 namespace mindspore {
 namespace parallel {
-Status GetStrategy(const CostGraphPtr& graph) {
+Status GetStrategy(const CostGraphPtr &graph) {
   MS_LOG(INFO) << "Searching strategies begins.";
   MS_EXCEPTION_IF_NULL(graph);
   std::vector<EliminationPtr> eliminations;
@@ -76,7 +76,6 @@ Status GetStrategy(const CostGraphPtr& graph) {
       auto l_r_edge = triangle_pair.second;
 
       auto left_node = l_r_edge->prev_operator();
-      auto right_node = l_r_edge->next_operator();
       auto left_edge = eliminated_node->GetAliveSuccEdges()[0];
       auto right_edge = eliminated_node->GetAliveSuccEdges()[1];
       MS_EXCEPTION_IF_NULL(left_edge);
@@ -86,6 +85,7 @@ Status GetStrategy(const CostGraphPtr& graph) {
         right_edge = tmp;
       }
       auto left_node_cpy = graph->EliminationTriangle(eliminated_node, l_r_edge);
+      auto right_node = l_r_edge->next_operator();
       auto elimi =
         std::make_shared<TriangleElimination>(eliminated_node, left_edge, left_node_cpy, right_edge, right_node);
       eliminations.emplace_back(std::move(elimi));
@@ -143,7 +143,7 @@ Status RecoverStrategy(std::vector<EliminationPtr> eliminations) {
       auto elimination = (*rit)->cast<EdgeEliminationPtr>();
       auto new_edge = elimination->new_edge_;
       MS_EXCEPTION_IF_NULL(new_edge);
-      auto& edges = elimination->edges_;
+      auto &edges = elimination->edges_;
       auto decision = new_edge->selected_cost()->decision_ptr_->cast<EdgeEliminationDecisionPtr>();
       for (size_t j = 0; j < edges.size(); ++j) {
         MS_EXCEPTION_IF_NULL(edges[j]);
@@ -189,8 +189,9 @@ Status RecoverStrategy(std::vector<EliminationPtr> eliminations) {
       eliminated_node->SetSelectedStrategyAndCost(decision->eliminated_op_strategy_, decision->eliminated_op_cost_);
       left_edge->set_selected_cost(decision->left_edge_cost_);
       right_edge->set_selected_cost(decision->right_edge_cost_);
+      // Since Triangle is eliminated into 'left_node', only 'left_node' is needed to recover the strategy.
       left_node->SetSelectedStrategyAndCost(decision->left_node_strategy_, decision->left_node_cost_);
-      right_node->SetSelectedStrategyAndCost(decision->right_node_strategy_, decision->right_node_cost_);
+      right_node->CheckSelectedStrategy(decision->right_node_strategy_);
       MS_LOG(INFO) << "Recover triangleElimination succeeded.";
     } else if ((*rit)->isa<StarElimination>()) {
       auto elimination = (*rit)->cast<StarEliminationPtr>();
@@ -204,8 +205,13 @@ Status RecoverStrategy(std::vector<EliminationPtr> eliminations) {
       for (size_t i = 0; i < succ_edges.size(); ++i) {
         succ_edges[i]->set_selected_cost(decision->succ_edges_cost_list_[i]);
       }
-      for (size_t j = 0; j < succ_nodes.size(); ++j) {
-        succ_nodes[j]->SetSelectedStrategyAndCost(decision->succ_ops_stra_list_[j], decision->succ_ops_cost_list_[j]);
+      MS_EXCEPTION_IF_NULL(succ_nodes[0]);
+      MS_EXCEPTION_IF_NULL(decision->succ_ops_stra_list_[0]);
+      MS_EXCEPTION_IF_NULL(decision->succ_ops_cost_list_[0]);
+      // Since Star is eliminated into 'succ_nodes[0]', only 'succ_nodes[0]' is needed to recover the strategy.
+      succ_nodes[0]->SetSelectedStrategyAndCost(decision->succ_ops_stra_list_[0], decision->succ_ops_cost_list_[0]);
+      for (size_t k = 1; k < succ_nodes.size(); ++k) {
+        succ_nodes[k]->CheckSelectedStrategy(decision->succ_ops_stra_list_[k]);
       }
       MS_LOG(INFO) << "Recover starElimination succeeded.";
     } else {

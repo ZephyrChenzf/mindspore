@@ -23,22 +23,27 @@
 #include <string>
 #include <queue>
 #include <map>
+#include <set>
 #include <unordered_set>
 #include "ir/func_graph.h"
 #include "ir/anf.h"
 #include "utils/graph_utils.h"
+#include "utils/contract.h"
+#include "device/kernel_info.h"
 
 namespace mindspore {
 namespace session {
 using AnfWithOutIndex = std::pair<AnfNodePtr, size_t>;
 class KernelGraph : public FuncGraph {
  public:
-  KernelGraph() : graph_id_(0) {
+  KernelGraph() : graph_id_(0), start_label_(nullptr), end_goto_(nullptr), null_output_(false) {
     inputs_ = std::make_shared<std::vector<AnfNodePtr>>();
     execution_order_ = {};
     executable_ = true;
+    summary_node_exist_ = false;
+    stream_distinction_label_ = kInvalidDistincLabel;
   }
-  ~KernelGraph() override = default;
+  ~KernelGraph() override;
 
   MS_DECLARE_PARENT(KernelGraph, FuncGraph);
 
@@ -62,8 +67,8 @@ class KernelGraph : public FuncGraph {
   void FrontBackendlMapUpdate(const AnfNodePtr &old_backend_anf, const AnfNodePtr &new_backend_anf);
   // get backend anf by front anf
   AnfNodePtr GetBackendAnfByFrontAnf(const AnfNodePtr &front_anf);
-  // check backend node wheteher exist in map
-  bool BakcendNodeExistInFrontBackendMap(const AnfNodePtr &backend_anf);
+  // check backend node whether exist in map
+  bool BackendNodeExistInFrontBackendMap(const AnfNodePtr &backend_anf);
   // get value node by tensor
   ValueNodePtr GetValueNodeByTensor(const tensor::TensorPtr &tensor);
   // add value node tensor relation map
@@ -86,12 +91,65 @@ class KernelGraph : public FuncGraph {
   bool executable() const { return executable_; }
   // set executable of graph
   void set_executable(bool executable) { executable_ = executable; }
+  // set summary_node of graph
+  void set_summary_node_exist(bool summary_node_exist) { summary_node_exist_ = summary_node_exist; }
+  // check whether exist summary node in graph
+  bool summary_node_exist() const { return summary_node_exist_; }
+  // set invalid inputs for control sink
+  std::vector<bool> *MutableValidInputs() { return &valid_inputs_; }
+  std::vector<bool> valid_inputs() const { return valid_inputs_; }
+  // replace node in graph
+  void ReplaceNode(NotNull<AnfNodePtr> old_anf_node, NotNull<AnfNodePtr> new_anf_node);
+  // set stream label of graph
+  void set_stream_distinction_label(uint32_t stream_label) { stream_distinction_label_ = stream_label; }
+  // get stream label of graph
+  uint32_t stream_distinction_label() { return stream_distinction_label_; }
+  // refresh execute kernel stream label
+  void UpdateExecuteKernelStreamLabel();
+  // calculate the leaf graph order of root graph
+  std::vector<std::shared_ptr<KernelGraph>> GetLeafGraphOrder();
+  // the child graph of current graph
+  const std::vector<std::shared_ptr<KernelGraph>> &child_graph_order() const { return child_graph_order_; }
+  void set_child_graph_order(const std::vector<std::shared_ptr<KernelGraph>> &order) { child_graph_order_ = order; }
+  // checkout whether current graph is leaf graph
+  bool IsLeafGraph() const;
+
+  // set input_tensors pointer of control parameter
+  void set_input_ctrl_tensors(const std::shared_ptr<std::vector<tensor::TensorPtr>> &input_tensors_ptr) {
+    input_ctrl_tensors_ = input_tensors_ptr;
+  }
+  // get input_tensors pointer of control parameter
+  std::shared_ptr<std::vector<tensor::TensorPtr>> input_ctrl_tensors() const { return input_ctrl_tensors_; }
+  // get parent kernel graph
+  std::shared_ptr<KernelGraph> parent_graph() const { return parent_graph_; }
+  // set parent kernel graph
+  void set_parent_graph(const std::shared_ptr<KernelGraph> &parent_graph) { parent_graph_ = parent_graph; }
+  // find anf node in graph
+  std::vector<CNodePtr> FindNodeByPrimitive(const PrimitivePtr &primitive) const;
+  // get real inputs
+  const std::map<AnfNodePtr, std::set<AnfNodePtr>> &real_inputs() const { return real_inputs_; }
+  std::set<AnfNodePtr> GetRealInput(const AnfNodePtr &parameter);
+  void SetRealInput(const AnfNodePtr &parameter, const AnfNodePtr &arg);
+  // used to dump ir
+  std::string ToString() const override;
+  // update the real input if the node is a call
+  void UpdateCallRealInput();
+
+  void set_start_label(const CNodePtr &start_label) { start_label_ = start_label; }
+  CNodePtr get_start_label() { return start_label_; }
+  void set_end_goto(const CNodePtr &end_goto) { end_goto_ = end_goto; }
+  CNodePtr get_end_goto() { return end_goto_; }
+  bool get_output_null() { return null_output_; }
+  void set_output_null(bool is_output_null) { null_output_ = is_output_null; }
+  void PrintGraphExecuteOrder() const;
 
  private:
   // remove value node form graph
   bool RemoveValueNodeFromGraph(const ValueNodePtr &value_node);
-  // BFS to update all nodes' output
-  void BfsToUpdateNodeOutput();
+  void VisitNodeDescendants(const AnfNodePtr &node, std::queue<AnfNodePtr> *visit_queue,
+                            std::unordered_set<AnfNodePtr> *visited_nodes);
+  // update node edge list
+  void UpdateNodeEdgeList(std::queue<AnfNodePtr> *seed_nodes);
   // add node depend edge by data edge or control depend
   void AddDependEdge(const AnfNodePtr &node, const AnfNodePtr &input, size_t depend_edge_num);
   // handle control depend
@@ -103,6 +161,7 @@ class KernelGraph : public FuncGraph {
   std::shared_ptr<std::vector<AnfNodePtr>> inputs_;
   std::vector<CNodePtr> execution_order_;
   uint32_t graph_id_;
+  uint32_t stream_distinction_label_;
 
   // record map bettween front anf and backend anf,use two map implement bidirectional map
   std::unordered_map<AnfNodePtr, AnfNodePtr> front_backend_anf_map_;
@@ -111,13 +170,35 @@ class KernelGraph : public FuncGraph {
   std::unordered_map<tensor::TensorPtr, ValueNodePtr> tensor_to_value_node_map_;
   // include all value nodes
   std::unordered_set<ValueNodePtr> graph_value_nodes_;
-  std::unordered_map<AnfNodePtr, size_t> node_output_num_;
+  std::unordered_map<AnfNodePtr, size_t> node_input_num_;
   std::unordered_map<AnfNodePtr, std::vector<std::pair<AnfNodePtr, size_t>>> node_input_edges_;
   // record map between ref final output anf with index and ref origin input with index
   std::map<AnfWithOutIndex, AnfWithOutIndex> ref_out_in_map_;
   std::unordered_map<AnfNodePtr, std::vector<std::pair<AnfNodePtr, size_t>>> node_output_edges_;
   // graph needn't execute
   bool executable_;
+  // exist summary node in graph
+  bool summary_node_exist_;
+  // valid inputs
+  std::vector<bool> valid_inputs_;
+
+  // new members for control sink process
+  // all child grahs refers to partial node
+  std::map<AnfNodePtr, std::shared_ptr<KernelGraph>> node_to_child_graphs_;
+  // child graph execute order in root graph
+  std::vector<std::shared_ptr<KernelGraph>> child_graph_order_;
+
+  // input_tensors of control parameter
+  std::shared_ptr<std::vector<tensor::TensorPtr>> input_ctrl_tensors_;
+
+  // parameter graph
+  std::shared_ptr<KernelGraph> parent_graph_;
+  // record real parameters,inputs_ is the formal parameters
+  std::map<AnfNodePtr, std::set<AnfNodePtr>> real_inputs_;
+
+  CNodePtr start_label_;
+  CNodePtr end_goto_;
+  bool null_output_;
 };
 }  // namespace session
 using KernelGraphPtr = std::shared_ptr<session::KernelGraph>;

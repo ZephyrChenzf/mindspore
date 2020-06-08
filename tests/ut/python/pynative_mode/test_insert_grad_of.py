@@ -14,15 +14,16 @@
 # ============================================================================
 """ test_insert_grad_of """
 import numpy as np
+
+import mindspore
 import mindspore.nn as nn
+from mindspore import Tensor
+from mindspore import context
+from mindspore.common.api import ms_function
 from mindspore.ops import composite as C
 from mindspore.ops import operations as P
-from mindspore.common.api import ms_function
 from ....mindspore_test_framework.utils.bprop_util import bprop
 from ....mindspore_test_framework.utils.debug_util import PrintShapeTypeCell, PrintGradShapeTypeCell
-from mindspore import Tensor
-
-from mindspore import context
 
 
 def setup_module(module):
@@ -33,9 +34,13 @@ def stop_gradient(dx):
     """ stop_gradient """
     return C.zeros_like(dx)
 
+
 stop = P.InsertGradientOf(stop_gradient)
+
+
 def test_InsertGradientOf_1():
     """ test_InsertGradientOf_1 """
+
     def stop_test(x, y):
         x = stop(x)
         c = x * y
@@ -43,7 +48,9 @@ def test_InsertGradientOf_1():
 
     def f(x, y):
         return C.grad_all(stop_test)(x, y)
+
     print("stop_gradient:", f(1, 2))
+
 
 def clip_gradient(dx):
     """ clip_gradient """
@@ -56,9 +63,13 @@ def clip_gradient(dx):
 
     return ret
 
+
 clip = P.InsertGradientOf(clip_gradient)
+
+
 def test_InsertGradientOf_2():
     """ test_InsertGradientOf_2 """
+
     def clip_test(x, y):
         x = clip(x)
         y = clip(y)
@@ -75,15 +86,22 @@ def test_InsertGradientOf_2():
     print("forward: ", f(1.1, 0.1))
     print("clip_gradient:", fd(1.1, 0.1))
 
+
 summary = P.ScalarSummary()
+
+
 def debug_gradient(dx):
     """ debug_gradient """
-    dx = summary("dx: ", dx)
+    summary("dx: ", dx)
     return dx
 
+
 debug = P.InsertGradientOf(debug_gradient)
+
+
 def test_InsertGradientOf_3():
     """ test_InsertGradientOf_3 """
+
     def debug_test(x, y):
         x = debug(x)
         y = debug(y)
@@ -92,7 +110,9 @@ def test_InsertGradientOf_3():
 
     def f(x, y):
         return C.grad_all(debug_test)(x, y)
-    print("debug_gradient:", f(1, 2))
+
+    print("debug_gradient:", f(Tensor(1.0), Tensor(2.0)))
+
 
 def test_print_shape_type():
     class Mul(nn.Cell):
@@ -100,10 +120,48 @@ def test_print_shape_type():
             super(Mul, self).__init__()
             self.print_shape_type = PrintShapeTypeCell()
             self.print_shape_type_gradient = PrintGradShapeTypeCell("Gradients")
+
         def construct(self, x, y):
             z = x * y
             self.print_shape_type("Forward", z)
             self.print_shape_type_gradient(z)
             return z
+
     bprop(Mul(), Tensor(np.ones([2, 2]).astype(np.float32)),
           Tensor(np.ones([2, 2]).astype(np.float32)))
+
+
+def test_cell_assign():
+    context.set_context(mode=context.GRAPH_MODE, save_graphs=True)
+
+    class GradNetWrap(nn.Cell):
+        """ GradNetWrap definition """
+
+        def __init__(self, net):
+            super(GradNetWrap, self).__init__()
+            self.net = net
+            self.weights = mindspore.ParameterTuple(net.get_parameters())
+
+        def construct(self, x, y):
+            return C.grad_by_list(self.net, self.weights)(x, y)
+
+    class Mul(nn.Cell):
+        def __init__(self):
+            super(Mul, self).__init__()
+            self.matrix_w = mindspore.Parameter(Tensor(np.ones([2, 2], np.float32)), name="matrix_w")
+            self.matrix_g = mindspore.Parameter(Tensor(np.ones([2, 2], np.float32)), name="matrix_g")
+            self.get_g = P.InsertGradientOf(self.save_gradient)
+
+        def save_gradient(self, dout):
+            self.matrix_g = dout + self.matrix_g
+            return dout
+
+        def construct(self, x, y):
+            z = x * self.matrix_w
+            z = self.get_g(z)
+            z = z * y
+            return z
+
+    input_x = Tensor(np.ones([2, 2], np.float32))
+    input_y = Tensor(np.ones([2, 2], np.float32))
+    GradNetWrap(Mul())(input_x, input_y)

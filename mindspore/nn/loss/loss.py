@@ -18,6 +18,8 @@ from mindspore.common.tensor import Tensor
 from mindspore.ops import operations as P
 from mindspore.ops import functional as F
 from mindspore.nn.cell import Cell
+from mindspore._checkparam import Validator as validator
+from mindspore._checkparam import Rel
 from ... import context
 
 
@@ -86,9 +88,9 @@ class L1Loss(_Loss):
         Tensor, loss float tensor.
 
     Examples:
-        >>> loss = L1Loss()
-        >>> input_data = Tensor(np.array([1, 2, 3]), mstype.float32)
-        >>> target_data = Tensor(np.array([1, 2, 2]), mstype.float32)
+        >>> loss = nn.L1Loss()
+        >>> input_data = Tensor(np.array([1, 2, 3]), mindspore.float32)
+        >>> target_data = Tensor(np.array([1, 2, 2]), mindspore.float32)
         >>> loss(input_data, target_data)
     """
     def __init__(self, reduction='mean'):
@@ -126,9 +128,9 @@ class MSELoss(_Loss):
         Tensor, weighted loss float tensor.
 
     Examples:
-        >>> loss = MSELoss()
-        >>> input_data = Tensor(np.array([1, 2, 3]), mstype.float32)
-        >>> target_data = Tensor(np.array([1, 2, 2]), mstype.float32)
+        >>> loss = nn.MSELoss()
+        >>> input_data = Tensor(np.array([1, 2, 3]), mindspore.float32)
+        >>> target_data = Tensor(np.array([1, 2, 2]), mindspore.float32)
         >>> loss(input_data, target_data)
     """
     def construct(self, base, target):
@@ -171,9 +173,9 @@ class SmoothL1Loss(_Loss):
         Tensor, loss float tensor.
 
     Examples:
-        >>> loss = SmoothL1Loss()
-        >>> input_data = Tensor(np.array([1, 2, 3]), mstype.float32)
-        >>> target_data = Tensor(np.array([1, 2, 2]), mstype.float32)
+        >>> loss = nn.SmoothL1Loss()
+        >>> input_data = Tensor(np.array([1, 2, 3]), mindspore.float32)
+        >>> target_data = Tensor(np.array([1, 2, 2]), mindspore.float32)
         >>> loss(input_data, target_data)
     """
     def __init__(self, sigma=1.0):
@@ -196,14 +198,12 @@ class SoftmaxCrossEntropyWithLogits(_Loss):
     Scores Tensor :math:`x` is of shape :math:`(N, C)` and target Tensor :math:`t` is a
     Tensor of shape :math:`(N, C)` which contains one-hot labels of length :math:`C`.
 
-    For each batch :math:`N_i`, the loss is given as:
+    For each instance :math:`N_i`, the loss is given as:
 
     .. math::
-        \ell(x_i, t_i) = -w_{t_i} \log\left(\frac{\exp(x_{t_i})}{\sum_j \exp(x_j)}\right)
-        = w_{t_i} \left(-x_{t_i} + \log\left(\sum_j \exp(x_i)\right)\right),
-    where :math:`x_i` is a 1D score Tensor, :math:`t_i` is the target class and
-    :math:`w` is a weight Tensor to generate weighted loss for each class. When not specified,
-    weight Tensor is set to be None and weight is the same (:math:`1`) for all class.
+        \ell(x_i, t_i) = - \log\left(\frac{\exp(x_{t_i})}{\sum_j \exp(x_j)}\right)
+        =  -x_{t_i} + \log\left(\sum_j \exp(x_i)\right),
+    where :math:`x_i` is a 1D score Tensor, :math:`t_i` is a scalar.
 
     Note:
         While the target classes are mutually exclusive, i.e., only one class is positive in the target, the predicted
@@ -215,35 +215,42 @@ class SoftmaxCrossEntropyWithLogits(_Loss):
         sparse (bool): Specifies whether labels use sparse format or not. Default: False.
         reduction (Union[str, None]): Type of reduction to apply to loss. Support 'sum' or 'mean' If None,
             do not reduction. Default: None.
+        smooth_factor (float): Label smoothing factor. It is a optional input. Default: 0.
+        num_classes (int): The number of classes in the task. It is a optional input Default: 2.
 
     Inputs:
-        - **logits** (Tensor) - Tensor of shape :math:`(x_1, x_2, ..., x_R)`.
-        - **labels** (Tensor) - Tensor of shape :math:`(y_1, y_2, ..., y_S)`. If `sparse` is True, The type of
-          `labels` is mstype.int32. If `sparse` is False, the type of `labels` is same as the type of `logits`.
+        - **logits** (Tensor) - Tensor of shape (N, C).
+        - **labels** (Tensor) - Tensor of shape (N, ). If `sparse` is True, The type of
+          `labels` is mindspore.int32. If `sparse` is False, the type of `labels` is same as the type of `logits`.
 
     Outputs:
         Tensor, a tensor of the same shape as logits with the component-wise
         logistic losses.
 
     Examples:
-        >>> loss = SoftmaxCrossEntropyWithLogits(sparse=True)
-        >>> logits = Tensor(np.random.randint(0, 9, [1, 10]), mstype.float32)
-        >>> labels_np = np.zeros([1, 10]).astype(np.int32)
-        >>> labels_np[0][0] = 1
+        >>> loss = nn.SoftmaxCrossEntropyWithLogits(sparse=True)
+        >>> logits = Tensor(np.random.randint(0, 9, [1, 10]), mindspore.float32)
+        >>> labels_np = np.ones([1,]).astype(np.int32)
         >>> labels = Tensor(labels_np)
         >>> loss(logits, labels)
     """
     def __init__(self,
                  is_grad=True,
                  sparse=False,
-                 reduction=None):
+                 reduction=None,
+                 smooth_factor=0,
+                 num_classes=2):
         super(SoftmaxCrossEntropyWithLogits, self).__init__(reduction)
         self.is_grad = is_grad
         self.sparse = sparse
+        validator.check_integer("num_classes", num_classes, 1, Rel.GT, self.cls_name)
+        validator.check_number_range("smooth_factor", smooth_factor, 0, 1, Rel.INC_BOTH, self.cls_name)
+        self.smooth_factor = smooth_factor
+        self.num_classes = num_classes
         self.softmax_cross_entropy = P.SoftmaxCrossEntropyWithLogits()
         self.one_hot = P.OneHot()
-        self.on_value = Tensor(1.0, mstype.float32)
-        self.off_value = Tensor(0.0, mstype.float32)
+        self.on_value = Tensor(1.0 - self.smooth_factor, mstype.float32)
+        self.off_value = Tensor(1.0 * self.smooth_factor / (self.num_classes - 1), mstype.float32)
         self.is_cpugpu = context.get_context('device_target') in ["CPU", "GPU"]
 
         if self.is_cpugpu:
@@ -285,9 +292,9 @@ class SoftmaxCrossEntropyExpand(Cell):
         Tensor, a scalar tensor including the mean loss.
 
     Examples:
-        >>> loss = SoftmaxCrossEntropyExpand(sparse=True)
-        >>> input_data = Tensor(np.ones([64, 512]), dtype=mstype.float32)
-        >>> label = Tensor(np.ones([64]), dtype=mstype.int32)
+        >>> loss = nn.SoftmaxCrossEntropyExpand(sparse=True)
+        >>> input_data = Tensor(np.ones([64, 512]), dtype=mindspore.float32)
+        >>> label = Tensor(np.ones([64]), dtype=mindspore.int32)
         >>> loss(input_data, label)
     """
     def __init__(self, sparse=False):

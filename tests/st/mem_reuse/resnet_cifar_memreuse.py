@@ -12,30 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-import mindspore.nn as nn
-from mindspore import Tensor
-from mindspore.ops import operations as P
-from mindspore.nn.optim.momentum import Momentum
-from mindspore.train.model import Model, ParallelMode
-from mindspore import context
-import mindspore.common.dtype as mstype
 import os
+import random
+import argparse
 import numpy as np
-import mindspore.ops.functional as F
-from mindspore.train.callback import ModelCheckpoint, CheckpointConfig, LossMonitor
-from mindspore.train.serialization import load_checkpoint, load_param_into_net
-import mindspore.dataengine as de
-import mindspore._c_dataengine as deMap
+from resnet import resnet50
+
+import mindspore.common.dtype as mstype
+import mindspore.context as context
+import mindspore.dataset as de
 import mindspore.dataset.transforms.c_transforms as C
 import mindspore.dataset.transforms.vision.c_transforms as vision
+import mindspore.nn as nn
+from mindspore import Tensor
 from mindspore.communication.management import init
-from resnet import resnet50
-import random
+from mindspore.nn.optim.momentum import Momentum
+from mindspore.ops import functional as F
+from mindspore.ops import operations as P
+from mindspore.train.callback import ModelCheckpoint, CheckpointConfig, LossMonitor
+from mindspore.train.model import Model, ParallelMode
+
 random.seed(1)
 np.random.seed(1)
 de.config.set_seed(1)
 
-import argparse
 parser = argparse.ArgumentParser(description='Image classification')
 parser.add_argument('--run_distribute', type=bool, default=False, help='Run distribute')
 parser.add_argument('--device_num', type=int, default=1, help='Device num.')
@@ -48,14 +48,12 @@ parser.add_argument('--checkpoint_path', type=str, default=None, help='Checkpoin
 parser.add_argument('--dataset_path', type=str, default="/var/log/npu/datasets/cifar", help='Dataset path')
 args_opt = parser.parse_args()
 
-device_id=int(os.getenv('DEVICE_ID'))
+device_id = int(os.getenv('DEVICE_ID'))
 
-data_home=args_opt.dataset_path
+data_home = args_opt.dataset_path
 
 context.set_context(mode=context.GRAPH_MODE, device_target="Ascend")
-context.set_context(enable_task_sink=True, device_id=device_id)
-context.set_context(enable_loop_sink=True)
-context.set_context(enable_mem_reuse=True)
+context.set_context(device_id=device_id)
 
 
 def create_dataset(repeat_num=1, training=True):
@@ -65,8 +63,8 @@ def create_dataset(repeat_num=1, training=True):
     ds = de.Cifar10Dataset(data_dir)
 
     if args_opt.run_distribute:
-        rank_id=int(os.getenv('RANK_ID'))
-        rank_size=int(os.getenv('RANK_SIZE'))
+        rank_id = int(os.getenv('RANK_ID'))
+        rank_size = int(os.getenv('RANK_SIZE'))
         ds = de.Cifar10Dataset(data_dir, num_shards=rank_size, shard_id=rank_id)
 
     resize_height = 224
@@ -75,9 +73,9 @@ def create_dataset(repeat_num=1, training=True):
     shift = 0.0
 
     # define map operations
-    random_crop_op = vision.RandomCrop((32, 32), (4, 4, 4, 4)) # padding_mode default CONSTANT
+    random_crop_op = vision.RandomCrop((32, 32), (4, 4, 4, 4))  # padding_mode default CONSTANT
     random_horizontal_op = vision.RandomHorizontalFlip()
-    resize_op = vision.Resize((resize_height, resize_width)) # interpolation default BILINEAR
+    resize_op = vision.Resize((resize_height, resize_width))  # interpolation default BILINEAR
     rescale_op = vision.Rescale(rescale, shift)
     normalize_op = vision.Normalize((0.4465, 0.4822, 0.4914), (0.2010, 0.1994, 0.2023))
     changeswap_op = vision.HWC2CHW()
@@ -116,22 +114,16 @@ class CrossEntropyLoss(nn.Cell):
 
     def construct(self, logits, label):
         label = self.one_hot(label, F.shape(logits)[1], self.one, self.zero)
-        loss = self.cross_entropy(logits, label)[0]
-        loss = self.mean(loss, (-1,))
-        return loss
+        loss_func = self.cross_entropy(logits, label)[0]
+        loss_func = self.mean(loss_func, (-1,))
+        return loss_func
 
 
 if __name__ == '__main__':
-    if args_opt.do_eval:
-        context.set_context(enable_hccl=False)
-    else:
-        if args_opt.run_distribute:
-            context.set_context(enable_hccl=True)
-            context.set_auto_parallel_context(device_num=args_opt.device_num, parallel_mode=ParallelMode.DATA_PARALLEL)
-            context.set_auto_parallel_context(all_reduce_fusion_split_indices=[140])
-            init()
-        else:
-            context.set_context(enable_hccl=False)
+    if not args_opt.do_eval and args_opt.run_distribute:
+        context.set_auto_parallel_context(device_num=args_opt.device_num, parallel_mode=ParallelMode.DATA_PARALLEL)
+        context.set_auto_parallel_context(all_reduce_fusion_split_indices=[140])
+        init()
 
     context.set_context(mode=context.GRAPH_MODE)
     epoch_size = args_opt.epoch_size
@@ -150,11 +142,8 @@ if __name__ == '__main__':
         model.train(epoch_size, dataset, callbacks=[ckpoint_cb, loss_cb])
 
     if args_opt.do_eval:
-        # if args_opt.checkpoint_path:
-        #     param_dict = load_checkpoint(args_opt.checkpoint_path)
-        #     load_param_into_net(net, param_dict)
         eval_dataset = create_dataset(1, training=False)
         res = model.eval(eval_dataset)
         print("result: ", res)
     checker = os.path.exists("./memreuse.ir")
-    assert (checker, True)
+    assert checker, True

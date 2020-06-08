@@ -17,10 +17,62 @@
 
 #include <utility>
 
+#include "utils/utils.h"
 #include "utils/log_adapter.h"
+#include "operator/ops.h"
 
 namespace mindspore {
 namespace opt {
+ConstInputToAttrInfoRegistry::ConstInputToAttrInfoRegistry() {
+  Register(prim::kPrimCast->name(), {1});
+  Register(prim::kPrimAvgPoolGrad->name(), {0});
+  Register(prim::kPrimConv2DBackpropInput->name(), {2});
+  Register(prim::kPrimConv2DBackpropFilter->name(), {2});
+  Register(prim::kPrimDepthwiseConv2dNativeBackpropFilter->name(), {1});
+  Register(prim::kPrimDepthwiseConv2dNativeBackpropInput->name(), {0});
+  Register(prim::kPrimReshape->name(), {1});
+  Register(prim::kPrimReduceMax->name(), {1});
+  Register(prim::kPrimReduceMin->name(), {1});
+  Register(prim::kPrimReduceSum->name(), {1});
+  Register(prim::kPrimReduceMean->name(), {1});
+  Register(prim::kPrimGatherV2->name(), {2});
+  Register(prim::kPrimEmbeddingLookup->name(), {2, 3, 4, 5});
+  Register(prim::kPrimEmbeddingLookupCommGrad->name(), {1});
+  Register(prim::kPrimSubscalar->name(), {1});
+  Register(prim::kPrimTranspose->name(), {1});
+  Register(prim::kPrimUnsortedSegmentSum->name(), {2});
+  Register(prim::kPrimOneHot->name(), {1});
+  Register(prim::kPrimConcat->name(), {0});
+  Register(prim::kPrimCumSum->name(), {1});
+  Register(prim::kPrimCumProd->name(), {1});
+  Register(prim::kPrimReduceAll->name(), {1});
+  Register(prim::kPrimUnsortedSegmentMin->name(), {2});
+  Register(kUnsortedSegmentProdOpName, {2});
+  Register(kSimpleMeanGradOpName, {1});
+  Register(kMeanGradOpName, {1});
+  Register(kSliceOpName, {1, 2});
+  Register(kSliceGradOpName, {2, 3});
+  Register(kTileOpName, {1});
+  Register(kScatterNdOpName, {2});
+  Register(kStridedSliceAssignOpName, {1, 2, 3});
+  Register(kStridedSliceOpName, {1, 2, 3});
+  Register(kFlattenGradOpName, {1});
+  Register(kExpandDimsOpName, {1});
+  Register(kSplitOpName, {0});
+  Register(kErfOpName, {1});
+  Register(kSparseApplyAdagradOpName, {2});
+  Register(kResizeNearestNeighborGradOpName, {1});
+  Register(kResizeNearestNeighborV2OpName, {1});
+  Register(kResizeNearestNeighborV2GradOpName, {1});
+  Register(kApplyRMSPropOpname, {5, 6, 7});
+  Register(kResizeBilinearV2OpName, {1});
+  Register(kReduceProdOpName, {1});
+  Register(kCumprodOpName, {1});
+  Register(kSpaceToBatchOpName, {1});
+  Register(kBatchToSpaceOpName, {1});
+  Register(kPadOpName, {1});
+}
+
 ConstInputToAttrInfoRegistry &ConstInputToAttrInfoRegistry::Instance() {
   static ConstInputToAttrInfoRegistry instance;
   return instance;

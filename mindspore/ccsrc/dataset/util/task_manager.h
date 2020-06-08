@@ -16,8 +16,10 @@
 #ifndef DATASET_UTIL_TASK_MANAGER_H_
 #define DATASET_UTIL_TASK_MANAGER_H_
 
+#if !defined(_WIN32) && !defined(_WIN64)
 #include <semaphore.h>
 #include <signal.h>  // for sig_atomic_t
+#endif
 #include <condition_variable>
 #include <functional>
 #include <memory>
@@ -81,8 +83,10 @@ class TaskManager : public Service {
   static void InterruptMaster(const Status &rc = Status::OK());
 
   static void WakeUpWatchDog() {
+#if !defined(_WIN32) && !defined(_WIN64)
     TaskManager &tm = TaskManager::GetInstance();
     (void)sem_post(&tm.sem_);
+#endif
   }
 
   void ReturnFreeTask(Task *p) noexcept;
@@ -98,7 +102,9 @@ class TaskManager : public Service {
   std::shared_ptr<Task> master_;
   List<Task> lru_;
   List<Task> free_lst_;
+#if !defined(_WIN32) && !defined(_WIN64)
   sem_t sem_;
+#endif
   TaskGroup *watchdog_grp_;
   std::set<TaskGroup *> grp_list_;
   Task *watchdog_;
@@ -116,7 +122,7 @@ class TaskGroup : public Service {
 
   void interrupt_all() noexcept;
 
-  Status join_all();
+  Status join_all(Task::WaitFlag wf = Task::WaitFlag::kBlocking);
 
   int size() const noexcept { return grp_list_.count; }
 
@@ -148,37 +154,27 @@ inline bool is_interrupted() {
     return true;
   }
   Task *my_task = TaskManager::FindMe();
-  return (my_task != nullptr) ? my_task->Interrupted() : false;
+  return my_task->Interrupted();
+}
+
+inline bool is_master_thread() {
+  Task *my_task = TaskManager::FindMe();
+  return my_task->IsMasterThread();
+}
+
+inline Status GetInterruptStatus() {
+  Task *my_task = TaskManager::FindMe();
+  return my_task->GetInterruptStatus();
 }
 }  // namespace this_thread
 
-#define RETURN_IF_INTERRUPTED()                                          \
-  do {                                                                   \
-    if (mindspore::dataset::this_thread::is_interrupted()) {             \
-      Task *myTask = TaskManager::FindMe();                              \
-      if (myTask->IsMasterThread() && myTask->CaughtSevereException()) { \
-        return TaskManager::GetMasterThreadRc();                         \
-      } else {                                                           \
-        return Status(StatusCode::kInterrupted);                         \
-      }                                                                  \
-    }                                                                    \
+#define RETURN_IF_INTERRUPTED()                                            \
+  do {                                                                     \
+    if (mindspore::dataset::this_thread::is_interrupted()) {               \
+      return Task::OverrideInterruptRc(this_thread::GetInterruptStatus()); \
+    }                                                                      \
   } while (false)
 
-inline Status interruptible_wait(std::condition_variable *cv, std::unique_lock<std::mutex> *lk,
-                                 const std::function<bool()> &pred) noexcept {
-  if (!pred()) {
-    do {
-      RETURN_IF_INTERRUPTED();
-      try {
-        (void)cv->wait_for(*lk, std::chrono::milliseconds(1));
-      } catch (std::exception &e) {
-        // Anything thrown by wait_for is considered system error.
-        RETURN_STATUS_UNEXPECTED(e.what());
-      }
-    } while (!pred());
-  }
-  return Status::OK();
-}
 }  // namespace dataset
 }  // namespace mindspore
 

@@ -15,16 +15,18 @@
 """ test adam """
 import numpy as np
 import pytest
+
 import mindspore.nn as nn
-from mindspore.common.api import _executor
 from mindspore import Tensor, Parameter
+from mindspore.common.api import _executor
 from mindspore.nn import TrainOneStepCell, WithLossCell
-from mindspore.ops import operations as P
 from mindspore.nn.optim import AdamWeightDecay, AdamWeightDecayDynamicLR
+from mindspore.ops import operations as P
 
 
 class Net(nn.Cell):
     """ Net definition """
+
     def __init__(self):
         super(Net, self).__init__()
         self.weight = Parameter(Tensor(np.ones([64, 10]).astype(np.float32)), name="weight")
@@ -50,7 +52,7 @@ class NetWithoutWeight(nn.Cell):
 def test_adamwithoutparam():
     net = NetWithoutWeight()
     net.set_train()
-    with pytest.raises(ValueError, match=r"optimizer got an empty parameter list"):
+    with pytest.raises(ValueError, match=r"Optimizer got an empty parameter list"):
         AdamWeightDecay(net.trainable_params(), learning_rate=0.1)
 
 
@@ -102,7 +104,7 @@ def test_AdamWeightDecayDynamicLR():
     _executor.compile(train_network, inputs, label)
 
 
-def test_adam_mindspore_flatten():
+def test_adam_mindspore_with_empty_params():
     net = nn.Flatten()
-    with pytest.raises(ValueError, match=r"optimizer got an empty parameter list"):
+    with pytest.raises(ValueError, match=r"Optimizer got an empty parameter list"):
         AdamWeightDecay(net.get_parameters())

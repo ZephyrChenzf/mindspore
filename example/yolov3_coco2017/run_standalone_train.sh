@@ -14,8 +14,25 @@
 # limitations under the License.
 # ============================================================================
 
+echo "========================================================================================================================================="
 echo "Please run the scipt as: "
-echo "sh run_standalone_train.sh DEVICE_ID EPOCH_SIZE IMAGE_DIR ANNO_PATH"
-echo "for example: sh run_standalone_train.sh 0 50 ./dataset/coco/train2017 ./dataset/train.txt"
+echo "sh run_standalone_train.sh DEVICE_ID EPOCH_SIZE MINDRECORD_DIR IMAGE_DIR ANNO_PATH PRE_TRAINED PRE_TRAINED_EPOCH_SIZE"
+echo "for example: sh run_standalone_train.sh 0 50 ./Mindrecord_train ./dataset ./dataset/train.txt /opt/yolov3-50.ckpt(optional) 30(optional)"
+echo "========================================================================================================================================="
 
-python train.py --device_id=$1 --epoch_size=$2 --image_dir=$3 --anno_path=$4
+if [ $# != 5 ] && [ $# != 7 ]
+then
+    echo "Usage: sh run_standalone_train.sh [DEVICE_ID] [EPOCH_SIZE] [MINDRECORD_DIR] [IMAGE_DIR] [ANNO_PATH] \
+[PRE_TRAINED](optional) [PRE_TRAINED_EPOCH_SIZE](optional)"
+    exit 1
+fi
+
+if [ $# == 5 ]
+then
+    python train.py --device_id=$1 --epoch_size=$2 --mindrecord_dir=$3 --image_dir=$4 --anno_path=$5
+fi
+
+if [ $# == 7 ]
+then
+    python train.py --device_id=$1 --epoch_size=$2 --mindrecord_dir=$3 --image_dir=$4 --anno_path=$5 --pre_trained=$6 --pre_trained_epoch_size=$7
+fi

@@ -15,17 +15,12 @@
 """ test optimizer """
 import numpy as np
 import pytest
-from mindspore.nn.optim import Optimizer, SGD, Adam, AdamWeightDecay, AdamWeightDecayDynamicLR
+
 from mindspore import Tensor
 from mindspore.common.parameter import Parameter
+from mindspore.nn.optim import Optimizer, SGD, Adam, AdamWeightDecay, AdamWeightDecayDynamicLR
 
 
-gradient = Tensor(np.zeros([1, 2, 3]))
-accumulation = gradient
-variable = accumulation
-
-
-paramsTensor = Tensor(np.zeros([1, 2, 3]))
 class IterableObjc:
     def __iter__(self):
         cont = 0
@@ -35,6 +30,7 @@ class IterableObjc:
 
 
 params = IterableObjc()
+
 
 class TestOptimizer():
     def test_init(self):
@@ -50,12 +46,14 @@ class TestOptimizer():
 
 class TestAdam():
     """ TestAdam definition """
+
     def test_init(self):
         Adam(params, learning_rate=1e-3, beta1=0.9, beta2=0.999, eps=1e-8, use_locking=False,
              use_nesterov=False, weight_decay=0.0, loss_scale=1.0)
 
     def test_construct(self):
         with pytest.raises(TypeError):
+            gradient = Tensor(np.zeros([1, 2, 3]))
             adam = Adam(params, learning_rate=1e-3, beta1=0.9, beta2=0.999, eps=1e-8, use_locking=False,
                         use_nesterov=False, weight_decay=0.0, loss_scale=1.0)
             adam.construct(gradient)
@@ -63,6 +61,7 @@ class TestAdam():
 
 class TestSGD():
     """ TestSGD definition """
+
     def test_init(self):
         with pytest.raises(ValueError):
             SGD(params, learning_rate=0.1, momentum=-0.1, dampening=0, weight_decay=0, nesterov=False)
@@ -73,26 +72,29 @@ class TestSGD():
 
 class TestNullParam():
     """ TestNullParam definition """
+
     def test_optim_init(self):
-        with pytest.raises(TypeError):
+        with pytest.raises(ValueError):
             Optimizer(0.1, None)
 
     def test_AdamWightDecay_init(self):
-        with pytest.raises(TypeError):
+        with pytest.raises(ValueError):
             AdamWeightDecay(None)
 
     def test_AdamWeightDecayDynamicLR_init(self):
-        with pytest.raises(TypeError):
+        with pytest.raises(ValueError):
             AdamWeightDecayDynamicLR(None, 10)
 
     def test_Sgd_init(self):
-        with pytest.raises(TypeError):
+        with pytest.raises(ValueError):
             SGD(None)
+
 
 class TestUnsupportParam():
     """ TestUnsupportParam definition """
+
     def test_optim_init(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(TypeError):
             Optimizer(0.1, (1, 2, 3))
 
     def test_AdamWightDecay_init(self):
@@ -105,4 +107,5 @@ class TestUnsupportParam():
 
     def test_Sgd_init(self):
         with pytest.raises(TypeError):
+            paramsTensor = Tensor(np.zeros([1, 2, 3]))
             SGD(paramsTensor)

@@ -1,34 +1,59 @@
-file(GLOB_RECURSE _DEVICE_ALL_SRC_FILES *.cc)
-add_library(_mindspore_device_obj OBJECT ${_DEVICE_ALL_SRC_FILES})
+file(GLOB_RECURSE DEVICE_SRC_LIST RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "common/*.cc"
+    "kernel_info.cc" "kernel_runtime.cc" "memory_manager.cc" "kernel_runtime_manager.cc" "convert_tensor_utils.cc"
+)
 
-if(ENABLE_CPU)
-    target_compile_definitions(_mindspore_device_obj PRIVATE CPUSESSION)
-    file(GLOB_RECURSE _CPU_SRC_LIST  cpu/*.cc)
-    add_library(_c_expression_cpu_device_obj  OBJECT ${_CPU_SRC_LIST})
-endif()
+if (ENABLE_GPU)
+    list(APPEND DEVICE_SRC_LIST "gpu/distribution/collective_init.cc")
+else ()
+    list(APPEND DEVICE_SRC_LIST "gpu/distribution/collective_fake_init.cc")
+endif ()
 
-if(ENABLE_GPU)
-    file(GLOB_RECURSE _GPU_SRC_LIST  RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
-            "gpu/*.cc"
-            "gpu/*.cu"
-            )
-    list(REMOVE_ITEM _GPU_SRC_LIST "gpu/blocking_queue.cc"
-                                   "gpu/gpu_buffer_mgr.cc"
-                                   "gpu/mpi/mpi_initializer.cc"
-                                   "gpu/distribution/collective_wrapper.cc"
-                                   "gpu/distribution/mpi_wrapper.cc"
-                                   "gpu/distribution/nccl_wrapper.cc")
-    add_library(_cuda_gpu_device_obj  OBJECT ${_GPU_SRC_LIST})
-endif()
+if (ENABLE_D)
+    file(GLOB_RECURSE D_SRC_LIST RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "ascend/*.cc" "kernel_adjust.cc")
+endif ()
 
-if(ENABLE_D)
-    file(GLOB_RECURSE _D_SRC_LIST  RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
-            "ascend/*.cc"
-            "ascend/profiling/*.cc"
-            "ascend/tasksink/*.cc"
-            "kernel_adjust.cc"
-            "ascend/tasksink/taskinfo/*.cc"
-            )
-    target_sources(_mindspore_device_obj  PRIVATE ${_D_SRC_LIST})
-endif()
+if (ENABLE_CPU)
+    file(GLOB_RECURSE CPU_SRC_LIST RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "cpu/*.cc")
+    if (ENABLE_MPI)
+        # _ms_mpi
+        set_property(SOURCE "gpu/mpi/mpi_initializer.cc"
+            PROPERTY COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_DEVICE)
+        pybind11_add_module(_ms_mpi "gpu/mpi/mpi_initializer.cc")
+        target_link_libraries(_ms_mpi PRIVATE mindspore::pybind11_module mindspore::ompi)
+    else ()
+        list(REMOVE_ITEM CPU_SRC_LIST "cpu/mpi/mpi_adapter.cc")
+    endif ()
+endif ()
 
+# gpu
+if (ENABLE_GPU)
+    file(GLOB_RECURSE CUDA_SRC_LIST RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "gpu/*.cc" "gpu/*.cu")
+
+    set(GPU_QUEUE_SRCS "gpu/blocking_queue.cc" "gpu/gpu_buffer_mgr.cc")
+    set(GPU_COLLECTIVE_SRCS "gpu/distribution/collective_wrapper.cc"
+                            "gpu/distribution/mpi_wrapper.cc"
+                            "gpu/distribution/nccl_wrapper.cc")
+
+    # gpu_queue
+    list(REMOVE_ITEM CUDA_SRC_LIST ${GPU_QUEUE_SRCS})
+    set_property(SOURCE ${GPU_QUEUE_SRCS} PROPERTY COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_DEVICE)
+    add_library(gpu_queue SHARED ${GPU_QUEUE_SRCS})
+    target_link_libraries(gpu_queue ${CMAKE_THREAD_LIBS_INIT} ${CUDA_PATH}/lib64/libcudart.so)
+
+    list(REMOVE_ITEM CUDA_SRC_LIST "gpu/mpi/mpi_initializer.cc" ${GPU_COLLECTIVE_SRCS})
+
+    if (ENABLE_MPI)
+        include(ExternalProject)
+        # gpu_collective
+        set_property(SOURCE ${GPU_COLLECTIVE_SRCS}
+            PROPERTY COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_DEVICE)
+        add_library(gpu_collective SHARED ${GPU_COLLECTIVE_SRCS})
+        target_link_libraries(gpu_collective PRIVATE mindspore::ompi mindspore::nccl)
+    endif ()
+
+    # add_library(_mindspore_device_cuda_obj OBJECT ${CUDA_SRC_LIST})
+endif ()
+
+set_property(SOURCE ${DEVICE_SRC_LIST} ${D_SRC_LIST} ${CPU_SRC_LIST}
+    PROPERTY COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_DEVICE)
+add_library(_mindspore_device_obj OBJECT ${DEVICE_SRC_LIST} ${D_SRC_LIST} ${CPU_SRC_LIST})

@@ -18,21 +18,21 @@
 
 #include <algorithm>
 #include <functional>
-#include <vector>
-#include <utility>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "ir/value.h"
+#include "parallel/auto_parallel/graph_costmodel.h"
+#include "parallel/device_manager.h"
 #include "parallel/device_matrix.h"
 #include "parallel/tensor_layout/tensor_redistribution.h"
-#include "parallel/device_manager.h"
-#include "parallel/auto_parallel/graph_costmodel.h"
 
 namespace mindspore {
 namespace parallel {
-void SetDevMatrixShape(const Dimensions& mat_a_strategy, const Dimensions& mat_b_strategy, bool transpose_b,
-                       Shape* dev_matrix_shape) {
+void SetDevMatrixShape(const Dimensions &mat_a_strategy, const Dimensions &mat_b_strategy, bool transpose_b,
+                       Shape *dev_matrix_shape) {
   MS_EXCEPTION_IF_NULL(dev_matrix_shape);
   size_t mat_a_size = mat_a_strategy.size();
   size_t mat_b_size = mat_b_strategy.size();
@@ -94,6 +94,17 @@ Status MatMulBase::GetAttrs() {
     }
   }
 
+  auto forward_reduce_scatter_iter = attrs_.find(FORWARD_REDUCE_SCATTER);
+  if (forward_reduce_scatter_iter != attrs_.end()) {
+    MS_EXCEPTION_IF_NULL(forward_reduce_scatter_iter->second);
+    if (forward_reduce_scatter_iter->second->isa<BoolImm>()) {
+      forward_reduce_scatter_ = forward_reduce_scatter_iter->second->cast<BoolImmPtr>()->value();
+    } else {
+      MS_LOG(ERROR) << name_ << " : The value of forward reduce scatter is not bool.";
+      return FAILED;
+    }
+  }
+
   // infer inputs dimension size
   if ((inputs_shape_.size() != MATMUL_INPUTS_SIZE) || (outputs_shape_.size() != MATMUL_OUTPUTS_SIZE)) {
     MS_LOG(ERROR) << name_ << " : Inputs shape size or outputs shape size is wrong.";
@@ -105,7 +116,7 @@ Status MatMulBase::GetAttrs() {
   return SUCCESS;
 }
 
-Status CheckRelevantDimension(const Dimensions& long_strategy, const Dimensions& short_strategy) {
+Status CheckRelevantDimension(const Dimensions &long_strategy, const Dimensions &short_strategy) {
   size_t long_size = long_strategy.size();
   size_t short_size = short_strategy.size();
   if (long_size < short_size) {
@@ -126,7 +137,7 @@ Status CheckRelevantDimension(const Dimensions& long_strategy, const Dimensions&
   return SUCCESS;
 }
 
-Status MatMul::CheckStrategy(const StrategyPtr& strategy) {
+Status MatMul::CheckStrategy(const StrategyPtr &strategy) {
   if (CheckStrategyValue(strategy, inputs_shape_, is_auto_parallel_) != SUCCESS) {
     if (is_auto_parallel_) {
       MS_LOG(DEBUG) << name_ << " : Invalid strategy.";
@@ -172,6 +183,13 @@ Status MatMul::CheckStrategy(const StrategyPtr& strategy) {
       MS_LOG(ERROR) << name_ << " : Strategies of relevant dimensions are not equal.";
       return FAILED;
     }
+  }
+
+  if ((mat_a_dimension_ != 2 || mat_b_dimension_ != 2) && forward_reduce_scatter_) {
+    MS_LOG(WARNING) << name_
+                    << ": The dimension of mat a and mat b must be 2 in forward reduce scatter mode, "
+                       "setting the forward reduce scatter mode to false here";
+    forward_reduce_scatter_ = false;
   }
 
   return SUCCESS;
@@ -231,25 +249,16 @@ Status MatMulBase::InferForwardCommunication() {
     return SUCCESS;
   }
 
-  Operator op = CreateAllReduceOp(REDUCE_OP_SUM, group_list[0].name());
-  forward_op_.push_back(op);
-
-  MS_LOG(INFO) << name_ << " : The group name of forward communication is " << group_list[0].name();
-  return SUCCESS;
-}
-
-// dev_matrix_shape: [a, b, c, d, e], then output strategy: [a, b, c, e];
-Dimensions GetOutputStrategy(const Shape& dev_matrix_shape, int32_t repeated_calculation_num) {
-  Dimensions output_strategy = dev_matrix_shape;
-  if (repeated_calculation_num > 1) {
-    // move the first dimension(repeated_calc_num_)
-    (void)output_strategy.erase(output_strategy.begin());
+  Operator op;
+  if (forward_reduce_scatter_) {
+    op = CreateReduceScatterOp(REDUCE_OP_SUM, group_list[0].name());
+  } else {
+    op = CreateAllReduceOp(REDUCE_OP_SUM, group_list[0].name());
   }
 
-  // delete the second-to-last element
-  (void)output_strategy.erase(output_strategy.begin() +
-                              static_cast<different_type>(SECOND_FROM_END(output_strategy.size())));
-  return output_strategy;
+  forward_op_.push_back(op);
+  MS_LOG(INFO) << name_ << " : The group name of forward communication is " << group_list[0].name();
+  return SUCCESS;
 }
 
 Status MatMulBase::InferTensorMap() {
@@ -295,17 +304,45 @@ Status MatMulBase::InferTensorMap() {
       mat_b_tensor_map.begin() + static_cast<different_type>(LAST_INDEX(mat_b_tensor_map.size())), last_value);
   }
 
+  if (forward_reduce_scatter_) {
+    if (dev_matrix_shape_.size() != 3) {
+      MS_LOG(WARNING) << name_
+                      << ": The dimension of dev matrix shape must be 3 in forward reduce scatter mode, "
+                         "setting the forward reduce scatter mode to false here";
+      forward_reduce_scatter_ = false;
+    } else if (outputs_shape_[0][0] % (dev_matrix_shape_[0] * dev_matrix_shape_[1]) != 0) {
+      MS_LOG(WARNING) << name_
+                      << ": The first dimension of output should be split by dev_matrix[0]*dev_matrix[1] in "
+                         "forward reduce scatter mode, setting the forward reduce scatter mode to false here";
+      forward_reduce_scatter_ = false;
+    } else {
+      // the forward reduce scatter only support that the dimension of output is 2
+      output_tensor_map = {1, 0};
+    }
+  }
+
   inputs_tensor_map_.push_back(mat_a_tensor_map);
   inputs_tensor_map_.push_back(mat_b_tensor_map);
   outputs_tensor_map_.push_back(output_tensor_map);
   return SUCCESS;
 }
 
-Status MatMulBase::InferTensorLayout(TensorLayouts* inputs_layout, TensorLayouts* outputs_layout) {
+Status MatMulBase::InferTensorLayout(TensorLayouts *inputs_layout, TensorLayouts *outputs_layout) {
+  Shape output_dev_matrix_shape;
+  if (forward_reduce_scatter_) {
+    if (dev_matrix_shape_.size() != 3) {
+      MS_LOG(ERROR) << "The size of origin dev matrix shape must be 3 in forward reduce scatter mode";
+      return FAILED;
+    }
+    output_dev_matrix_shape = {dev_matrix_shape_[0] * dev_matrix_shape_[1], dev_matrix_shape_[2]};
+  } else {
+    output_dev_matrix_shape = dev_matrix_shape_;
+  }
+
   TensorLayout mat_a_layout, mat_b_layout, output_layout;
   if ((mat_a_layout.InitFromVector(dev_matrix_shape_, inputs_tensor_map_[0], inputs_shape_[0]) != SUCCESS) ||
       (mat_b_layout.InitFromVector(dev_matrix_shape_, inputs_tensor_map_[1], inputs_shape_[1]) != SUCCESS) ||
-      (output_layout.InitFromVector(dev_matrix_shape_, outputs_tensor_map_[0], outputs_shape_[0]) != SUCCESS)) {
+      (output_layout.InitFromVector(output_dev_matrix_shape, outputs_tensor_map_[0], outputs_shape_[0]) != SUCCESS)) {
     return FAILED;
   }
 
@@ -316,24 +353,6 @@ Status MatMulBase::InferTensorLayout(TensorLayouts* inputs_layout, TensorLayouts
 }
 
 Status MatMulBase::InferTensorInfo() {
-  // infer tensor shape
-  Shape mat_a_shape = inputs_shape_.at(0);
-  Shape mat_b_shape = inputs_shape_.at(1);
-  Shape output_shape = outputs_shape_.at(0);
-
-  // infer slice shape
-  Shapes inputs_slice_shape, outputs_slice_shape;
-  Dimensions output_strategy = GetOutputStrategy(dev_matrix_shape_, repeated_calc_num_);
-
-  Strategys inputs_strategy = strategy_->GetInputDim();
-  Strategys outputs_strategy = {output_strategy};
-  if (InferSliceShape(inputs_strategy, outputs_strategy, &inputs_slice_shape, &outputs_slice_shape) != SUCCESS) {
-    return FAILED;
-  }
-  Shape mat_a_slice_shape = inputs_slice_shape.at(0);
-  Shape mat_b_slice_shape = inputs_slice_shape.at(1);
-  Shape output_slice_shape = outputs_slice_shape.at(0);
-
   // infer tensor layout
   TensorLayouts inputs_layout, outputs_layout;
   if (InferTensorLayout(&inputs_layout, &outputs_layout) != SUCCESS) {
@@ -343,9 +362,9 @@ Status MatMulBase::InferTensorInfo() {
   TensorLayout mat_a_layout = inputs_layout.at(0);
   TensorLayout mat_b_layout = inputs_layout.at(1);
   TensorLayout output_layout = outputs_layout.at(0);
-  TensorInfo mat_a_tensor_info(mat_a_layout, mat_a_shape, mat_a_slice_shape);
-  TensorInfo mat_b_tensor_info(mat_b_layout, mat_b_shape, mat_b_slice_shape);
-  TensorInfo output_tensor_info(output_layout, output_shape, output_slice_shape);
+  TensorInfo mat_a_tensor_info(mat_a_layout);
+  TensorInfo mat_b_tensor_info(mat_b_layout);
+  TensorInfo output_tensor_info(output_layout);
 
   inputs_tensor_info_.push_back(mat_a_tensor_info);
   inputs_tensor_info_.push_back(mat_b_tensor_info);
@@ -353,17 +372,22 @@ Status MatMulBase::InferTensorInfo() {
   return SUCCESS;
 }
 
-Status MatMulBase::Init(const StrategyPtr& strategy) {
+Status MatMulBase::Init(const StrategyPtr &strategy) {
   if (InitWithAutoRepeatCalc(strategy) != SUCCESS) {
     MS_LOG(ERROR) << name_ << " : Init failed.";
     return FAILED;
+  }
+
+  if (forward_reduce_scatter_) {
+    virtual_div_op_.clear();
+    MS_LOG(INFO) << "The forward reduce scatter mode does not involve repeated calculation, clear the virtual div op";
   }
 
   MS_LOG(INFO) << name_ << " : Init success.";
   return SUCCESS;
 }
 
-Status MatMulBase::InitForCostModel(const StrategyPtr& strategy) {
+Status MatMulBase::InitForCostModel(const StrategyPtr &strategy) {
   if (InitForCostModelWithAutoRepeatCalc(strategy) != SUCCESS) {
     if (is_auto_parallel_) {
       MS_LOG(DEBUG) << name_ << " : Init for cost model failed.";
@@ -377,7 +401,7 @@ Status MatMulBase::InitForCostModel(const StrategyPtr& strategy) {
   return SUCCESS;
 }
 
-Status MatMulBase::SwapLastTwoElements(mindspore::parallel::Shape* const input) {
+Status MatMulBase::SwapLastTwoElements(mindspore::parallel::Shape *const input) {
   if (input->size() < 2) {
     MS_LOG(ERROR) << name_ << " : The size of inputs small than 2.";
     return FAILED;
@@ -397,7 +421,7 @@ Status MatMulBase::GenerateStrategies(int32_t stage_id) {
     return FAILED;
   }
   CheckGlobalDeviceManager();
-  std::list<int32_t> dev_list = g_device_manager->GetDeviceListByStageId(stage_id);
+  std::vector<int32_t> dev_list = g_device_manager->GetDeviceListByStageId(stage_id);
   size_t dev_num = dev_list.size();
   Shape input0_shape = inputs_shape_[0], input1_shape = inputs_shape_[1];
   if (transpose_a_) {
@@ -463,9 +487,9 @@ Status MatMulBase::GenerateStrategies(int32_t stage_id) {
 
 Status MatMulBase::PrepareStrategy(int32_t stage_id, size_t dev_num,
                                    mindspore::parallel::Dimensions combined_partitions, size_t input0_shape_size,
-                                   size_t input1_shape_size, mindspore::parallel::StrategyPtr* const sp) {
+                                   size_t input1_shape_size, mindspore::parallel::StrategyPtr *const sp) {
   int32_t product = std::accumulate(combined_partitions.begin(), combined_partitions.end(), 1, std::multiplies<int>());
-  if (NOT_FULLY_USE_DEVICES) {
+  if (!FULLY_USE_DEVICES) {
     if (IntToSize(product) > dev_num) {
       return FAILED;
     }
@@ -519,7 +543,7 @@ Status MatMulBase::PrepareStrategy(int32_t stage_id, size_t dev_num,
   return SUCCESS;
 }
 
-void MatMulBase::InitTensorInfoForCost(std::vector<TensorInfo>* relica_inputs_tensor_vector) {
+void MatMulBase::InitTensorInfoForCost(std::vector<TensorInfo> *relica_inputs_tensor_vector) {
   TensorLayout tly;
   if (transpose_a_) {
     Shape replica_input0_shape(inputs_tensor_info_[0].shape());
@@ -560,7 +584,7 @@ Status MatMulBase::CheckForTensorSliceValid() const {
   if (inputs_tensor_info_.empty()) {
     return FAILED;
   }
-  for (auto& one_input_tensor : inputs_tensor_info_) {
+  for (auto &one_input_tensor : inputs_tensor_info_) {
     auto slice_shape = one_input_tensor.slice_shape();
     if ((IntToSize(slice_shape[LAST_INDEX(slice_shape.size())]) % TENSOR_SLICE_ALIGNMENT_SIZE != 0) ||
         (IntToSize(slice_shape[SECOND_FROM_END(slice_shape.size())]) % TENSOR_SLICE_ALIGNMENT_SIZE != 0)) {
@@ -570,7 +594,7 @@ Status MatMulBase::CheckForTensorSliceValid() const {
   return SUCCESS;
 }
 
-Status MatMulBase::SetCostUnderStrategy(const mindspore::parallel::StrategyPtr& strategy) {
+Status MatMulBase::SetCostUnderStrategy(const mindspore::parallel::StrategyPtr &strategy) {
   if (InitForCostModel(strategy) == FAILED) {
     if (is_auto_parallel_) {
       MS_LOG(DEBUG) << name_ << " : Initialization under the strategy failed.";
@@ -592,24 +616,25 @@ Status MatMulBase::SetCostUnderStrategy(const mindspore::parallel::StrategyPtr& 
   int32_t stage_id = strategy->GetInputStage();
   // Here, we use the origin outputs_, because we only use the slice size of the output tensor.
   // It does not matter whether the output tensor is transposed or not.
-  double memory_cost =
-    matmulcost_ptr->GetForwardMemoryCost(relica_inputs_tensor_vector, outputs_tensor_info_, stage_id);
-  double communication_cost = matmulcost_ptr->GetCommCost(relica_inputs_tensor_vector, outputs_tensor_info_, stage_id);
-  std::shared_ptr<Cost> result = std::make_shared<Cost>(memory_cost, communication_cost);
+  double computation_cost =
+    operator_cost()->GetForwardComputationCost(relica_inputs_tensor_vector, outputs_tensor_info_, stage_id);
+  double communication_cost = operator_cost()->GetCommCost(relica_inputs_tensor_vector, outputs_tensor_info_, stage_id);
+  std::shared_ptr<Cost> result = std::make_shared<Cost>(computation_cost, communication_cost);
   result->communication_without_parameter_ =
-    matmulcost_ptr->GetForwardCommCost(relica_inputs_tensor_vector, outputs_tensor_info_, stage_id);
+    operator_cost()->GetForwardCommCost(relica_inputs_tensor_vector, outputs_tensor_info_, stage_id);
   result->communication_with_partial_para_ =
     result->communication_without_parameter_ +
     COST_MODEL_GAMMA * (communication_cost - result->communication_without_parameter_);
 
   // Breaking ties for preferring data parallelization
   BreakingTiesForPerferringDataParallel(strategy, result);
-  MS_LOG(DEBUG) << name_ << " : memory_cost: " << result->memory_cost_
+  MS_LOG(DEBUG) << name_ << " : computation_cost: " << result->computation_cost_
                 << ", communication_cost: " << result->communication_cost_
                 << ", communication_without_parameter_: " << result->communication_without_parameter_
                 << ", communication_with_partial_para_: " << result->communication_with_partial_para_;
   // refine communication cost calculation for practice
   RefineForPracticalCost(result, false);
+  result->communication_forward_ = result->communication_without_parameter_;
 
   std::shared_ptr<StrategyWithCost> swc =
     std::make_shared<StrategyWithCost>(strategy, inputs_tensor_info_, outputs_tensor_info_);

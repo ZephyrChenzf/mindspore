@@ -28,7 +28,7 @@
 #include "kernel/tbe/tbe_kernel_parallel_build.h"
 #include "kernel/aicpu/aicpu_kernel_build.h"
 #include "kernel/hccl/hccl_kernel_build.h"
-#include "kernel/mng/rt_kernel_build.h"
+#include "kernel/rts/rt_kernel_build.h"
 #include "kernel/tbe/tbe_utils.h"
 #include "operator/ops.h"
 #include "session/anf_runtime_algorithm.h"
@@ -94,7 +94,7 @@ static bool KernelBuildParallelCompile(const mindspore::session::KernelGraph *ke
   return ret;
 }
 
-static vector<int> CalCleanZerosSize(const CNodePtr &pre_node) {
+static std::vector<int> CalCleanZerosSize(const CNodePtr &pre_node) {
   MS_EXCEPTION_IF_NULL(pre_node);
   std::vector<int> clean_size_list;
   // clean output

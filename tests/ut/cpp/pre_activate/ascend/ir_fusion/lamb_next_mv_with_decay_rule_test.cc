@@ -17,6 +17,7 @@
 #include "common/backend_common_test.h"
 #include "common/py_func_graph_fetcher.h"
 #include "pre_activate/ascend/ir_fusion/lamb_next_mv_with_decay_rule.h"
+#include "debug/anf_ir_dump.h"
 
 namespace mindspore {
 namespace opt {
@@ -29,7 +30,7 @@ class TestHWLambNextMVWithDecayRule : public BackendCommon {
   UT::PyFuncGraphFetcher get_py_fun_;
 };
 
-TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_matched) {
+TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_cond4_matched) {
   /*
    * def before(input0, input1, input2, input3, input4, input5, input6, constant_mul0_x, constant_mul1_sub,
    * constant_mul2_x, constant_mul3_sub1, constant_mul4_x, constant_add2_y):
@@ -54,7 +55,7 @@ TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_matched) {
    * output = tuple_getitem(outputs, 0)
    * return output
    */
-  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule", "before");
+  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond4", "before");
   std::vector<int> shp{2, 32, 224, 224};
   auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
   AbstractBasePtrList args_spec_list;
@@ -65,15 +66,15 @@ TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_matched) {
 
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
-  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRule>());
+  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRuleCond4>());
   optimizer->AddPassManager(pm);
   FuncGraphPtr new_graph = optimizer->Optimize(fg);
 
-  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule", "after");
+  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond4", "after");
   EXPECT_TRUE(CheckEqualGraph(g_after, new_graph));
 }
 
-TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_unmatched_add3) {
+TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_cond4_unmatched_add3) {
   /*
    * def before(input0, input1, input2, input3, input4, input5, input6, constant_mul0_x, constant_mul1_sub,
    * constant_mul2_x, constant_mul3_sub1, constant_mul4_x, constant_add2_y):
@@ -98,7 +99,7 @@ TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_unmatched_add
    * output = tuple_getitem(outputs, 0)
    * return output
    */
-  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule", "before_unmatched_add3");
+  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond4", "before_unmatched_add3");
   std::vector<int> shp{2, 32, 224, 224};
   auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
   AbstractBasePtrList args_spec_list;
@@ -110,15 +111,15 @@ TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_unmatched_add
 
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
-  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRule>());
+  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRuleCond4>());
   optimizer->AddPassManager(pm);
   FuncGraphPtr new_graph = optimizer->Optimize(fg);
   EXPECT_TRUE(CheckEqualGraph(origin_graph, new_graph));
-  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule", "after");
+  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond4", "after");
   EXPECT_FALSE(CheckEqualGraph(g_after, new_graph));
 }
 
-TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_unmatched_mul4) {
+TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_cond4_unmatched_mul4) {
   /*
    * def before(input0, input1, input2, input3, input4, input5, input6, constant_mul0_x, constant_mul1_sub,
    * constant_mul2_x, constant_mul3_sub1, constant_mul4_x, constant_add2_y):
@@ -143,7 +144,7 @@ TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_unmatched_mul
    * output = tuple_getitem(outputs, 0)
    * return output
    */
-  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule", "before_unmatched_mul4");
+  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond4", "before_unmatched_mul4");
   std::vector<int> shp{2, 32, 224, 224};
   auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
   AbstractBasePtrList args_spec_list;
@@ -155,15 +156,15 @@ TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_unmatched_mul
 
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
-  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRule>());
+  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRuleCond4>());
   optimizer->AddPassManager(pm);
   FuncGraphPtr new_graph = optimizer->Optimize(fg);
   EXPECT_TRUE(CheckEqualGraph(origin_graph, new_graph));
-  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule", "after");
+  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond4", "after");
   EXPECT_FALSE(CheckEqualGraph(g_after, new_graph));
 }
 
-TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_unmatched_real_div0) {
+TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_cond4_unmatched_real_div0) {
   /*
    * def before(input0, input1, input2, input3, input4, input5, input6, constant_mul0_x, constant_mul1_sub,
    * constant_mul2_x, constant_mul3_sub1, constant_mul4_x, constant_add2_y):
@@ -188,7 +189,7 @@ TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_unmatched_rea
    * output = tuple_getitem(outputs, 0)
    * return output
    */
-  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule", "before_unmatched_real_div0");
+  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond4", "before_unmatched_real_div0");
   std::vector<int> shp{2, 32, 224, 224};
   auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
   AbstractBasePtrList args_spec_list;
@@ -200,15 +201,15 @@ TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_unmatched_rea
 
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
-  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRule>());
+  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRuleCond4>());
   optimizer->AddPassManager(pm);
   FuncGraphPtr new_graph = optimizer->Optimize(fg);
   EXPECT_TRUE(CheckEqualGraph(origin_graph, new_graph));
-  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule", "after");
+  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond4", "after");
   EXPECT_FALSE(CheckEqualGraph(g_after, new_graph));
 }
 
-TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_unmatched_real_div1) {
+TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_cond4_unmatched_real_div1) {
   /*
    * def before(input0, input1, input2, input3, input4, input5, input6, constant_mul0_x, constant_mul1_sub,
    * constant_mul2_x, constant_mul3_sub1, constant_mul4_x, constant_add2_y):
@@ -233,7 +234,7 @@ TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_unmatched_rea
    * output = tuple_getitem(outputs, 0)
    * return output
    */
-  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule", "before_unmatched_real_div1");
+  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond4", "before_unmatched_real_div1");
   std::vector<int> shp{2, 32, 224, 224};
   auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
   AbstractBasePtrList args_spec_list;
@@ -245,11 +246,140 @@ TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_decay_rule_unmatched_rea
 
   auto optimizer = std::make_shared<opt::GraphOptimizer>();
   auto pm = std::make_shared<opt::PassManager>();
-  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRule>());
+  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRuleCond4>());
   optimizer->AddPassManager(pm);
   FuncGraphPtr new_graph = optimizer->Optimize(fg);
   EXPECT_TRUE(CheckEqualGraph(origin_graph, new_graph));
-  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule", "after");
+  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond4", "after");
+  EXPECT_FALSE(CheckEqualGraph(g_after, new_graph));
+}
+
+TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_with_decay_rule_cond1) {
+  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond1", "before");
+  std::vector<int> shp{2, 32, 224, 224};
+  auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
+  AbstractBasePtrList args_spec_list;
+  for (size_t i = 0; i < 13; ++i) {
+    args_spec_list.push_back(x_abstract);
+  }
+  auto fg = GetKernelGraph(g, args_spec_list);
+
+  auto optimizer = std::make_shared<opt::GraphOptimizer>();
+  auto pm = std::make_shared<opt::PassManager>();
+  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRuleCond1>());
+  optimizer->AddPassManager(pm);
+  FuncGraphPtr new_graph = optimizer->Optimize(fg);
+
+  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond1", "after");
+  EXPECT_TRUE(CheckEqualGraph(g_after, new_graph));
+}
+
+TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_with_decay_rule_cond1_un_match) {
+  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond1", "un_match");
+  std::vector<int> shp{2, 32, 224, 224};
+  auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
+  AbstractBasePtrList args_spec_list;
+  for (size_t i = 0; i < 13; ++i) {
+    args_spec_list.push_back(x_abstract);
+  }
+  auto fg = GetKernelGraph(g, args_spec_list);
+  auto origin_graph = std::make_shared<session::KernelGraph>(*fg);
+
+  auto optimizer = std::make_shared<opt::GraphOptimizer>();
+  auto pm = std::make_shared<opt::PassManager>();
+  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRuleCond1>());
+  optimizer->AddPassManager(pm);
+  FuncGraphPtr new_graph = optimizer->Optimize(fg);
+  EXPECT_TRUE(CheckEqualGraph(origin_graph, new_graph));
+  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond1", "un_match");
+  EXPECT_FALSE(CheckEqualGraph(g_after, new_graph));
+}
+
+TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_with_decay_rule_cond2) {
+  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond2", "before");
+  std::vector<int> shp{2, 32, 224, 224};
+  auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
+  AbstractBasePtrList args_spec_list;
+  for (size_t i = 0; i < 13; ++i) {
+    args_spec_list.push_back(x_abstract);
+  }
+  auto fg = GetKernelGraph(g, args_spec_list);
+  DumpIR("fg.ir", fg, true);
+
+  auto optimizer = std::make_shared<opt::GraphOptimizer>();
+  auto pm = std::make_shared<opt::PassManager>();
+  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRuleCond2>());
+  optimizer->AddPassManager(pm);
+  FuncGraphPtr new_graph = optimizer->Optimize(fg);
+
+  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond2", "after");
+  DumpIR("g_after.ir", g_after, true);
+  DumpIR("new_graph.ir", new_graph, true);
+  EXPECT_TRUE(CheckEqualGraph(g_after, new_graph));
+}
+
+TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_with_decay_rule_cond2_un_match) {
+  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond2", "un_match");
+  std::vector<int> shp{2, 32, 224, 224};
+  auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
+  AbstractBasePtrList args_spec_list;
+  for (size_t i = 0; i < 13; ++i) {
+    args_spec_list.push_back(x_abstract);
+  }
+  auto fg = GetKernelGraph(g, args_spec_list);
+  auto origin_graph = std::make_shared<session::KernelGraph>(*fg);
+
+  auto optimizer = std::make_shared<opt::GraphOptimizer>();
+  auto pm = std::make_shared<opt::PassManager>();
+  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRuleCond2>());
+  optimizer->AddPassManager(pm);
+  FuncGraphPtr new_graph = optimizer->Optimize(fg);
+  EXPECT_TRUE(CheckEqualGraph(origin_graph, new_graph));
+  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond2", "un_match");
+  EXPECT_FALSE(CheckEqualGraph(g_after, new_graph));
+}
+
+TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_with_decay_rule_cond3) {
+  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond3", "before");
+  std::vector<int> shp{2, 32, 224, 224};
+  auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
+  AbstractBasePtrList args_spec_list;
+  for (size_t i = 0; i < 13; ++i) {
+    args_spec_list.push_back(x_abstract);
+  }
+  auto fg = GetKernelGraph(g, args_spec_list);
+  DumpIR("fg.ir", fg, true);
+
+  auto optimizer = std::make_shared<opt::GraphOptimizer>();
+  auto pm = std::make_shared<opt::PassManager>();
+  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRuleCond3>());
+  optimizer->AddPassManager(pm);
+  FuncGraphPtr new_graph = optimizer->Optimize(fg);
+
+  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond3", "after");
+  DumpIR("g_after.ir", g_after, true);
+  DumpIR("new_graph.ir", new_graph, true);
+  EXPECT_TRUE(CheckEqualGraph(g_after, new_graph));
+}
+
+TEST_F(TestHWLambNextMVWithDecayRule, test_lamb_next_mv_with_decay_rule_cond3_un_match) {
+  FuncGraphPtr g = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond3", "un_match");
+  std::vector<int> shp{2, 32, 224, 224};
+  auto x_abstract = std::make_shared<abstract::AbstractTensor>(kFloat32, shp);
+  AbstractBasePtrList args_spec_list;
+  for (size_t i = 0; i < 13; ++i) {
+    args_spec_list.push_back(x_abstract);
+  }
+  auto fg = GetKernelGraph(g, args_spec_list);
+  auto origin_graph = std::make_shared<session::KernelGraph>(*fg);
+
+  auto optimizer = std::make_shared<opt::GraphOptimizer>();
+  auto pm = std::make_shared<opt::PassManager>();
+  pm->AddPass(std::make_shared<opt::LambNextMVWithDecayRuleCond3>());
+  optimizer->AddPassManager(pm);
+  FuncGraphPtr new_graph = optimizer->Optimize(fg);
+  EXPECT_TRUE(CheckEqualGraph(origin_graph, new_graph));
+  FuncGraphPtr g_after = get_py_fun_.CallAndParseRet("test_lamb_next_mv_with_decay_rule_cond3", "un_match");
   EXPECT_FALSE(CheckEqualGraph(g_after, new_graph));
 }
 }  // namespace opt

@@ -13,9 +13,10 @@
 # limitations under the License.
 
 import numpy as np
+
 import mindspore.nn as nn
-from mindspore.common.api import _executor
 from mindspore import Tensor, context
+from mindspore.common.api import _executor
 from mindspore.ops import operations as P
 from ....train_step_wrap import train_step_with_loss_warp
 
@@ -46,8 +47,8 @@ class DenseMutMulNet(nn.Cell):
 
 def test_dmnet_train_step():
     context.reset_auto_parallel_context()
-    input = Tensor(np.ones([32, 128]).astype(np.float32) * 0.01)
+    input_ = Tensor(np.ones([32, 128]).astype(np.float32) * 0.01)
     label = Tensor(np.zeros([32, 768]).astype(np.float32))
     net = DenseMutMulNet()
     net = train_step_with_loss_warp(DenseMutMulNet())
-    _executor.compile(net, input, label)
+    _executor.compile(net, input_, label)

@@ -147,8 +147,8 @@ TEST_F(TestOptLib, test_inline_new_closure) {
 TEST_F(TestOptLib, test_inline_while) {
   FuncGraphPtr before = getPyFun.CallAndParseRet("test_inline_while", "before");
   auto patterns = std::vector<SubstitutionPtr>({irpass.inline_});
-  FuncGraphPtr after_ = RunSubs(before, patterns);
-  ASSERT_TRUE(CheckOpt(before, before, patterns));
+  FuncGraphPtr after = RunSubs(before, patterns);
+  ASSERT_TRUE(CheckOpt(before, after, patterns, true));
 }
 
 TEST_F(TestOptLib, test_arithmetic) {
@@ -542,6 +542,19 @@ TEST_F(TestOptLib, test_print_tuple_wrapper) {
   ASSERT_TRUE(CheckOpt(before1, after1, patterns));
   ASSERT_TRUE(CheckOpt(before2, after2, patterns));
   ASSERT_TRUE(CheckOpt(before3, before3, patterns));
+}
+
+TEST_F(TestOptLib, test_constant_duplicate_mul) {
+  FuncGraphPtr beforell = getPyFun.CallAndParseRet("test_constant_duplicate_mul", "beforell");
+  FuncGraphPtr beforelr = getPyFun.CallAndParseRet("test_constant_duplicate_mul", "beforelr");
+  FuncGraphPtr beforerl = getPyFun.CallAndParseRet("test_constant_duplicate_mul", "beforerl");
+  FuncGraphPtr beforerr = getPyFun.CallAndParseRet("test_constant_duplicate_mul", "beforerr");
+  FuncGraphPtr after = getPyFun.CallAndParseRet("test_constant_duplicate_mul", "after");
+  auto patterns = std::vector<SubstitutionPtr>({irpass.arithmetic_simplify_});
+  ASSERT_TRUE(CheckOpt(beforell, after, patterns));
+  ASSERT_TRUE(CheckOpt(beforelr, after, patterns));
+  ASSERT_TRUE(CheckOpt(beforerl, after, patterns));
+  ASSERT_TRUE(CheckOpt(beforerr, after, patterns));
 }
 }  // namespace opt
 }  // namespace mindspore

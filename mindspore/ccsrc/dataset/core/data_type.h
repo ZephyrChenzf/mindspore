@@ -16,18 +16,25 @@
 #ifndef DATASET_CORE_DATA_TYPE_H_
 #define DATASET_CORE_DATA_TYPE_H_
 
+#include <opencv2/core/hal/interface.h>
+
 #include <string>
+
 #include "pybind11/numpy.h"
 #include "pybind11/pybind11.h"
+
+#include "dataset/core/constants.h"
 #include "dataset/core/pybind_support.h"
 
 namespace py = pybind11;
 namespace mindspore {
 namespace dataset {
+
 // Class that represents basic data types in DataEngine.
 class DataType {
  public:
   enum Type : uint8_t {
+    DE_UNKNOWN = 0,
     DE_BOOL,
     DE_INT8,
     DE_UINT8,
@@ -40,20 +47,35 @@ class DataType {
     DE_FLOAT16,
     DE_FLOAT32,
     DE_FLOAT64,
-    DE_UNKNOWN
+    DE_STRING,
+    NUM_OF_TYPES
   };
 
-  static constexpr uint8_t DE_BOOL_SIZE = 1;
-  static constexpr uint8_t DE_UINT8_SIZE = 1;
-  static constexpr uint8_t DE_INT8_SIZE = 1;
-  static constexpr uint8_t DE_UINT16_SIZE = 2;
-  static constexpr uint8_t DE_INT16_SIZE = 2;
-  static constexpr uint8_t DE_UINT32_SIZE = 4;
-  static constexpr uint8_t DE_INT32_SIZE = 4;
-  static constexpr uint8_t DE_INT64_SIZE = 8;
-  static constexpr uint8_t DE_UINT64_SIZE = 8;
-  static constexpr uint8_t DE_FLOAT32_SIZE = 4;
-  static constexpr uint8_t DE_FLOAT64_SIZE = 8;
+  struct TypeInfo {
+    const char *name_;                          // name to be represent the type while printing
+    const uint8_t sizeInBytes_;                 // number of bytes needed for this type
+    const char *pybindType_;                    //  Python matching type, used in get_output_types
+    const std::string pybindFormatDescriptor_;  // pybind format used for numpy types
+    const uint8_t cvType_;                      // OpenCv matching type
+  };
+
+  static inline const TypeInfo kTypeInfo[] = {
+    // name, sizeInBytes, pybindTypem formatDescriptor, openCV
+    {"unknown", 0, "object", "", kCVInvalidType},                                        // DE_UNKNOWN
+    {"bool", 1, "bool", py::format_descriptor<bool>::format(), CV_8U},                   // DE_BOOL
+    {"int8", 1, "int8", py::format_descriptor<int8_t>::format(), CV_8S},                 // DE_INT8
+    {"uint8", 1, "uint8", py::format_descriptor<uint8_t>::format(), CV_8U},              // DE_UINT8
+    {"int16", 2, "int16", py::format_descriptor<int16_t>::format(), CV_16S},             // DE_INT16
+    {"uint16", 2, "uint16", py::format_descriptor<uint16_t>::format(), CV_16U},          // DE_UINT16
+    {"int32", 4, "int32", py::format_descriptor<int32_t>::format(), CV_32S},             // DE_INT32
+    {"uint32", 4, "uint32", py::format_descriptor<uint32_t>::format(), kCVInvalidType},  // DE_UINT32
+    {"int64", 8, "int64", py::format_descriptor<int64_t>::format(), kCVInvalidType},     // DE_INT64
+    {"uint64", 8, "uint64", py::format_descriptor<uint64_t>::format(), kCVInvalidType},  // DE_UINT64
+    {"float16", 2, "float16", "e", CV_16F},                                              // DE_FLOAT16
+    {"float32", 4, "float32", py::format_descriptor<float>::format(), CV_32F},           // DE_FLOAT32
+    {"float64", 8, "double", py::format_descriptor<double>::format(), CV_64F},           // DE_FLOAT64
+    {"string", 0, "bytes", "S", kCVInvalidType}                                          // DE_STRING
+  };
 
   // No arg constructor to create an unknown shape
   DataType() : type_(DE_UNKNOWN) {}
@@ -160,6 +182,8 @@ class DataType {
 
   bool IsBool() const { return type_ == DataType::DE_BOOL; }
 
+  bool IsNumeric() const { return type_ != DataType::DE_STRING; }
+
   Type value() const { return type_; }
 
  private:
@@ -224,6 +248,11 @@ inline bool DataType::IsCompatible<int8_t>() const {
 template <>
 inline bool DataType::IsCompatible<uint8_t>() const {
   return type_ == DataType::DE_UINT8;
+}
+
+template <>
+inline bool DataType::IsCompatible<std::string_view>() const {
+  return type_ == DataType::DE_STRING;
 }
 
 template <>

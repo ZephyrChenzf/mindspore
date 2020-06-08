@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifdef ENABLE_MINDRECORD
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -22,6 +21,7 @@
 #include "common/utils.h"
 #include "gtest/gtest.h"
 #include "mindrecord/include/shard_category.h"
+#include "mindrecord/include/shard_error.h"
 #include "mindrecord/include/shard_sample.h"
 #include "mindrecord/include/shard_shuffle.h"
 #include "utils/log_adapter.h"
@@ -62,14 +62,15 @@ TEST_F(MindDataTestMindRecordOp, TestMindRecordBasic) {
 
   std::shared_ptr<MindRecordOp> my_mindrecord_op;
   MindRecordOp::Builder builder;
-  builder.SetDatasetFile(mindrecord_root_path_ + "/testMindDataSet/testImageNetData/imagenet.mindrecord0")
+  builder.SetDatasetFile({mindrecord_root_path_ + "/testMindDataSet/testImageNetData/imagenet.mindrecord0"})
+      .SetLoadDataset(true)
       .SetRowsPerBuffer(3)
       .SetNumMindRecordWorkers(4)
       .SetColumnsToLoad(column_list);
   rc = builder.Build(&my_mindrecord_op);
   ASSERT_TRUE(rc.IsOk());
 
-  std::cout << (*my_mindrecord_op);
+  MS_LOG(DEBUG) << (*my_mindrecord_op);
 
   my_tree->AssociateNode(my_mindrecord_op);
 
@@ -132,7 +133,8 @@ TEST_F(MindDataTestMindRecordOp, TestMindRecordSample) {
 
   std::shared_ptr<MindRecordOp> my_mindrecord_op;
   MindRecordOp::Builder builder;
-  builder.SetDatasetFile(mindrecord_root_path_ + "/testMindDataSet/testImageNetData/imagenet.mindrecord0")
+  builder.SetDatasetFile({mindrecord_root_path_ + "/testMindDataSet/testImageNetData/imagenet.mindrecord0"})
+      .SetLoadDataset(true)
       .SetRowsPerBuffer(3)
       .SetNumMindRecordWorkers(4)
       .SetColumnsToLoad(column_list)
@@ -140,7 +142,7 @@ TEST_F(MindDataTestMindRecordOp, TestMindRecordSample) {
   rc = builder.Build(&my_mindrecord_op);
   ASSERT_TRUE(rc.IsOk());
 
-  std::cout << (*my_mindrecord_op);
+  MS_LOG(DEBUG) << (*my_mindrecord_op);
 
   my_tree->AssociateNode(my_mindrecord_op);
 
@@ -203,7 +205,8 @@ TEST_F(MindDataTestMindRecordOp, TestMindRecordShuffle) {
 
   std::shared_ptr<MindRecordOp> my_mindrecord_op;
   MindRecordOp::Builder builder;
-  builder.SetDatasetFile(mindrecord_root_path_ + "/testMindDataSet/testImageNetData/imagenet.mindrecord0")
+  builder.SetDatasetFile({mindrecord_root_path_ + "/testMindDataSet/testImageNetData/imagenet.mindrecord0"})
+      .SetLoadDataset(true)
       .SetRowsPerBuffer(3)
       .SetNumMindRecordWorkers(4)
       .SetColumnsToLoad(column_list)
@@ -211,7 +214,7 @@ TEST_F(MindDataTestMindRecordOp, TestMindRecordShuffle) {
   rc = builder.Build(&my_mindrecord_op);
   ASSERT_TRUE(rc.IsOk());
 
-  std::cout << (*my_mindrecord_op);
+  MS_LOG(DEBUG) << (*my_mindrecord_op);
 
   my_tree->AssociateNode(my_mindrecord_op);
 
@@ -277,7 +280,8 @@ TEST_F(MindDataTestMindRecordOp, TestMindRecordCategory) {
 
   std::shared_ptr<MindRecordOp> my_mindrecord_op;
   MindRecordOp::Builder builder;
-  builder.SetDatasetFile(mindrecord_root_path_ + "/testMindDataSet/testImageNetData/imagenet.mindrecord0")
+  builder.SetDatasetFile({mindrecord_root_path_ + "/testMindDataSet/testImageNetData/imagenet.mindrecord0"})
+      .SetLoadDataset(true)
       .SetRowsPerBuffer(3)
       .SetNumMindRecordWorkers(4)
       .SetColumnsToLoad(column_list)
@@ -285,7 +289,7 @@ TEST_F(MindDataTestMindRecordOp, TestMindRecordCategory) {
   rc = builder.Build(&my_mindrecord_op);
   ASSERT_TRUE(rc.IsOk());
 
-  std::cout << (*my_mindrecord_op);
+  MS_LOG(DEBUG) << (*my_mindrecord_op);
 
   my_tree->AssociateNode(my_mindrecord_op);
 
@@ -345,14 +349,15 @@ TEST_F(MindDataTestMindRecordOp, TestMindRecordRepeat) {
 
   std::shared_ptr<MindRecordOp> my_mindrecord_op;
   MindRecordOp::Builder builder;
-  builder.SetDatasetFile(mindrecord_root_path_ + "/testMindDataSet/testImageNetData/imagenet.mindrecord0")
+  builder.SetDatasetFile({mindrecord_root_path_ + "/testMindDataSet/testImageNetData/imagenet.mindrecord0"})
+      .SetLoadDataset(true)
       .SetRowsPerBuffer(3)
       .SetNumMindRecordWorkers(4)
       .SetColumnsToLoad(column_list);
   rc = builder.Build(&my_mindrecord_op);
   ASSERT_TRUE(rc.IsOk());
 
-  std::cout << (*my_mindrecord_op);
+  MS_LOG(DEBUG) << (*my_mindrecord_op);
 
   rc = my_tree->AssociateNode(my_mindrecord_op);
   EXPECT_TRUE(rc.IsOk());
@@ -426,7 +431,8 @@ TEST_F(MindDataTestMindRecordOp, TestMindRecordBlockReaderRepeat) {
 
   std::shared_ptr<MindRecordOp> my_mindrecord_op;
   MindRecordOp::Builder builder;
-  builder.SetDatasetFile(mindrecord_root_path_ + "/testMindDataSet/testImageNetData/imagenet.mindrecord0")
+  builder.SetDatasetFile({mindrecord_root_path_ + "/testMindDataSet/testImageNetData/imagenet.mindrecord0"})
+      .SetLoadDataset(true)
       .SetRowsPerBuffer(3)
       .SetNumMindRecordWorkers(4)
       .SetBlockReader()
@@ -434,7 +440,7 @@ TEST_F(MindDataTestMindRecordOp, TestMindRecordBlockReaderRepeat) {
   rc = builder.Build(&my_mindrecord_op);
   ASSERT_TRUE(rc.IsOk());
 
-  std::cout << (*my_mindrecord_op);
+  MS_LOG(DEBUG) << (*my_mindrecord_op);
 
   rc = my_tree->AssociateNode(my_mindrecord_op);
   EXPECT_TRUE(rc.IsOk());
@@ -480,4 +486,39 @@ TEST_F(MindDataTestMindRecordOp, TestMindRecordBlockReaderRepeat) {
     row_count++;
   }
 }
-#endif
+
+TEST_F(MindDataTestMindRecordOp, TestMindRecordInvalidColumnList) {
+  // single MindRecord op and nothing else
+  //
+  //    MindRecordOp
+
+  MS_LOG(INFO) << "UT test TestMindRecordInvalidColumnList";
+
+  Status rc;
+
+  // Start with an empty execution tree
+  auto my_tree = std::make_shared<ExecutionTree>();
+
+  // Test info:
+  // Dataset from testDataset1 has 10 rows, 2 columns.
+  // RowsPerBuffer buffer setting of 3 yields 4 buffers with the last buffer having single row
+  // only.  2 workers.
+  // Test a column selection instead of all columns as well.
+
+  std::vector<std::string> column_list;
+  std::string label_col_name("file_name_2");
+  column_list.push_back(label_col_name);
+  label_col_name = "label";
+  column_list.push_back(label_col_name);
+
+  std::shared_ptr<MindRecordOp> my_mindrecord_op;
+  MindRecordOp::Builder builder;
+  builder.SetDatasetFile({mindrecord_root_path_ + "/testMindDataSet/testImageNetData/imagenet.mindrecord0"})
+      .SetLoadDataset(true)
+      .SetRowsPerBuffer(3)
+      .SetNumMindRecordWorkers(4)
+      .SetColumnsToLoad(column_list);
+  rc = builder.Build(&my_mindrecord_op);
+  ASSERT_TRUE(rc.IsError());
+  ASSERT_TRUE(rc.ToString().find_first_of("illegal column list") != std::string::npos);
+}

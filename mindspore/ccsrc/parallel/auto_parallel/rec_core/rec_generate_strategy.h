@@ -17,39 +17,76 @@
 #ifndef PARALLEL_AUTO_PARALLEL_REC_GENERATE_STRATEGY_H_
 #define PARALLEL_AUTO_PARALLEL_REC_GENERATE_STRATEGY_H_
 
-#include <vector>
+#include <memory>
 #include <string>
 #include <utility>
-#include <memory>
+#include <vector>
 
 #include "parallel/auto_parallel/rec_core/rec_graph.h"
 #include "parallel/ops_info/operator_info.h"
 
 namespace mindspore {
 namespace parallel {
-void GenerateStrategy(const std::shared_ptr<Graph> graph, std::vector<std::shared_ptr<OperatorInfo>> ops,
-                      const std::shared_ptr<std::vector<size_t>> ops_nodes_list,
-                      const std::shared_ptr<std::vector<size_t>> index_list,
-                      const std::shared_ptr<std::vector<std::vector<size_t>>> eli_list);
-void PrepareMatMul(const std::shared_ptr<Graph> graph, const std::vector<std::shared_ptr<OperatorInfo>> &ops,
-                   const size_t iter_ops, const size_t iter_nodes, const size_t iter_op_inputs, std::vector<int32_t> s);
-void PrepareConv2D(const std::shared_ptr<Graph> graph, const size_t iter_nodes, const size_t iter_op_inputs,
-                   std::vector<int32_t> s);
-void PrepareBiasAdd(const std::shared_ptr<Graph> graph, const size_t iter_nodes, const size_t iter_op_inputs,
-                    std::vector<int32_t> s);
-void PrepareBN(const std::shared_ptr<Graph> graph, const size_t iter_nodes, const size_t iter_op_inputs,
-               std::vector<int32_t> s);
-void PrepareSparse(const size_t iter_op_inputs, std::vector<int32_t> s);
-void RefillOrigin(const std::vector<std::shared_ptr<OperatorInfo>> &ops, const size_t iter_ops,
-                  const size_t iter_op_inputs, std::vector<int32_t> s);
-std::vector<int32_t> PrepareStrategy(const std::shared_ptr<Graph> graph,
-                                     const std::vector<std::shared_ptr<OperatorInfo>> &ops, const std::string &type,
-                                     const size_t iter_ops, const size_t iter_nodes, const size_t iter_op_inputs);
-size_t IterNodes(const std::shared_ptr<std::vector<size_t>> ops_nodes_list,
-                 const std::shared_ptr<std::vector<size_t>> index_list,
-                 const std::shared_ptr<std::vector<std::vector<size_t>>> eli_list, const size_t iter_ops,
-                 size_t iter_nodes);
-void MaskNoSupportedOps(const std::shared_ptr<Graph> graph);
+void GenerateStrategy(std::shared_ptr<Graph> graph, const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                      const std::shared_ptr<std::vector<std::vector<size_t>>> eli_list,
+                      const std::vector<std::vector<std::string>> &input_tensor_names,
+                      const std::shared_ptr<std::vector<size_t>> index_list);
+std::vector<std::vector<int32_t>> PrepareMatMul(const std::shared_ptr<Graph> &graph,
+                                                const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                                const size_t iter_graph, const size_t iter_ops);
+std::vector<std::vector<int32_t>> PreparePReLU(const std::shared_ptr<Graph> &graph,
+                                               const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                               const size_t iter_graph, const size_t iter_ops);
+std::vector<std::vector<int32_t>> PrepareBiasAdd(std::vector<int32_t> s);
+std::vector<std::vector<int32_t>> PrepareOneHot(std::vector<int32_t> s);
+std::vector<std::vector<int32_t>> MakeRecSearchStrategy(const std::shared_ptr<Graph> &graph,
+                                                        const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                                        const size_t iter_graph, const size_t iter_ops);
+std::vector<std::vector<int32_t>> MakeDataParallelStrategy(const std::shared_ptr<Graph> &graph,
+                                                           const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                                           const size_t iter_graph, const size_t iter_ops);
+std::vector<std::vector<int32_t>> PrepareStrategy(const std::shared_ptr<Graph> &graph,
+                                                  const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                                  const size_t iter_graph, const size_t iter_ops);
+void GeneratePartitionedOperatorStrategy(const std::shared_ptr<Graph> graph,
+                                         const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                         const std::shared_ptr<std::vector<size_t>> index_list);
+size_t FindIndexOfOperatorIncoming(const std::vector<std::vector<std::string>> &input_tensor_names,
+                                   const size_t iter_ops);
+std::vector<int32_t> CopyIncomingOperatorOutputStrategy(const std::shared_ptr<Graph> graph,
+                                                        const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                                        const size_t iter_ops, const size_t iter_graph);
+std::vector<int32_t> PrepareIncomingOperatorInputStrategy(const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                                          const size_t incoming_op_index);
+std::vector<int32_t> GetAxisList(const std::vector<std::shared_ptr<OperatorInfo>> &ops, const int iter_ops);
+std::vector<int32_t> ModifyStrategyIfSqueezeIncoming(const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                                     const size_t incoming_op_index, std::vector<int32_t> s);
+std::vector<int32_t> GetDimList(const std::vector<std::shared_ptr<OperatorInfo>> &ops, const size_t iter_ops);
+std::vector<int32_t> ModifyStrategyIfReduceIncoming(const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                                    const size_t incoming_op_index, std::vector<int32_t> s);
+std::vector<int32_t> CopyIncomingOperatorInputStrategy(const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                                       const size_t iter_ops, const size_t incoming_op_index);
+std::vector<std::vector<int32_t>> GenerateStrategiesFromStrategy(const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                                                 const size_t iter_ops, std::vector<int32_t> s);
+void GenerateEliminatedOperatorStrategyForward(std::shared_ptr<Graph> graph,
+                                               const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                               const std::shared_ptr<std::vector<std::vector<size_t>>> eli_list,
+                                               const std::vector<std::vector<std::string>> &input_tensor_names,
+                                               const std::shared_ptr<std::vector<size_t>> index_list,
+                                               const std::shared_ptr<std::vector<size_t>> no_stra_op_list);
+std::vector<int32_t> ModifyStrategyIfSqueezeOutgoing(const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                                     const size_t iter_ops, std::vector<int32_t> s);
+std::vector<int32_t> CopyOutgoingOperatorInputStrategy(const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                                       const std::vector<std::vector<std::string>> &input_tensor_names,
+                                                       const size_t iter_ops);
+void GenerateEliminatedOperatorStrategyBackward(const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                                const std::vector<std::vector<std::string>> &input_tensor_names,
+                                                const std::shared_ptr<std::vector<size_t>> no_stra_op_list);
+void GenerateRemainingOperatorStrategy(const std::shared_ptr<Graph> graph,
+                                       const std::vector<std::shared_ptr<OperatorInfo>> &ops,
+                                       const std::vector<std::vector<std::string>> &input_tensor_names,
+                                       const std::shared_ptr<std::vector<size_t>> index_list,
+                                       const std::shared_ptr<std::vector<size_t>> no_stra_op_list);
 }  // namespace parallel
 }  // namespace mindspore
 #endif  // PARALLEL_AUTO_PARALLEL_REC_GENERATE_STRATEGY_H_

@@ -13,37 +13,19 @@
 # limitations under the License.
 # ============================================================================
 """momentum"""
-from typing import Iterable
-
 from mindspore.ops import functional as F, composite as C, operations as P
-from mindspore.common.initializer import initializer
 from mindspore.common.parameter import Parameter
+from mindspore.common.tensor import Tensor
 import mindspore.common.dtype as mstype
-from mindspore.common import Tensor
-from .optimizer import Optimizer, apply_decay, grad_scale
+from mindspore._checkparam import check_bool
+from .optimizer import Optimizer
 
 momentum_opt = C.MultitypeFuncGraph("momentum_opt")
 
 
-@momentum_opt.register("Function", "Number", "Number", "Tensor", "Tensor", "Tensor")
-def _tensor_run_opt(opt, learning_rate, momentum, gradient, weight, moment):
-    """Apply momentum optimizer to the weight parameter."""
-    success = True
-    success = F.depend(success, opt(weight, moment, learning_rate, gradient, momentum))
-    return success
-
-
 @momentum_opt.register("Function", "Tensor", "Tensor", "Tensor", "Tensor", "Tensor")
-def _tensor_run_opt_ext(opt, learning_rate, momentum, gradient, weight, moment):
+def _tensor_run_opt_ext(opt, momentum, learning_rate, gradient, weight, moment):
     """Apply momentum optimizer to the weight parameter using Tensor."""
-    success = True
-    success = F.depend(success, opt(weight, moment, learning_rate, gradient, momentum))
-    return success
-
-
-@momentum_opt.register("Function", "Tensor", "Number", "Tensor", "Tensor", "Tensor")
-def _tensor_run_opt_dyn(opt, learning_rate, momentum, gradient, weight, moment):
-    """Apply momentum optimizer to the weight parameter using dynamic learning rate."""
     success = True
     success = F.depend(success, opt(weight, moment, learning_rate, gradient, momentum))
     return success
@@ -55,9 +37,27 @@ class Momentum(Optimizer):
 
     Refer to the paper on the importance of initialization and momentum in deep learning for more details.
 
+    Note:
+        The Momentum optimizer supports separating parameter groups. Different parameter groups can set different
+        `learning_rate` and `weight_decay`.
+
+        When separating parameter groups, the weight decay in each group will be applied on the parameters if the
+        value of weight_decay > 0. When not separating parameter groups, the `weight_decay` in the API will be
+        applied on the parameters if `weight_decay` > 0 and the 'beta' and 'gamma' are not in the name of parameters.
+
     Args:
-        params (list[Parameter]): A list of parameter, which will be updated. The element in `parameters`
-                                  should be class mindspore.Parameter.
+        params (Union[list[Parameter], list[dict]]): When the `params` is a list of `Parameter` which will be updated,
+            the element in `params` should be class `Parameter`. When the `params` is a list of `dict`, the "params",
+            "lr" and "weight_decay" are the keys can be parsed.
+
+            - params: Required. The value should be a list of `Parameter`.
+
+            - lr: Optional. If "lr" in the keys, the value of corresponding learning rate will be used.
+              If not, the `learning_rate` in the API will be used.
+
+            - weight_decay: Optional. If "weight_decay" in the keys, the value of corresponding weight decay
+              will be used. If not, the `weight_decay` in the API will be used.
+
         learning_rate (Union[float, Tensor, Iterable]): A value for the learning rate. When the learning_rate is
                                                         Iterable or a Tensor and the dims of the Tensor is 1,
                                                         use dynamic learning rate, then the i-th step will
@@ -68,63 +68,54 @@ class Momentum(Optimizer):
         momentum (float): Hyperparameter of type float, means momentum for the moving average.
         weight_decay (float): Weight decay (L2 penalty). Default: 0.0.
         loss_scale (float): A floating point value for the loss scale. Default: 1.0.
-        decay_filter (Function): A function to determine whether to apply weight decay on parameters. Default:
-                                 lambda x: 'beta' not in x.name and 'gamma' not in x.name.
+        use_nesterov (bool): Enable Nesterov momentum. Default: False.
 
     Inputs:
         - **gradients** (tuple[Tensor]) - The gradients of `params`, the shape is the same as `params`.
 
     Outputs:
-        Tensor[bool], the value is True.
+        tuple[bool], all elements are True.
 
     Raises:
         ValueError: If the momentum is less than 0.0.
 
     Examples:
         >>> net = Net()
+        >>> #1) All parameters use the same learning rate and weight decay
+        >>> optim = nn.Momentum(params=net.trainable_params(), learning_rate=0.1, momentum=0.9)
+        >>>
+        >>> #2) Use parameter groups and set different values
+        >>> conv_params = list(filter(lambda x: 'conv' in x.name, net.trainable_params()))
+        >>> no_conv_params = list(filter(lambda x: 'conv' not in x.name, net.trainable_params()))
+        >>> group_params = [{'params': conv_params, 'weight_decay': 0.01, 'lr': 0.01},
+        >>>                 {'params': no_conv_params}]
+        >>> opt = nn.Momentum(group_params, learning_rate=0.1, momentum=0.9, weight_decay=0.0)
+        >>> # the conv_params's parameters will use a learning rate of 0.01 and a weight decay of 0.01
+        >>> # the no_cov_params's parameters don't set learning and weight decay. So they will use a
+        >>> # learning rate of 0.1 and a weight decay of 0.0.
+        >>>
         >>> loss = nn.SoftmaxCrossEntropyWithLogits()
-        >>> optim = Momentum(params=net.trainable_params(), learning_rate=0.1, momentum=0.9)
         >>> model = Model(net, loss_fn=loss, optimizer=optim, metrics=None)
     """
-    def __init__(self, params, learning_rate, momentum, weight_decay=0.0, loss_scale=1.0,
-                 decay_filter=lambda x: 'beta' not in x.name and 'gamma' not in x.name):
-        super(Momentum, self).__init__(learning_rate, params)
+    def __init__(self, params, learning_rate, momentum, weight_decay=0.0, loss_scale=1.0, use_nesterov=False):
+        super(Momentum, self).__init__(learning_rate, params, weight_decay, loss_scale)
         if isinstance(momentum, float) and momentum < 0.0:
             raise ValueError("momentum should be at least 0.0, but got momentum {}".format(momentum))
-        if isinstance(learning_rate, Iterable) or \
-                (isinstance(learning_rate, Tensor) and learning_rate.dim() == 1):
-            self.dynamic_lr = True
-            self.gather = P.GatherV2()
-            self.assignadd = P.AssignAdd()
-            self.global_step = Parameter(initializer(0, [1], mstype.int32), name="global_step")
-            self.axis = 0
-        else:
-            self.dynamic_lr = False
-            self.gather = None
-            self.assignadd = None
-            self.global_step = None
-            self.axis = None
-        self.momentum = Parameter(momentum, name="momentum")
+        self.momentum = Parameter(Tensor(momentum, mstype.float32), name="momentum")
         self.params = self.parameters
+        self.use_nesterov = check_bool(use_nesterov)
         self.moments = self.params.clone(prefix="moments", init='zeros')
-        self.decay_tf = tuple(decay_filter(x) for x in self.parameters)
         self.hyper_map = C.HyperMap()
-        self.opt = P.ApplyMomentum()
-        self.weight_decay = weight_decay * loss_scale
-        self.reciprocal_scale = 1.0 / loss_scale
-        self.one = Tensor(1, mstype.int32)
+        self.opt = P.ApplyMomentum(use_nesterov=self.use_nesterov)
 
     def construct(self, gradients):
         params = self.params
         moments = self.moments
-        if self.weight_decay > 0:
-            gradients = self.hyper_map(F.partial(apply_decay, self.weight_decay), self.decay_tf, params, gradients)
-        if self.reciprocal_scale != 1.0:
-            gradients = self.hyper_map(F.partial(grad_scale, self.reciprocal_scale), gradients)
-        if self.dynamic_lr:
-            lr = self.gather(self.learning_rate, self.global_step, self.axis)
-            F.control_depend(lr, self.assignadd(self.global_step, self.one))
+        gradients = self.decay_weight(gradients)
+        gradients = self.scale_grad(gradients)
+        lr = self.get_lr()
+        if self.is_group_lr:
+            success = self.hyper_map(F.partial(momentum_opt, self.opt, self.momentum), lr, gradients, params, moments)
         else:
-            lr = self.learning_rate
-        success = self.hyper_map(F.partial(momentum_opt, self.opt, lr, self.momentum), gradients, params, moments)
+            success = self.hyper_map(F.partial(momentum_opt, self.opt, self.momentum, lr), gradients, params, moments)
         return success

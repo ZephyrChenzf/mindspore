@@ -17,20 +17,23 @@
 #ifndef MINDSPORE_CCSRC_IR_SCALAR_H_
 #define MINDSPORE_CCSRC_IR_SCALAR_H_
 
-namespace mindspore {
-/* namespace to support inference engine */
-
 #include <type_traits>
 #include <algorithm>
+#include <cmath>
 #include <vector>
 #include <string>
 #include <memory>
 #include <sstream>
 #include <utility>
 #include <cfloat>
+
 #include "ir/base.h"
 #include "ir/dtype.h"
+#include "ir/dtype/number.h"
 
+using std::fabs;
+
+namespace mindspore {
 class Scalar : public Value {
  public:
   Scalar() = default;
@@ -55,8 +58,8 @@ class BoolImm : public Scalar {
   bool value() const { return v_; }
   bool IsZero() override { return v_ == false; }
   bool IsOne() override { return v_ == true; }
-  bool operator==(const Value& other) const override;
-  bool operator==(const BoolImm& other) const;
+  bool operator==(const Value &other) const override;
+  bool operator==(const BoolImm &other) const;
   std::string ToString() const override {
     if (v_) {
       return "true";
@@ -80,7 +83,7 @@ IMM_TRAITS(BoolImmPtr, bool)
 class IntergerImm : public Scalar {
  public:
   IntergerImm() = default;
-  explicit IntergerImm(const TypePtr& t) : Scalar(t) {}
+  explicit IntergerImm(const TypePtr &t) : Scalar(t) {}
   ~IntergerImm() override = default;
   MS_DECLARE_PARENT(IntergerImm, Scalar)
 };
@@ -95,8 +98,8 @@ class Int8Imm : public IntergerImm {
   bool IsZero() override { return v_ == 0; }
   bool IsOne() override { return v_ == 1; }
   int8_t value() const { return v_; }
-  bool operator==(const Value& other) const override;
-  bool operator==(const Int8Imm& other) const;
+  bool operator==(const Value &other) const override;
+  bool operator==(const Int8Imm &other) const;
   std::string ToString() const override { return std::to_string(v_); }
 
   std::string DumpText() const override {
@@ -121,8 +124,8 @@ class Int16Imm : public IntergerImm {
   bool IsZero() override { return v_ == 0; }
   bool IsOne() override { return v_ == 1; }
   int16_t value() const { return v_; }
-  bool operator==(const Value& other) const override;
-  bool operator==(const Int16Imm& other) const;
+  bool operator==(const Value &other) const override;
+  bool operator==(const Int16Imm &other) const;
   std::string ToString() const override { return std::to_string(v_); }
 
   std::string DumpText() const override {
@@ -147,8 +150,8 @@ class Int32Imm : public IntergerImm {
   bool IsZero() override { return v_ == 0; }
   bool IsOne() override { return v_ == 1; }
   int32_t value() const { return v_; }
-  bool operator==(const Value& other) const override;
-  bool operator==(const Int32Imm& other) const;
+  bool operator==(const Value &other) const override;
+  bool operator==(const Int32Imm &other) const;
   std::string ToString() const override { return std::to_string(v_); }
 
   std::string DumpText() const override {
@@ -173,8 +176,8 @@ class Int64Imm : public IntergerImm {
   bool IsZero() override { return v_ == 0; }
   bool IsOne() override { return v_ == 1; }
   int64_t value() const { return v_; }
-  bool operator==(const Value& other) const override;
-  bool operator==(const Int64Imm& other) const;
+  bool operator==(const Value &other) const override;
+  bool operator==(const Int64Imm &other) const;
   std::string ToString() const override { return std::to_string(v_); }
 
   std::string DumpText() const override {
@@ -199,8 +202,8 @@ class UInt8Imm : public IntergerImm {
   bool IsZero() override { return v_ == 0; }
   bool IsOne() override { return v_ == 1; }
   uint8_t value() const { return v_; }
-  bool operator==(const Value& other) const override;
-  bool operator==(const UInt8Imm& other) const;
+  bool operator==(const Value &other) const override;
+  bool operator==(const UInt8Imm &other) const;
   std::string ToString() const override { return std::to_string(v_); }
 
   std::string DumpText() const override {
@@ -225,8 +228,8 @@ class UInt16Imm : public IntergerImm {
   bool IsZero() override { return v_ == 0; }
   bool IsOne() override { return v_ == 1; }
   uint16_t value() const { return v_; }
-  bool operator==(const Value& other) const override;
-  bool operator==(const UInt16Imm& other) const;
+  bool operator==(const Value &other) const override;
+  bool operator==(const UInt16Imm &other) const;
   std::string ToString() const override { return std::to_string(v_); }
 
   std::string DumpText() const override {
@@ -251,8 +254,8 @@ class UInt32Imm : public IntergerImm {
   bool IsZero() override { return v_ == 0; }
   bool IsOne() override { return v_ == 1; }
   uint32_t value() const { return v_; }
-  bool operator==(const Value& other) const override;
-  bool operator==(const UInt32Imm& other) const;
+  bool operator==(const Value &other) const override;
+  bool operator==(const UInt32Imm &other) const;
   std::string ToString() const override { return std::to_string(v_); }
 
   std::string DumpText() const override {
@@ -277,8 +280,8 @@ class UInt64Imm : public IntergerImm {
   bool IsZero() override { return v_ == 0; }
   bool IsOne() override { return v_ == 1; }
   uint64_t value() const { return v_; }
-  bool operator==(const Value& other) const override;
-  bool operator==(const UInt64Imm& other) const;
+  bool operator==(const Value &other) const override;
+  bool operator==(const UInt64Imm &other) const;
   std::string ToString() const override { return std::to_string(v_); }
 
   std::string DumpText() const override {
@@ -296,7 +299,7 @@ IMM_TRAITS(UInt64ImmPtr, uint64_t);
 class FloatImm : public Scalar {
  public:
   FloatImm() = default;
-  explicit FloatImm(const TypePtr& t) : Scalar(t) {}
+  explicit FloatImm(const TypePtr &t) : Scalar(t) {}
   ~FloatImm() override = default;
   MS_DECLARE_PARENT(FloatImm, Scalar)
 };
@@ -312,8 +315,8 @@ class FP32Imm : public FloatImm {
   bool IsZero() override { return fabs(v_) <= FLT_EPSILON; }
   bool IsOne() override { return fabs(v_ - 1.0) <= FLT_EPSILON; }
   float value() const { return v_; }
-  bool operator==(const Value& other) const override;
-  bool operator==(const FP32Imm& other) const;
+  bool operator==(const Value &other) const override;
+  bool operator==(const FP32Imm &other) const;
   std::string ToString() const override { return std::to_string(v_); }
 
   std::string DumpText() const override {
@@ -338,8 +341,8 @@ class FP64Imm : public FloatImm {
   bool IsZero() override { return fabs(v_) <= DBL_EPSILON; }
   bool IsOne() override { return fabs(v_ - 1.0) <= DBL_EPSILON; }
   double value() const { return v_; }
-  bool operator==(const Value& other) const override;
-  bool operator==(const FP64Imm& other) const;
+  bool operator==(const Value &other) const override;
+  bool operator==(const FP64Imm &other) const;
   std::string ToString() const override { return std::to_string(v_); }
 
   std::string DumpText() const override {

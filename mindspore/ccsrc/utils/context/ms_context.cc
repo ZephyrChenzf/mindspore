@@ -26,13 +26,15 @@
 #include "tdt/tdt_host_interface.h"
 #include "tdt/data_common.h"
 #endif
+#ifdef ENABLE_GE
 #include "transform/df_graph_manager.h"
-#include "ir/meta_tensor.h"
+#endif
+#include "ir/tensor.h"
 
 namespace mindspore {
+#ifdef ENABLE_GE
 using mindspore::transform::DfGraphManager;
-using transform::GraphRunner;
-using transform::GraphRunnerOptions;
+#endif
 
 std::atomic<bool> thread_1_must_end(false);
 
@@ -43,7 +45,7 @@ std::map<std::string, MsBackendPolicy> MsContext::policy_map_ = {{"ge", kMsBacke
                                                                  {"ge_only", kMsBackendGeOnly},
                                                                  {"vm_prior", kMsBackendVmPrior}};
 
-MsContext::MsContext(const std::string& policy, const std::string& target) {
+MsContext::MsContext(const std::string &policy, const std::string &target) {
   save_graphs_flag_ = false;
   save_graphs_path_ = ".";
   save_ms_model_flag_ = false;
@@ -63,24 +65,27 @@ MsContext::MsContext(const std::string& policy, const std::string& target) {
   }
   backend_policy_ = policy_map_[policy];
   device_target_ = target;
-  execution_mode_ = kGraphMode;
+  execution_mode_ = kPynativeMode;
   enable_task_sink_ = true;
   ir_fusion_flag_ = true;
   enable_hccl_ = false;
-  enable_loop_sink_ = false;
   enable_mem_reuse_ = true;
   enable_gpu_summary_ = true;
   precompile_only_ = false;
-  auto_mixed_precision_flag_ = true;
+  auto_mixed_precision_flag_ = false;
   enable_pynative_infer_ = false;
-  enable_dynamic_mem_pool_ = false;
+  enable_dynamic_mem_pool_ = true;
   graph_memory_max_size_ = "0";
   variable_memory_max_size_ = "0";
-  MS_LOG(INFO) << "Create context with backend policy:" << policy << ", device target:" << target << ".";
+  enable_loop_sink_ = target == kAscendDevice || target == kDavinciDevice;
+  profiling_mode_ = false;
+  profiling_options_ = "training_trace";
+  check_bprop_flag_ = false;
 }
 
 std::shared_ptr<MsContext> MsContext::GetInstance() {
   if (inst_context_ == nullptr) {
+    MS_LOG(DEBUG) << "Create new mindspore context";
 #ifdef ENABLE_GE
     inst_context_.reset(new (std::nothrow) MsContext("ge", kAscendDevice));
 #elif defined(ENABLE_D)
@@ -94,7 +99,7 @@ std::shared_ptr<MsContext> MsContext::GetInstance() {
   return inst_context_;
 }
 
-bool MsContext::set_backend_policy(const std::string& policy) {
+bool MsContext::set_backend_policy(const std::string &policy) {
   if (policy_map_.find(policy) == policy_map_.end()) {
     MS_LOG(ERROR) << "invalid backend policy name: " << policy;
     return false;
@@ -107,7 +112,7 @@ bool MsContext::set_backend_policy(const std::string& policy) {
 std::string MsContext::backend_policy() const {
   auto res = std::find_if(
     policy_map_.begin(), policy_map_.end(),
-    [&, this](const std::pair<std::string, MsBackendPolicy>& item) { return item.second == backend_policy_; });
+    [&, this](const std::pair<std::string, MsBackendPolicy> &item) { return item.second == backend_policy_; });
   if (res != policy_map_.end()) {
     return res->first;
   }
@@ -121,7 +126,7 @@ void MsContext::set_execution_mode(int execution_mode) {
   execution_mode_ = execution_mode;
 }
 
-bool MsContext::set_device_target(const std::string& target) {
+bool MsContext::set_device_target(const std::string &target) {
   if (kTargetSet.find(target) == kTargetSet.end()) {
     MS_LOG(ERROR) << "invalid device target name: " << target;
     return false;
@@ -215,7 +220,7 @@ bool MsContext::CloseTsd(bool force) {
         MS_LOG(INFO) << "join tdt host receive process";
         tdt_print_.join();
       }
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
       MS_LOG(ERROR) << "tdt thread join failed: " << e.what();
     }
 #endif
@@ -238,7 +243,7 @@ bool MsContext::OpenTsd() { return true; }
 bool MsContext::CloseTsd(bool) { return true; }
 #endif
 
-void MsContext::SetHcclOptions(std::map<std::string, std::string>* ge_options) const {
+void MsContext::SetHcclOptions(std::map<std::string, std::string> *ge_options) const {
   auto env_table_file = common::GetEnv("RANK_TABLE_FILE");
   auto env_rank_id = common::GetEnv("RANK_ID");
   auto env_device_id = std::to_string(device_id_);
@@ -271,11 +276,18 @@ void MsContext::SetHcclOptions(std::map<std::string, std::string>* ge_options) c
   }
 }
 
-void MsContext::GetGeOptions(std::map<std::string, std::string>* ge_options) const {
+void MsContext::GetGeOptions(std::map<std::string, std::string> *ge_options) const {
 #ifdef ENABLE_GE
   (*ge_options)["device_id"] = "0";
-  (*ge_options)["ge.exec.enableDump"] = enable_dump_;
+  (*ge_options)["ge.exec.enableDump"] = std::to_string(enable_dump_);
   (*ge_options)["ge.exec.dumpPath"] = save_dump_path_;
+  MS_LOG(INFO) << "The enable dump state is " << std::to_string(enable_dump_) << " and save dump path is "
+               << save_dump_path_ << ".";
+  (*ge_options)["ge.exec.profilingMode"] = std::to_string(profiling_mode_);
+  if (profiling_mode_) {
+    (*ge_options)["ge.exec.profilingOptions"] = profiling_options_;
+  }
+
   // only not supported in ge
   auto tbe_plugin_path = common::GetEnv("ME_TBE_PLUGIN_PATH");
   if (!tbe_plugin_path.empty()) {
@@ -355,12 +367,18 @@ void MsContext::GetGeOptions(std::map<std::string, std::string>* ge_options) con
     MS_LOG(ERROR) << "Set proto lib path failed!";
   }
 
-  // Disbale the global variable acc, only enable it whlie adding training graph in pipeline
+  // Enable auto mixed precision according to the context options
+  if (auto_mixed_precision_flag_) {
+    (*ge_options)["ge.exec.precision_mode"] = "allow_mix_precision";
+  } else {
+    (*ge_options)["ge.exec.precision_mode"] = "allow_fp32_to_fp16";
+  }
+  // Disable the global variable acc, only enable it whlie adding training graph in pipeline
   (*ge_options)["ge.exec.variable_acc"] = "0";
 #endif
 }
 
-void MsContext::SetDisableReuseMemoryFlag(std::map<std::string, std::string>* ge_options) const {
+void MsContext::SetDisableReuseMemoryFlag(std::map<std::string, std::string> *ge_options) const {
   auto env_disable_reuse_memory = common::GetEnv("DISABLE_REUSE_MEMORY");
   if (!env_disable_reuse_memory.empty()) {
     (*ge_options)["ge.exec.disableReuseMemory"] = env_disable_reuse_memory;
@@ -407,7 +425,7 @@ bool MsContext::FinalizeGe(bool force) {
     try {
       DfGraphManager::GetInstance().DeleteGraphRunner();
       DfGraphManager::GetInstance().DeleteGeSession();
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
       MS_LOG(ERROR) << "Error occurred when deleting GE graph runner and session fail. Error: " << e.what();
     } catch (...) {
       std::string exName(abi::__cxa_current_exception_type()->name());
@@ -432,5 +450,19 @@ bool MsContext::PynativeInitGe() {
   (void)InitGe();
   is_pynative_ge_init_ = true;
   return true;
+}
+
+bool MsContext::IsTsdOpened() {
+  if (tsd_ref_ > 0) {
+    return true;
+  }
+  return false;
+}
+
+bool MsContext::IsGeInited() {
+  if (ge_ref_ > 0) {
+    return true;
+  }
+  return false;
 }
 }  // namespace mindspore

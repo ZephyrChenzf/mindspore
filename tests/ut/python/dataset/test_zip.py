@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-from util import save_and_check_dict
-from mindspore import log as logger
+from util import save_and_check_dict, save_and_check_md5
 
 import mindspore.dataset as ds
+from mindspore import log as logger
 
 # Dataset in DIR_1 has 5 rows and 5 columns
 DATA_DIR_1 = ["../data/dataset/testTFBert5Rows1/5TFDatas.data"]
@@ -44,11 +44,10 @@ def test_zip_01():
     dataz = ds.zip((data1, data2))
     # Note: zipped dataset has 5 rows and 7 columns
     filename = "zip_01_result.npz"
-    parameters = {"params": {}}
-    save_and_check_dict(dataz, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_dict(dataz, filename, generate_golden=GENERATE_GOLDEN)
 
 
-def skip_test_zip_02():
+def test_zip_02():
     """
     Test zip: zip 2 datasets, #rows-data1 < #rows-data2, #cols-data1 == #cols-data2
     """
@@ -59,11 +58,10 @@ def skip_test_zip_02():
     dataz = ds.zip((data1, data2))
     # Note: zipped dataset has 3 rows and 4 columns
     filename = "zip_02_result.npz"
-    parameters = {"params": {}}
-    save_and_check_dict(dataz, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_md5(dataz, filename, generate_golden=GENERATE_GOLDEN)
 
 
-def skip_test_zip_03():
+def test_zip_03():
     """
     Test zip: zip 2 datasets, #rows-data1 > #rows-data2, #cols-data1 > #cols-data2
     """
@@ -74,11 +72,10 @@ def skip_test_zip_03():
     dataz = ds.zip((data1, data2))
     # Note: zipped dataset has 3 rows and 7 columns
     filename = "zip_03_result.npz"
-    parameters = {"params": {}}
-    save_and_check_dict(dataz, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_md5(dataz, filename, generate_golden=GENERATE_GOLDEN)
 
 
-def skip_test_zip_04():
+def test_zip_04():
     """
     Test zip: zip >2 datasets
     """
@@ -90,8 +87,7 @@ def skip_test_zip_04():
     dataz = ds.zip((data1, data2, data3))
     # Note: zipped dataset has 3 rows and 9 columns
     filename = "zip_04_result.npz"
-    parameters = {"params": {}}
-    save_and_check_dict(dataz, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_md5(dataz, filename, generate_golden=GENERATE_GOLDEN)
 
 
 def test_zip_05():
@@ -109,8 +105,7 @@ def test_zip_05():
     dataz = ds.zip((data1, data2))
     # Note: zipped dataset has 5 rows and 9 columns
     filename = "zip_05_result.npz"
-    parameters = {"params": {}}
-    save_and_check_dict(dataz, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_dict(dataz, filename, generate_golden=GENERATE_GOLDEN)
 
 
 def test_zip_06():
@@ -129,8 +124,7 @@ def test_zip_06():
     dataz = dataz.repeat(2)
     # Note: resultant dataset has 10 rows and 9 columns
     filename = "zip_06_result.npz"
-    parameters = {"params": {}}
-    save_and_check_dict(dataz, parameters, filename, generate_golden=GENERATE_GOLDEN)
+    save_and_check_dict(dataz, filename, generate_golden=GENERATE_GOLDEN)
 
 
 def test_zip_exception_01():
@@ -149,11 +143,11 @@ def test_zip_exception_01():
             num_iter += 1
         logger.info("Number of data in zipped dataz: {}".format(num_iter))
 
-    except BaseException as e:
+    except Exception as e:
         logger.info("Got an exception in DE: {}".format(str(e)))
 
 
-def skip_test_zip_exception_02():
+def test_zip_exception_02():
     """
     Test zip: zip datasets with duplicate column name
     """
@@ -170,7 +164,7 @@ def skip_test_zip_exception_02():
             num_iter += 1
         logger.info("Number of data in zipped dataz: {}".format(num_iter))
 
-    except BaseException as e:
+    except Exception as e:
         logger.info("Got an exception in DE: {}".format(str(e)))
 
 
@@ -191,7 +185,7 @@ def test_zip_exception_03():
             num_iter += 1
         logger.info("Number of data in zipped dataz: {}".format(num_iter))
 
-    except BaseException as e:
+    except Exception as e:
         logger.info("Got an exception in DE: {}".format(str(e)))
 
 
@@ -211,7 +205,7 @@ def test_zip_exception_04():
             num_iter += 1
         logger.info("Number of data in zipped dataz: {}".format(num_iter))
 
-    except BaseException as e:
+    except Exception as e:
         logger.info("Got an exception in DE: {}".format(str(e)))
 
 
@@ -232,7 +226,7 @@ def test_zip_exception_05():
             num_iter += 1
         logger.info("Number of data in zipped dataz: {}".format(num_iter))
 
-    except BaseException as e:
+    except Exception as e:
         logger.info("Got an exception in DE: {}".format(str(e)))
 
 
@@ -252,7 +246,7 @@ def test_zip_exception_06():
             num_iter += 1
         logger.info("Number of data in zipped dataz: {}".format(num_iter))
 
-    except BaseException as e:
+    except Exception as e:
         logger.info("Got an exception in DE: {}".format(str(e)))
 
 

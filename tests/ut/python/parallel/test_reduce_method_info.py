@@ -13,14 +13,26 @@
 # limitations under the License.
 
 import numpy as np
-from mindspore import context
-import mindspore.nn as nn
-from mindspore.ops import operations as P
-from mindspore import Tensor
-from tests.ut.python.ops.test_math_ops import VirtualLoss
+
 import mindspore as ms
+import mindspore.nn as nn
+from mindspore import Tensor
+from mindspore import context
 from mindspore.common.api import _executor
 from mindspore.ops import composite as C
+from mindspore.ops import operations as P
+from tests.ut.python.ops.test_math_ops import VirtualLoss
+
+
+class NetWithLossNoBias(nn.Cell):
+    def __init__(self, network):
+        super(NetWithLossNoBias, self).__init__()
+        self.loss = VirtualLoss()
+        self.network = network
+
+    def construct(self, x, y):
+        predict = self.network(x, y)
+        return self.loss(predict)
 
 
 class NetWithLoss(nn.Cell):
@@ -34,6 +46,15 @@ class NetWithLoss(nn.Cell):
         return self.loss(predict)
 
 
+class GradWrapNoBias(nn.Cell):
+    def __init__(self, network):
+        super(GradWrapNoBias, self).__init__()
+        self.network = network
+
+    def construct(self, x, y):
+        return C.grad_all(self.network)(x, y)
+
+
 class GradWrap(nn.Cell):
     def __init__(self, network):
         super(GradWrap, self).__init__()
@@ -41,6 +62,17 @@ class GradWrap(nn.Cell):
 
     def construct(self, x, y, b):
         return C.grad_all(self.network)(x, y, b)
+
+
+def compile_net_no_bias(net, x, y):
+    net.set_auto_parallel()
+    _executor.compile(net, x, y)
+
+
+def compile_net(net, x, y, b):
+    net.set_auto_parallel()
+    _executor.compile(net, x, y, b)
+
 
 # model_parallel test
 def test_sum_mul():
@@ -59,7 +91,7 @@ def test_sum_mul():
 
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 1, 8), (1, 1, 8))
-    strategy2 = ((4, 1, 2), )
+    strategy2 = ((4, 1, 2),)
     strategy3 = ((2, 4), (2, 4))
     net = GradWrap(NetWithLoss(Net(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
@@ -67,7 +99,8 @@ def test_sum_mul():
     x = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     y = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     b = Tensor(np.ones([128, 64]), dtype=ms.float32)
-    _executor.compile(net, x, y, b)
+    compile_net(net, x, y, b)
+
 
 def test_sum_mul2():
     class Net(nn.Cell):
@@ -85,7 +118,7 @@ def test_sum_mul2():
 
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 1, 4, 2), (1, 1, 4, 2))
-    strategy2 = ((2, 4, 1, 1), )
+    strategy2 = ((2, 4, 1, 1),)
     strategy3 = ((2, 4), (2, 4))
     net = GradWrap(NetWithLoss(Net(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
@@ -93,7 +126,8 @@ def test_sum_mul2():
     x = Tensor(np.ones([128, 128, 64, 64]), dtype=ms.float32)
     y = Tensor(np.ones([128, 128, 64, 64]), dtype=ms.float32)
     b = Tensor(np.ones([64, 64]), dtype=ms.float32)
-    _executor.compile(net, x, y, b)
+    compile_net(net, x, y, b)
+
 
 def test_sum_mul3():
     class Net(nn.Cell):
@@ -111,7 +145,7 @@ def test_sum_mul3():
 
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 4, 2), (1, 4, 2))
-    strategy2 = ((4, 2, 1), )
+    strategy2 = ((4, 2, 1),)
     strategy3 = ((2, 4), (2, 4))
     net = GradWrap(NetWithLoss(Net(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
@@ -119,7 +153,8 @@ def test_sum_mul3():
     x = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     y = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     b = Tensor(np.ones([128, 32]), dtype=ms.float32)
-    _executor.compile(net, x, y, b)
+    compile_net(net, x, y, b)
+
 
 def test_sum_mul4():
     class Net(nn.Cell):
@@ -137,7 +172,7 @@ def test_sum_mul4():
 
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 4, 2), (1, 4, 2))
-    strategy2 = ((2, 2, 2), )
+    strategy2 = ((2, 2, 2),)
     strategy3 = ((4, 2, 1), (4, 2, 1))
     net = GradWrap(NetWithLoss(Net(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
@@ -145,7 +180,7 @@ def test_sum_mul4():
     x = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     y = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     b = Tensor(np.ones([128, 32, 1]), dtype=ms.float32)
-    _executor.compile(net, x, y, b)
+    compile_net(net, x, y, b)
 
 
 def test_sum_mul5():
@@ -155,21 +190,20 @@ def test_sum_mul5():
             self.mul1 = P.Mul().set_strategy(strategy1)
             self.reduce_sum = P.ReduceSum(keep_dims=True).set_strategy(strategy2)
 
-        def construct(self, x, y, b):
+        def construct(self, x, y):
             out = self.mul1(x, y)
             out = self.reduce_sum(out, 0)
             return out
 
     context.set_auto_parallel_context(device_num=64, global_rank=0)
     strategy1 = ((1, 8, 8), (1, 8, 8))
-    strategy2 = ((2, 4, 1), )
-    net = GradWrap(NetWithLoss(Net(strategy1, strategy2)))
+    strategy2 = ((2, 4, 1),)
+    net = GradWrapNoBias(NetWithLossNoBias(Net(strategy1, strategy2)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
 
     x = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     y = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
-    b = Tensor(np.ones([1, 32, 64]), dtype=ms.float32)
-    _executor.compile(net, x, y, b)
+    compile_net_no_bias(net, x, y)
 
 
 def test_sum_mul6():
@@ -179,21 +213,20 @@ def test_sum_mul6():
             self.mul1 = P.Mul().set_strategy(strategy1)
             self.reduce_sum = P.ReduceSum(keep_dims=True).set_strategy(strategy2)
 
-        def construct(self, x, y, b):
+        def construct(self, x, y):
             out = self.mul1(x, y)
             out = self.reduce_sum(out, 1)
             return out
 
     context.set_auto_parallel_context(device_num=64, global_rank=0)
     strategy1 = ((1, 8, 8), (1, 8, 8))
-    strategy2 = ((2, 1, 4), )
-    net = GradWrap(NetWithLoss(Net(strategy1, strategy2)))
+    strategy2 = ((2, 1, 4),)
+    net = GradWrapNoBias(NetWithLossNoBias(Net(strategy1, strategy2)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
 
     x = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     y = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
-    b = Tensor(np.ones([128, 1, 64]), dtype=ms.float32)
-    _executor.compile(net, x, y, b)
+    compile_net_no_bias(net, x, y)
 
 
 def test_sum_mul7():
@@ -203,21 +236,20 @@ def test_sum_mul7():
             self.mul1 = P.Mul().set_strategy(strategy1)
             self.reduce_sum = P.ReduceSum(keep_dims=True).set_strategy(strategy2)
 
-        def construct(self, x, y, b):
+        def construct(self, x, y):
             out = self.mul1(x, y)
             out = self.reduce_sum(out, (0, 1))
             return out
 
     context.set_auto_parallel_context(device_num=64, global_rank=0)
     strategy1 = ((1, 8, 8), (1, 8, 8))
-    strategy2 = ((2, 4, 1), )
-    net = GradWrap(NetWithLoss(Net(strategy1, strategy2)))
+    strategy2 = ((2, 4, 1),)
+    net = GradWrapNoBias(NetWithLossNoBias(Net(strategy1, strategy2)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
 
     x = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     y = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
-    b = Tensor(np.ones([1, 64]), dtype=ms.float32)
-    _executor.compile(net, x, y, b)
+    compile_net_no_bias(net, x, y)
 
 
 def test_max_mul():
@@ -236,7 +268,7 @@ def test_max_mul():
 
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 4, 2), (1, 4, 2))
-    strategy2 = ((4, 1, 2), )
+    strategy2 = ((4, 1, 2),)
     strategy3 = ((2, 4), (2, 4))
     net = GradWrap(NetWithLoss(Net(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
@@ -244,7 +276,7 @@ def test_max_mul():
     x = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     y = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     b = Tensor(np.ones([128, 32]), dtype=ms.float32)
-    _executor.compile(net, x, y, b)
+    compile_net(net, x, y, b)
 
 
 def test_min_mul():
@@ -263,7 +295,7 @@ def test_min_mul():
 
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 4, 2), (1, 4, 2))
-    strategy2 = ((4, 1, 2), )
+    strategy2 = ((4, 1, 2),)
     strategy3 = ((2, 4), (2, 4))
     net = GradWrap(NetWithLoss(Net(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
@@ -271,7 +303,7 @@ def test_min_mul():
     x = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     y = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     b = Tensor(np.ones([32, 64]), dtype=ms.float32)
-    _executor.compile(net, x, y, b)
+    compile_net(net, x, y, b)
 
 
 def test_reduce_mean_mul_float32():
@@ -290,7 +322,7 @@ def test_reduce_mean_mul_float32():
 
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 4, 2), (1, 4, 2))
-    strategy2 = ((4, 1, 2), )
+    strategy2 = ((4, 1, 2),)
     strategy3 = ((2, 4), (2, 4))
     net = GradWrap(NetWithLoss(Net(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
@@ -298,8 +330,8 @@ def test_reduce_mean_mul_float32():
     x = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     y = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     b = Tensor(np.ones([32, 64]), dtype=ms.float32)
-    
-    _executor.compile(net, x, y, b)
+
+    compile_net(net, x, y, b)
 
 
 class ArgMaxWithValueNet(nn.Cell):
@@ -311,7 +343,7 @@ class ArgMaxWithValueNet(nn.Cell):
 
     def construct(self, x, y, b):
         out = self.mul1(x, y)
-        index, out = self.arg_max_with_value(out)
+        _, out = self.arg_max_with_value(out)
         out = self.mul2(out, b)
         return out
 
@@ -325,36 +357,42 @@ class ArgMinWithValueNet(nn.Cell):
 
     def construct(self, x, y, b):
         out = self.mul1(x, y)
-        index, out = self.arg_min_with_value(out)
+        _, out = self.arg_min_with_value(out)
         out = self.mul2(out, b)
         return out
 
 
-def gen_inputs_and_compile(net):
+def gen_inputs_and_compile_net(net):
     x = Tensor(np.ones([128, 64, 64]), dtype=ms.float32)
     y = Tensor(np.ones([128, 64, 64]), dtype=ms.float32)
     b = Tensor(np.ones([128, 64]), dtype=ms.float32)
-    _executor.compile(net, x, y, b)
+    compile_net(net, x, y, b)
+
+
+def gen_inputs_and_compile_net_no_bias(net):
+    x = Tensor(np.ones([128, 64, 64]), dtype=ms.float32)
+    y = Tensor(np.ones([128, 64, 64]), dtype=ms.float32)
+    compile_net_no_bias(net, x, y)
 
 
 def tobefixed_test_arg_max_with_value_mul_semi_axis_parallel():
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 4, 2), (1, 4, 2))
-    strategy2 = ((4, 1, 2), )
+    strategy2 = ((4, 1, 2),)
     strategy3 = ((2, 4), (2, 4))
     net = GradWrap(NetWithLoss(ArgMaxWithValueNet(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
-    gen_inputs_and_compile(net)
+    gen_inputs_and_compile_net(net)
 
 
 def test_arg_max_with_value_mul_semi():
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 4, 2), (1, 4, 2))
-    strategy2 = ((4, 1, 1), )
+    strategy2 = ((4, 1, 1),)
     strategy3 = ((2, 4), (2, 4))
     net = GradWrap(NetWithLoss(ArgMaxWithValueNet(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
-    gen_inputs_and_compile(net)
+    gen_inputs_and_compile_net(net)
 
 
 def test_arg_max_with_value_mul_auto():
@@ -364,28 +402,27 @@ def test_arg_max_with_value_mul_auto():
     strategy3 = None
     net = GradWrap(NetWithLoss(ArgMaxWithValueNet(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="auto_parallel")
-    gen_inputs_and_compile(net)
+    gen_inputs_and_compile_net(net)
 
 
 def test_arg_min_with_value_mul_semi_axis_parallel():
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 4, 2), (1, 4, 2))
-    strategy2 = ((4, 1, 2), )
+    strategy2 = ((4, 1, 2),)
     strategy3 = ((2, 4), (2, 4))
     net = GradWrap(NetWithLoss(ArgMinWithValueNet(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
-    gen_inputs_and_compile(net)
-
+    gen_inputs_and_compile_net(net)
 
 
 def test_arg_min_with_value_mul_semi():
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 4, 2), (1, 4, 2))
-    strategy2 = ((4, 1, 1), )
+    strategy2 = ((4, 1, 1),)
     strategy3 = ((2, 4), (2, 4))
     net = GradWrap(NetWithLoss(ArgMinWithValueNet(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
-    gen_inputs_and_compile(net)
+    gen_inputs_and_compile_net(net)
 
 
 def test_arg_min_with_value_mul_auto():
@@ -395,7 +432,7 @@ def test_arg_min_with_value_mul_auto():
     strategy3 = None
     net = GradWrap(NetWithLoss(ArgMinWithValueNet(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="auto_parallel")
-    gen_inputs_and_compile(net)
+    gen_inputs_and_compile_net(net)
 
 
 class ArgMinWithValueNet2(nn.Cell):
@@ -405,9 +442,9 @@ class ArgMinWithValueNet2(nn.Cell):
         self.arg_min_with_value = P.ArgMinWithValue(keep_dims=True, axis=-1).set_strategy(strategy2)
         self.relu = P.ReLU().set_strategy(strategy3)
 
-    def construct(self, x, y, b):
+    def construct(self, x, y):
         out = self.mul1(x, y)
-        index, out = self.arg_min_with_value(out)
+        _, out = self.arg_min_with_value(out)
         out = self.relu(out)
         return out
 
@@ -415,21 +452,21 @@ class ArgMinWithValueNet2(nn.Cell):
 def tobefixed_test_arg_min_with_value_mul_semi_axis_parallel2():
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 4, 2), (1, 4, 2))
-    strategy2 = ((4, 1, 2), )
-    strategy3 = ((2, 4, 1), )
-    net = GradWrap(NetWithLoss(ArgMinWithValueNet2(strategy1, strategy2, strategy3)))
+    strategy2 = ((4, 1, 2),)
+    strategy3 = ((2, 4, 1),)
+    net = GradWrapNoBias(NetWithLossNoBias(ArgMinWithValueNet2(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
-    gen_inputs_and_compile(net)
+    gen_inputs_and_compile_net_no_bias(net)
 
 
 def test_arg_min_with_value_mul_semi2():
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 4, 2), (1, 4, 2))
-    strategy2 = ((4, 1, 1), )
-    strategy3 = ((2, 4, 1), )
-    net = GradWrap(NetWithLoss(ArgMinWithValueNet2(strategy1, strategy2, strategy3)))
+    strategy2 = ((4, 1, 1),)
+    strategy3 = ((2, 4, 1),)
+    net = GradWrapNoBias(NetWithLossNoBias(ArgMinWithValueNet2(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
-    gen_inputs_and_compile(net)
+    gen_inputs_and_compile_net_no_bias(net)
 
 
 def test_arg_min_with_value_mul_auto2():
@@ -437,9 +474,9 @@ def test_arg_min_with_value_mul_auto2():
     strategy1 = None
     strategy2 = None
     strategy3 = None
-    net = GradWrap(NetWithLoss(ArgMinWithValueNet2(strategy1, strategy2, strategy3)))
+    net = GradWrapNoBias(NetWithLossNoBias(ArgMinWithValueNet2(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="auto_parallel")
-    gen_inputs_and_compile(net)
+    gen_inputs_and_compile_net_no_bias(net)
 
 
 def test_cross_batch():
@@ -450,7 +487,7 @@ def test_cross_batch():
             self.reduce_sum = P.ReduceSum(keep_dims=False).set_strategy(strategy2)
             self.reduce_mean = P.ReduceMean(keep_dims=False).set_strategy(strategy3).add_prim_attr("cross_batch", True)
 
-        def construct(self, x, y, b):
+        def construct(self, x, y):
             out = self.mul1(x, y)
             out = self.reduce_sum(out, -1)
             out = self.reduce_mean(out, 0)
@@ -458,16 +495,14 @@ def test_cross_batch():
 
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((4, 2), (4, 2))
-    strategy2 = ((2, 1), )
-    strategy3 = ((8, ), )
-    net = GradWrap(NetWithLoss(Net(strategy1, strategy2, strategy3)))
+    strategy2 = ((2, 1),)
+    strategy3 = ((8,),)
+    net = GradWrapNoBias(NetWithLossNoBias(Net(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
-    
 
     x = Tensor(np.ones([32, 64]), dtype=ms.float32)
     y = Tensor(np.ones([32, 64]), dtype=ms.float32)
-    b = Tensor(np.ones([32, 64]), dtype=ms.float32)
-    _executor.compile(net, x, y, b)
+    compile_net_no_bias(net, x, y)
 
 
 def test_cross_batch2():
@@ -478,7 +513,7 @@ def test_cross_batch2():
             self.reduce_mean = P.ReduceMean(keep_dims=False).set_strategy(strategy2)
             self.reduce_sum = P.ReduceSum(keep_dims=False).set_strategy(strategy3).add_prim_attr("cross_batch", True)
 
-        def construct(self, x, y, b):
+        def construct(self, x, y):
             out = self.mul1(x, y)
             out = self.reduce_mean(out, -1)
             out = self.reduce_sum(out, 0)
@@ -486,16 +521,14 @@ def test_cross_batch2():
 
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((4, 2), (4, 2))
-    strategy2 = ((2, 1), )
-    strategy3 = ((8, ), )
-    net = GradWrap(NetWithLoss(Net(strategy1, strategy2, strategy3)))
+    strategy2 = ((2, 1),)
+    strategy3 = ((8,),)
+    net = GradWrapNoBias(NetWithLossNoBias(Net(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
-    
 
     x = Tensor(np.ones([32, 64]), dtype=ms.float32)
     y = Tensor(np.ones([32, 64]), dtype=ms.float32)
-    b = Tensor(np.ones([32, 64]), dtype=ms.float32)
-    _executor.compile(net, x, y, b)
+    compile_net_no_bias(net, x, y)
 
 
 def test_cross_batch_auto():
@@ -506,21 +539,19 @@ def test_cross_batch_auto():
             self.reduce_mean = P.ReduceMean(keep_dims=False)
             self.reduce_sum = P.ReduceSum(keep_dims=False).add_prim_attr("cross_batch", True)
 
-        def construct(self, x, y, b):
+        def construct(self, x, y):
             out = self.mul1(x, y)
             out = self.reduce_mean(out, -1)
             out = self.reduce_sum(out, 0)
             return out
 
     context.set_auto_parallel_context(device_num=8, global_rank=0)
-    net = GradWrap(NetWithLoss(Net()))
+    net = GradWrapNoBias(NetWithLossNoBias(Net()))
     context.set_auto_parallel_context(parallel_mode="auto_parallel")
-    
 
     x = Tensor(np.ones([32, 64]), dtype=ms.float32)
     y = Tensor(np.ones([32, 64]), dtype=ms.float32)
-    b = Tensor(np.ones([32, 64]), dtype=ms.float32)
-    _executor.compile(net, x, y, b)
+    compile_net_no_bias(net, x, y)
 
 
 def test_max_empty_tuple():
@@ -539,7 +570,7 @@ def test_max_empty_tuple():
 
     context.set_auto_parallel_context(device_num=8, global_rank=0)
     strategy1 = ((1, 4, 2), (1, 4, 2))
-    strategy2 = ((4, 1, 2), )
+    strategy2 = ((4, 1, 2),)
     strategy3 = ((), (1, 1))
     net = GradWrap(NetWithLoss(Net(strategy1, strategy2, strategy3)))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
@@ -547,5 +578,5 @@ def test_max_empty_tuple():
     x = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     y = Tensor(np.ones([128, 32, 64]), dtype=ms.float32)
     b = Tensor(np.ones([128, 32]), dtype=ms.float32)
-    
-    _executor.compile(net, x, y, b)
+
+    compile_net(net, x, y, b)

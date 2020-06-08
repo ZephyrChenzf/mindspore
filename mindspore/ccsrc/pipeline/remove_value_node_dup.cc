@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2020 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 #include "pipeline/remove_value_node_dup.h"
 #include "ir/anf.h"
-#include "ir/meta_tensor.h"
+#include "ir/tensor.h"
 #include "ir/manager.h"
 #include "optimizer/cse.h"
 #include "utils/log_adapter.h"
@@ -24,9 +24,9 @@
 
 namespace mindspore {
 namespace pipeline {
-void TryToDoReplace(FuncGraphManager* const manager, const AnfNodePtr& node, HashCache* const hash_cache,
-                    HashValue* const hash_value) {
-  const auto& to_check_value = GetValueNode(node);
+void TryToDoReplace(FuncGraphManager *const manager, const AnfNodePtr &node, HashCache *const hash_cache,
+                    HashValue *const hash_value) {
+  const auto &to_check_value = GetValueNode(node);
   MS_EXCEPTION_IF_NULL(to_check_value);
 
   // Calculate hash value.
@@ -46,14 +46,14 @@ void TryToDoReplace(FuncGraphManager* const manager, const AnfNodePtr& node, Has
     return;
   }
 
-  auto& bucket = bucket_iter->second;
+  auto &bucket = bucket_iter->second;
   // Check if need to replace node with value node already met.
-  for (const auto& v : bucket) {
+  for (const auto &v : bucket) {
     // Already met and cached.
     if (v == node) {
       return;
     }
-    const auto& existed_value = GetValueNode(v);
+    const auto &existed_value = GetValueNode(v);
     MS_EXCEPTION_IF_NULL(existed_value);
     auto equal = [&]() -> bool {
       if (existed_value->isa<tensor::Tensor>() && to_check_value->isa<tensor::Tensor>()) {

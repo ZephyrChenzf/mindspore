@@ -23,7 +23,9 @@
 #include "./common.h"
 #include "operator/ops.h"
 #include "operator/composite/do_signature.h"
+#include "pipeline/static_analysis/abstract_function.h"
 #include "utils/graph_utils.h"
+#include "utils/log_adapter.h"
 #include "utils/profile.h"
 #include "debug/trace.h"
 
@@ -34,7 +36,7 @@ inline AbstractBasePtr GetEvaluatedValueWrap(const AnfNodeConfigPtr &conf) {
   if (conf->node()->intermediate_abstract()) {
     return conf->node()->intermediate_abstract();
   }
-  return conf->GetEvaluatedValue();
+  return conf->GetEvaluatedValue()->abstract();
 }
 
 AnfNodePtr BuildValueNode(const ValuePtr &v, const AbstractBasePtr &abs_base) {
@@ -190,7 +192,7 @@ void FuncGraphSpecializer::FirstPass() {
     }
     if (node->func_graph() != func_graph_) {
       if (parent_ == nullptr) {
-        MS_LOG(EXCEPTION) << "parent must not null NodeInfo: " << trace::GetDebugInfo(node->debug_info());
+        MS_LOG(EXCEPTION) << "Parent must not null NodeInfo: " << trace::GetDebugInfo(node->debug_info());
       }
       parent_->AddTodoItem(node);
       parent_->FirstPass();
@@ -210,7 +212,7 @@ void FuncGraphSpecializer::FirstPass() {
 
 // Specialize CNode in func graphs
 void FuncGraphSpecializer::SecondPass() {
-  for (auto &node : DeepLinkedGraphSearch(specialized_func_graph_->get_return())) {
+  for (auto &node : BroadFirstSearchGraphCNodes(specialized_func_graph_->get_return())) {
     if (node->isa<CNode>()) {
       ProcessCNode(node->cast<CNodePtr>());
     }
@@ -223,7 +225,6 @@ void FuncGraphSpecializer::ProcessNode(const AnfNodePtr &node) {
   AnfNodeConfigPtr conf = MakeConfig(node);
   AnfNodePtr new_node = GetReplicatedNode(node);
   MS_EXCEPTION_IF_NULL(new_node);
-
   if (new_node->func_graph() != specialized_func_graph_) {
     MS_LOG(EXCEPTION) << "Error in specializer [A] node: " << node->DebugString()
                       << ", new_node: " << new_node->DebugString()
@@ -232,9 +233,17 @@ void FuncGraphSpecializer::ProcessNode(const AnfNodePtr &node) {
     return;
   }
   new_node->set_abstract(GetEvaluatedValueWrap(conf));
+  if (new_node->isa<CNode>() && new_node->abstract()->isa<PartialAbstractClosure>()) {
+    auto partial_abstract = dyn_cast<PartialAbstractClosure>(new_node->abstract());
+    if (partial_abstract->node() == node) {
+      partial_abstract->set_node(new_node);
+    }
+  }
+
   MS_LOG(DEBUG) << "Set new_node: " << new_node->ToString() << ", abstract as: " << new_node->abstract()->ToString();
 
   if (node->isa<CNode>()) {
+    auto attrs = conf->GetEvaluatedValue()->attribute();
     auto c_old = node->cast<CNodePtr>();
     auto c_new = new_node->cast<CNodePtr>();
     auto new_inputs = c_new->inputs();
@@ -245,7 +254,7 @@ void FuncGraphSpecializer::ProcessNode(const AnfNodePtr &node) {
       AbstractBasePtr ival = GetEvaluatedValueWrap(iconf);
       // First try to check if node_input can be replaced by a ValueNode. If cannot, then try to check if
       // can be replaced by another CNode from anfnode_config_map, otherwise use the replicated node.
-      AnfNodePtr replace_node = BuildPossibleValueNode(iconf->node(), ival);
+      AnfNodePtr replace_node = BuildPossibleValueNode(iconf->node(), ival, attrs);
       if (replace_node == nullptr) {
         replace_node = BuildReplacedNode(iconf);
         MS_EXCEPTION_IF_NULL(replace_node);
@@ -365,22 +374,73 @@ AnfNodePtr FuncGraphSpecializer::BuildSpecializedNodeInner(const AbstractBasePtr
   }
 
   if (!eval->isa<BaseFuncGraphEvaluator>()) {
-    MS_LOG(EXCEPTION) << "eval is not BaseGraphEvaluator, but " << eval->ToString();
+    MS_LOG(EXCEPTION) << "Eval is not BaseGraphEvaluator, but " << eval->ToString();
   }
   auto real_eval = dyn_cast<BaseFuncGraphEvaluator>(eval);
 
   if (func->context() != nullptr) {
     if (!IsVisible(func_graph_, func->context()->func_graph())) {
-      MS_LOG(EXCEPTION) << "func is not visible NodeInfo: " << trace::GetDebugInfo(func_graph_->debug_info());
+      MS_LOG(EXCEPTION) << "Func is not visible NodeInfo: " << trace::GetDebugInfo(func_graph_->debug_info());
     }
   } else {
-    MS_LOG(EXCEPTION) << "func context is nullptr NodeInfo: " << trace::GetDebugInfo(func_graph_->debug_info());
+    MS_LOG(EXCEPTION) << "Func context is nullptr NodeInfo: " << trace::GetDebugInfo(func_graph_->debug_info());
   }
   AnalysisContextPtr context = real_eval->MakeContext(engine_, argvals);
   MS_LOG(DEBUG) << "Specialize function graph: " << context->func_graph()->ToString() << ", args: " << argvals.size()
                 << ", graph: " << context->func_graph()->get_return()->DebugString();
   FuncGraphPtr v = specializer_->SpecializeFuncGraph(context->func_graph(), context);
   return BuildValueNode(v, abs);
+}
+
+AnfNodePtr FuncGraphSpecializer::BuildSpecializedParameterNode(const CNodePtr &new_node) {
+  auto new_inputs = new_node->inputs();
+  AnfNodePtr func = new_inputs[0];
+  AbstractBasePtr fnval = new_inputs[0]->abstract();
+
+  AbstractBasePtrList args;
+  auto backed_fnval = fnval;
+  if (fnval->isa<PartialAbstractClosure>()) {
+    auto partial_closure = dyn_cast<PartialAbstractClosure>(fnval);
+    backed_fnval = partial_closure->fn();
+    args = partial_closure->args();
+  }
+  std::transform(new_inputs.cbegin() + 1, new_inputs.cend(), std::back_inserter(args),
+                 [](const AnfNodePtr &inp) { return inp->abstract(); });
+
+  ScopeGuard scope_guard(new_node->scope());
+
+  auto specialized_node = BuildSpecializedNode(func, backed_fnval, args);
+  auto wrapped_node = specialized_node;
+  if (fnval->isa<PartialAbstractClosure>()) {
+    auto partial_closure = dyn_cast<PartialAbstractClosure>(fnval);
+    AnfNodePtrList partial_node_list = {BuildValueNode(prim::kPrimPartial, FromValueInside(prim::kPrimPartial)),
+                                        specialized_node};
+    auto anf_node = partial_closure->node();
+    if (!anf_node->isa<CNode>()) {
+      MS_LOG(EXCEPTION) << "Must be cnode, but " << anf_node->DebugString();
+    }
+    auto cnode = anf_node->cast<CNodePtr>();
+    if (cnode->size() != partial_closure->args().size() + 2) {
+      MS_LOG(EXCEPTION) << "Size of cnode: " << cnode->DebugString()
+                        << " is not equal to 2 added to size of args: " << mindspore::ToString(partial_closure->args());
+    }
+    auto attrs = std::make_shared<AttrValueMap>();
+    for (size_t i = 0; i < partial_closure->args().size(); i++) {
+      auto old_node = cnode->input(i + 2);
+      auto possibile_value_node = BuildPossibleValueNode(old_node, partial_closure->args()[i], attrs);
+      if (possibile_value_node != nullptr) {
+        partial_node_list.push_back(possibile_value_node);
+      } else {
+        if (!(old_node->isa<CNode>() || old_node->isa<Parameter>())) {
+          MS_LOG(EXCEPTION) << "Old node should be CNode or Parameter, but " << old_node->ToString();
+        }
+        partial_node_list.push_back(old_node);
+      }
+    }
+    wrapped_node = new_node->func_graph()->NewCNode(partial_node_list);
+    wrapped_node->set_abstract(partial_closure);
+  }
+  return wrapped_node;
 }
 
 const EvaluatorCacheMapPtr &FuncGraphSpecializer::GetEvalCache(const EvaluatorPtr &eval) {
@@ -396,7 +456,7 @@ std::pair<AbstractBasePtrList, AbstractBasePtr> FuncGraphSpecializer::BuildFromB
   const EvaluatorPtr &eval) {
   MS_EXCEPTION_IF_NULL(eval);
   std::unordered_set<AbstractBasePtrList, AbstractBasePtrListHasher, AbstractBasePtrListEqual> choices;
-  AbstractBasePtr ret = nullptr;
+  EvalResultPtr ret = nullptr;
   AbstractBasePtrList broaded_argvals;
   for (auto &argvals_map : *evalcaches_[eval]) {
     auto argvals = argvals_map.first;
@@ -419,7 +479,7 @@ std::pair<AbstractBasePtrList, AbstractBasePtr> FuncGraphSpecializer::BuildFromB
 
     (*real)[broaded_argvals] = ret;
     evalcaches_[eval] = real;
-    return std::make_pair(broaded_argvals, ret);
+    return std::make_pair(broaded_argvals, ret->abstract());
   } else {
     MS_LOG(DEBUG) << "Choices.size: " << choices.size();
     return std::make_pair(AbstractBasePtrList(), nullptr);
@@ -432,7 +492,6 @@ void FuncGraphSpecializer::ProcessCNode(const CNodePtr &new_node) {
     return;
   }
   specializer_->AddSeen(new_node);
-
   auto new_inputs = new_node->inputs();
   if (new_inputs.empty()) {
     MS_LOG(EXCEPTION) << "Inputs of CNode is empty";
@@ -465,8 +524,19 @@ void FuncGraphSpecializer::ProcessCNode(const CNodePtr &new_node) {
                   << new_inputs[i]->DebugString() << ", abstract: " << new_inputs[i]->abstract()->ToString();
   }
 
+  if (func->isa<Parameter>() && func->func_graph()->has_flag(FUNC_GRAPH_FLAG_SPECIALIZE_PARAMETER)) {
+    auto wrapped_node = BuildSpecializedParameterNode(new_node);
+    new_inputs[0] = wrapped_node;
+  }
+
   if (CanSpecializeNode(func)) {
-    new_inputs[0] = BuildSpecializedNode(func, fnval, argvals);
+    // for primitive node , we build the primitive node with infered attributes in the first pass
+    // so we do not build replaced node again here in second pass
+    if (IsValueNode<Primitive>(func)) {
+      new_inputs[0] = func;
+    } else {
+      new_inputs[0] = BuildSpecializedNode(func, fnval, argvals);
+    }
   }
 
   for (size_t i = 0; i < argvals.size();) {
@@ -474,19 +544,8 @@ void FuncGraphSpecializer::ProcessCNode(const CNodePtr &new_node) {
     if (CanSpecializeNode(args[i])) {
       new_inputs[next] = BuildSpecializedNode(args[i], argvals[i], std::vector<AbstractBasePtr>{});
     }
-    // support for partial(Multitype) which Multitype should not be inferred to POLY.
-    // after one or more times clone, Multitype metafuncgraph evaluator will specialized to one type only,
-    // so even with partial parameter, it will specialize to that graph.
-    // Maybe a better idea should inline graph with partial node first, then it will have full
-    // parameter list to infer and specialize.
-    MS_EXCEPTION_IF_NULL(new_inputs[next]);
-    if (new_inputs[next]->isa<ValueNode>() && (GetValueNode(new_inputs[next]) == kPolyNode) &&
-        IsPrimitive(func, prim::kPrimPartial)) {
-      new_inputs[next] = args[i];
-    }
     i = next;
   }
-
   new_node->set_inputs(new_inputs);
 }
 
@@ -528,7 +587,7 @@ SpecializeStatusCode FuncGraphSpecializer::FindUniqueArgvals(const AbstractFunct
 
   EvaluatorCacheMap evaluator_cache_map = *eval->cache();
   if (evaluator_cache_map.find(argvals) != evaluator_cache_map.end()) {
-    *result = std::make_pair(argvals, evaluator_cache_map[argvals]);
+    *result = std::make_pair(argvals, evaluator_cache_map[argvals]->abstract());
     return kSpecializeSuccess;
   }
   DumpEvaluatorCache(evaluator_cache_map, argvals);
@@ -537,11 +596,11 @@ SpecializeStatusCode FuncGraphSpecializer::FindUniqueArgvals(const AbstractFunct
   MS_EXCEPTION_IF_NULL(choices);
 
   if (choices->count(argvals)) {
-    *result = std::make_pair(argvals, (*choices)[argvals]);
+    *result = std::make_pair(argvals, (*choices)[argvals]->abstract());
     return kSpecializeSuccess;
   } else if (choices->size() == 1) {
     MS_LOG(DEBUG) << "Evaluator cache has a single item, just use it.";
-    *result = std::make_pair(choices->begin()->first, choices->begin()->second);
+    *result = std::make_pair(choices->begin()->first, choices->begin()->second->abstract());
     return kSpecializeSuccess;
   } else if (choices->empty()) {
     MS_LOG(DEBUG) << "Find DEAD code, it may be optimized in later phase.";
@@ -556,12 +615,47 @@ SpecializeStatusCode FuncGraphSpecializer::FindUniqueArgvals(const AbstractFunct
     if (!result->first.empty()) {
       return kSpecializeSuccess;
     }
-    MS_LOG(DEBUG) << "Find POLY code, it may be unused code or unresoved polymorphism.";
+    MS_LOG(DEBUG) << "Find POLY code, it may be unused code or unresolved polymorphism.";
     return kSpecializeFindUniqueArgvalPoly;
   }
 }
+static PrimitivePtr BuildPrimtiveValueWithAttributes(const PrimitivePtr &prim, const AttrValueMapPtr &attrs) {
+  auto &prim_attrs = prim->attrs();
+  bool is_attr_same = true;
+  for (auto &item : *attrs) {
+    auto itr = prim_attrs.find(item.first);
+    if (itr != prim_attrs.end()) {
+      if (!(*(itr->second) == *(item.second))) {
+        is_attr_same = false;
+        break;
+      }
+    } else {
+      is_attr_same = false;
+      break;
+    }
+  }
+  if (!is_attr_same) {
+    if (prim->isa<PrimitivePy>()) {
+      PrimitivePyPtr prim_py = prim->cast<PrimitivePyPtr>();
+      auto clone_fn = prim_py->GetPyObj().attr("_clone");
+      py::object new_obj = clone_fn();
+      auto cloned_prim = new_obj.cast<PrimitivePyPtr>();
+      for (auto &item : *attrs) {
+        cloned_prim->AddAttr(item.first, item.second);
+      }
+      return cloned_prim;
+    }
+    auto cloned_prim = std::make_shared<Primitive>(*prim);
+    for (auto &item : *attrs) {
+      cloned_prim->AddAttr(item.first, item.second);
+    }
+    return cloned_prim;
+  }
+  return prim;
+}
 
-AnfNodePtr FuncGraphSpecializer::BuildPossibleValueNode(const AnfNodePtr &origin_node, const AbstractBasePtr &ival) {
+AnfNodePtr FuncGraphSpecializer::BuildPossibleValueNode(const AnfNodePtr &origin_node, const AbstractBasePtr &ival,
+                                                        const AttrValueMapPtr &attrs) {
   MS_EXCEPTION_IF_NULL(origin_node);
   MS_EXCEPTION_IF_NULL(ival);
 
@@ -574,7 +668,12 @@ AnfNodePtr FuncGraphSpecializer::BuildPossibleValueNode(const AnfNodePtr &origin
     ValuePtr value = nullptr;
     if (abs->isa<PrimitiveAbstractClosure>()) {
       auto real_fn = dyn_cast<PrimitiveAbstractClosure>(abs);
-      value = real_fn->prim();
+      // for primitive, check if the attribute is the same with cnode infererd attribute ,if not, clone a new one
+      if (attrs != nullptr) {
+        value = BuildPrimtiveValueWithAttributes(real_fn->prim(), attrs);
+      } else {
+        value = real_fn->prim();
+      }
     } else if (abs->isa<MetaFuncGraphAbstractClosure>()) {
       auto real_fn = dyn_cast<MetaFuncGraphAbstractClosure>(abs);
       value = real_fn->meta_func_graph();
@@ -594,9 +693,12 @@ AnfNodePtr FuncGraphSpecializer::BuildPossibleValueNode(const AnfNodePtr &origin
     ValuePtr val = ival->BuildValue();
     if (val->isa<AnyValue>()) {
       return nullptr;
-    } else {
-      return BuildValueNode(val, ival);
     }
+    // keep primitive 'depend' not to be optimized
+    if (IsPrimitiveCNode(origin_node, prim::kPrimDepend)) {
+      return nullptr;
+    }
+    return BuildValueNode(val, ival);
   }
 }
 

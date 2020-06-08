@@ -20,7 +20,6 @@
 
 namespace mindspore {
 namespace parallel {
-
 Status ReshapeLayoutTransfer::CheckValidTransfer() {
   if (!IsSameDeviceArrangement()) {
     return Status::FAILED;
@@ -31,9 +30,18 @@ Status ReshapeLayoutTransfer::CheckValidTransfer() {
 std::shared_ptr<ReshapeLayoutTransfer> ReshapeLayoutTransfer::UnifyDeviceArrangementAndTensorShape() const {
   bool is_unified = IsSameTensorShape();
   std::shared_ptr<ReshapeLayoutTransfer> out_layout_ptr = std::make_shared<ReshapeLayoutTransfer>(*this);
+  if (out_layout_ptr == nullptr) {
+    return nullptr;
+  }
   while (!is_unified) {
     std::shared_ptr<ReshapeLayoutTransfer> temp_layout_ptr = out_layout_ptr->ExtendFromTensorShapeByTo();
+    if (temp_layout_ptr == nullptr) {
+      return nullptr;
+    }
     out_layout_ptr = temp_layout_ptr->ExtendToTensorShapeByFrom();
+    if (out_layout_ptr == nullptr) {
+      return nullptr;
+    }
     is_unified = out_layout_ptr->IsSameTensorShape();
   }
   return out_layout_ptr;
@@ -92,6 +100,9 @@ std::shared_ptr<ReshapeLayoutTransfer> ReshapeLayoutTransfer::ExtendToTensorShap
   }
   std::shared_ptr<ReshapeLayoutTransfer> exchanged_out =
     exchanged_from_and_to_ptr->ExpandFromTensorShapeAndExpandToDeviceArrangement(*expanded_shape_ptr);
+  if (exchanged_out == nullptr) {
+    return nullptr;
+  }
   return exchanged_out->ExchangeFromAndTo();
 }
 
@@ -105,7 +116,7 @@ std::shared_ptr<ReshapeLayoutTransfer> ReshapeLayoutTransfer::ExchangeFromAndTo(
 }
 
 std::shared_ptr<ReshapeLayoutTransfer> ReshapeLayoutTransfer::ExpandFromTensorShapeAndExpandToDeviceArrangement(
-  const Arrangement& expand_shape) const {
+  const Arrangement &expand_shape) const {
   std::shared_ptr<TensorLayout> extend_tensor_shape_from_ptr = from_in_.ExpandTensorShape(expand_shape);
   if (extend_tensor_shape_from_ptr == nullptr) {
     return nullptr;

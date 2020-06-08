@@ -13,12 +13,13 @@
 # limitations under the License.
 # ============================================================================
 
+import numpy as np
 import pytest
+
+import mindspore.context as context
+import mindspore.nn as nn
 from mindspore import Tensor
 from mindspore.ops import operations as P
-import mindspore.nn as nn
-import numpy as np
-import mindspore.context as context
 
 
 class NetNeg(nn.Cell):
@@ -48,19 +49,19 @@ def test_neg():
     output0 = neg(x0)
     diff0 = output0.asnumpy() - expect0
     assert np.all(diff0 < error0)
-    assert (output0.shape() == expect0.shape)
+    assert output0.shape() == expect0.shape
     output1 = neg(x1)
     diff1 = output1.asnumpy() - expect1
     assert np.all(diff1 < error1)
-    assert (output1.shape() == expect1.shape)
+    assert output1.shape() == expect1.shape
 
     context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
     neg = NetNeg()
     output0 = neg(x0)
     diff0 = output0.asnumpy() - expect0
     assert np.all(diff0 < error0)
-    assert (output0.shape() == expect0.shape)
+    assert output0.shape() == expect0.shape
     output1 = neg(x1)
     diff1 = output1.asnumpy() - expect1
     assert np.all(diff1 < error1)
-    assert (output1.shape() == expect1.shape)
+    assert output1.shape() == expect1.shape

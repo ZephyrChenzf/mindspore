@@ -12,36 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from mindspore.train import Model, ParallelMode
-from mindspore.nn.loss import SoftmaxCrossEntropyWithLogits
-from mindspore.nn.optim.momentum import Momentum
-import mindspore as ms
 import numpy as np
+
+import mindspore as ms
 import mindspore.ops.operations.math_ops as M
-from mindspore.nn.layer.basic import Dense
-from mindspore.nn.layer.basic import Flatten
-from mindspore.ops.operations import TensorAdd
+from mindspore import context
+from mindspore.common.initializer import initializer
+from mindspore.common.parameter import Parameter
 from mindspore.common.tensor import Tensor
-from mindspore.nn.layer.activation import ReLU
 from mindspore.nn.cell import Cell
+from mindspore.nn.layer.basic import Flatten
 from mindspore.nn.layer.conv import Conv2d
 from mindspore.nn.layer.normalization import BatchNorm2d
 from mindspore.nn.layer.pooling import MaxPool2d
+from mindspore.nn.loss import SoftmaxCrossEntropyWithLogits
+from mindspore.nn.optim.momentum import Momentum
 from mindspore.ops import operations as P
-from mindspore.common.initializer import initializer
-from mindspore.common.parameter import Parameter
-from mindspore import context
+from mindspore.ops.operations import TensorAdd
+from mindspore.train import Model, ParallelMode
 from tests.dataset_mock import MindData
 
-
 dev_num = 8
-strategy_no_weight = ((dev_num, 1, 1, 1), )
+strategy_no_weight = ((dev_num, 1, 1, 1),)
 strategy_weight = ((dev_num, 1, 1, 1), (1, 1, 1, 1))
 strategy_add = ((dev_num, 1, 1, 1), (dev_num, 1, 1, 1))
-strategy_bn = ((dev_num, 1, 1, 1), (1, ), (1, ))
+strategy_bn = ((dev_num, 1, 1, 1), (1,), (1,))
 
 strategy_fc_weight_nobias = ((1, dev_num), (1, dev_num))
-strategy_tensor_add = ((1, dev_num), (dev_num, ))
+strategy_tensor_add = ((1, dev_num), (dev_num,))
+
 
 class DenseWrap(Cell):
     def __init__(self,
@@ -60,8 +59,7 @@ class DenseWrap(Cell):
         self.has_bias = has_bias
 
         self.weight = Parameter(initializer(
-            weight_init, [output_channels, input_channels]),
-            name="weight")
+            weight_init, [output_channels, input_channels]), name="weight")
 
         if self.has_bias:
             self.bias = Parameter(initializer(
@@ -102,7 +100,7 @@ class DatasetLenet(MindData):
         self.index = 0
 
 
-def conv3x3(in_channels, out_channels, stride=1, padding=1):
+def conv3x3(in_channels, out_channels, stride=1):
     """3x3 convolution """
     weight_shape = (out_channels, in_channels, 3, 3)
     weight = Tensor(np.ones(weight_shape).astype(np.float32))
@@ -113,7 +111,7 @@ def conv3x3(in_channels, out_channels, stride=1, padding=1):
     return conv
 
 
-def conv1x1(in_channels, out_channels, stride=1, padding=0):
+def conv1x1(in_channels, out_channels, stride=1):
     """1x1 convolution"""
     weight_shape = (out_channels, in_channels, 1, 1)
     weight = Tensor(np.ones(weight_shape).astype(np.float32))
@@ -124,7 +122,7 @@ def conv1x1(in_channels, out_channels, stride=1, padding=0):
     return conv
 
 
-def conv7x7(in_channels, out_channels, stride=1, padding=0):
+def conv7x7(in_channels, out_channels, stride=1):
     """1x1 convolution"""
     weight_shape = (out_channels, in_channels, 7, 7)
     weight = Tensor(np.ones(weight_shape).astype(np.float32))
@@ -185,18 +183,17 @@ class ResidualBlock(Cell):
     def __init__(self,
                  in_channels,
                  out_channels,
-                 stride=1,
-                 down_sample=False):
+                 stride=1):
         super(ResidualBlock, self).__init__()
 
         out_chls = out_channels // self.expansion
-        self.conv1 = conv1x1(in_channels, out_chls, stride=1, padding=0)
+        self.conv1 = conv1x1(in_channels, out_chls, stride=1)
         self.bn1 = bn_with_initialize(out_chls)
 
-        self.conv2 = conv3x3(out_chls, out_chls, stride=stride, padding=0)
+        self.conv2 = conv3x3(out_chls, out_chls, stride=stride)
         self.bn2 = bn_with_initialize(out_chls)
 
-        self.conv3 = conv1x1(out_chls, out_channels, stride=1, padding=0)
+        self.conv3 = conv1x1(out_chls, out_channels, stride=1)
         self.bn3 = bn_with_initialize_last(out_channels)
 
         self.relu1 = P.ReLU().set_strategy(strategy_no_weight)
@@ -235,21 +232,21 @@ class ResidualBlockWithDown(Cell):
         super(ResidualBlockWithDown, self).__init__()
 
         out_chls = out_channels // self.expansion
-        self.conv1 = conv1x1(in_channels, out_chls, stride=1, padding=0)
+        self.conv1 = conv1x1(in_channels, out_chls, stride=1)
         self.bn1 = bn_with_initialize(out_chls)
 
-        self.conv2 = conv3x3(out_chls, out_chls, stride=stride, padding=0)
+        self.conv2 = conv3x3(out_chls, out_chls, stride=stride)
         self.bn2 = bn_with_initialize(out_chls)
 
-        self.conv3 = conv1x1(out_chls, out_channels, stride=1, padding=0)
+        self.conv3 = conv1x1(out_chls, out_channels, stride=1)
         self.bn3 = bn_with_initialize_last(out_channels)
 
         self.relu1 = P.ReLU().set_strategy(strategy_no_weight)
         self.relu2 = P.ReLU().set_strategy(strategy_no_weight)
         self.relu3 = P.ReLU().set_strategy(strategy_no_weight)
-        self.downSample = down_sample
+        self.down_sample = down_sample
 
-        self.conv_down_sample = conv1x1(in_channels, out_channels, stride=stride, padding=0)
+        self.conv_down_sample = conv1x1(in_channels, out_channels, stride=stride)
         self.bn_down_sample = bn_with_initialize(out_channels)
         self.add = TensorAdd().set_strategy(strategy_add)
 
@@ -278,7 +275,7 @@ class ResidualBlockWithDown(Cell):
 
 class MakeLayer0(Cell):
 
-    def __init__(self, block, layer_num, in_channels, out_channels, stride):
+    def __init__(self, block, in_channels, out_channels, stride):
         super(MakeLayer0, self).__init__()
         self.a = ResidualBlockWithDown(in_channels, out_channels, stride=1, down_sample=True)
         self.b = block(out_channels, out_channels, stride=stride)
@@ -294,14 +291,14 @@ class MakeLayer0(Cell):
 
 class ResNet(Cell):
 
-    def __init__(self, block, layer_num, num_classes=100):
+    def __init__(self, block, num_classes=100):
         super(ResNet, self).__init__()
-        self.conv1 = conv7x7(3, 64, stride=2, padding=3)
+        self.conv1 = conv7x7(3, 64, stride=2)
         self.bn1 = bn_with_initialize(64)
         self.relu = P.ReLU().set_strategy(strategy_no_weight)
         self.maxpool = MaxPool2d(kernel_size=3, stride=2, pad_mode="same")
         self.layer1 = MakeLayer0(
-            block, layer_num[0], in_channels=64, out_channels=256, stride=1)
+            block, in_channels=64, out_channels=256, stride=1)
         self.pool = M.ReduceMean(keep_dims=True).set_strategy(strategy_no_weight)
         self.fc = fc_with_initialize(64 * block.expansion, num_classes)
         self.flatten = Flatten()
@@ -319,12 +316,12 @@ class ResNet(Cell):
 
 
 class ResNetModelParallel(Cell):
-    def __init__(self, block, layer_num, num_classes=100):
+    def __init__(self, block, num_classes=100):
         super(ResNetModelParallel, self).__init__()
-        self.relu = P.ReLU().set_strategy(((1, dev_num, 1, 1), ))
+        self.relu = P.ReLU().set_strategy(((1, dev_num, 1, 1),))
         self.maxpool = MaxPool2d(kernel_size=3, stride=2, pad_mode="same")
         self.layer1 = MakeLayer0(
-            block, layer_num[0], in_channels=64, out_channels=256, stride=1)
+            block, in_channels=64, out_channels=256, stride=1)
         self.pool = M.ReduceMean(keep_dims=True).set_strategy(strategy_no_weight)
         self.fc = fc_with_initialize(64 * block.expansion, num_classes)
         self.flatten = Flatten()
@@ -340,11 +337,11 @@ class ResNetModelParallel(Cell):
 
 
 def resnet_operator_net(num_classes):
-    return ResNet(ResidualBlock, [3, 4, 6, 3], num_classes)
+    return ResNet(ResidualBlock, num_classes)
 
 
 def resnet_model_parallel_net(num_classes):
-    return ResNetModelParallel(ResidualBlock, [3, 4, 6, 3], num_classes)
+    return ResNetModelParallel(ResidualBlock, num_classes)
 
 
 def test_resnet_operator_batch_parallel():
@@ -353,7 +350,6 @@ def test_resnet_operator_batch_parallel():
     learning_rate = 0.1
     momentum = 0.9
     epoch_size = 2
-    rank_size = dev_num
 
     context.reset_auto_parallel_context()
     context.set_auto_parallel_context(device_num=dev_num, global_rank=0)
@@ -380,7 +376,6 @@ def test_resnet_model_parallel():
     learning_rate = 0.1
     momentum = 0.9
     epoch_size = 2
-    rank_size = dev_num
 
     context.reset_auto_parallel_context()
     context.set_auto_parallel_context(device_num=dev_num, global_rank=0)

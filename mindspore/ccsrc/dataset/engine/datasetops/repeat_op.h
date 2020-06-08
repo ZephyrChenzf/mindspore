@@ -87,8 +87,8 @@ class RepeatOp : public PipelineOp {
   uint32_t PrepareFlags() const override;
 
   // Base-class override for executing specific RepeatOp configurations. This code will be called
-  // during the execution tree prepare phase when it is visiting this operator.
-  Status PrepareNodeAction() override;
+  // during the execution tree post-prepare phase when it is visiting this operator.
+  Status PrepareNodePostAction() override;
 
   // This function returns the buffer that is at the top of our output connector. The caller is
   // typically our parent node, when the parent is asking us to provide the next buffer of data.
@@ -118,10 +118,20 @@ class RepeatOp : public PipelineOp {
   // @param workerId - The worker id
   int32_t num_producers() const override;
 
+  // Base-class override for NodePass visitor acceptor.
+  // @param p - Pointer to the NodePass to be accepted.
+  // @param modified - Whether this node visit modified the pipeline.
+  // @return - Status of the node visit.
+  Status Accept(NodePass *p, bool *modified) override;
+
+  virtual int32_t ConnectorSize() const { return child_[0]->ConnectorSize(); }
+
+  virtual int32_t ConnectorCapacity() const { return child_[0]->ConnectorCapacity(); }
+
  private:
-  int32_t max_repeats_;                               // The number of repeats that the user requested
-  int32_t repeat_count_;                              // A counter for the current number of executed repeats
-  std::vector<std::shared_ptr<DatasetOp>> leaf_ops_;  // List of leaf operators underneath this repeat.
+  int32_t max_repeats_;                              // The number of repeats that the user requested
+  int32_t repeat_count_;                             // A counter for the current number of executed repeats
+  std::vector<std::shared_ptr<DatasetOp>> eoe_ops_;  // List of operators that can generate EOE underneath this repeat.
 };
 }  // namespace dataset
 }  // namespace mindspore

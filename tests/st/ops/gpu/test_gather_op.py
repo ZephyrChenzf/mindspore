@@ -13,12 +13,13 @@
 # limitations under the License.
 # ============================================================================
 
+import numpy as np
 import pytest
+
+import mindspore.context as context
+import mindspore.nn as nn
 from mindspore import Tensor
 from mindspore.ops import operations as P
-import mindspore.nn as nn
-import numpy as np
-import mindspore.context as context
 
 
 class GatherNet(nn.Cell):
@@ -912,16 +913,16 @@ class GatherNet2(nn.Cell):
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
 def test_gather2():
-    x = Tensor(np.array([[4., 5., 4., 1., 5., ],
-                         [4., 9., 5., 6., 4., ],
-                         [9., 8., 4., 3., 6., ],
-                         [0., 4., 2., 2., 8., ],
-                         [1., 8., 6., 2., 8., ],
-                         [8., 1., 9., 7., 3., ],
-                         [7., 9., 2., 5., 7., ],
-                         [9., 8., 6., 8., 5., ],
-                         [3., 7., 2., 7., 4., ],
-                         [4., 2., 8., 2., 9., ]]
+    x = Tensor(np.array([[4., 5., 4., 1., 5.,],
+                         [4., 9., 5., 6., 4.,],
+                         [9., 8., 4., 3., 6.,],
+                         [0., 4., 2., 2., 8.,],
+                         [1., 8., 6., 2., 8.,],
+                         [8., 1., 9., 7., 3.,],
+                         [7., 9., 2., 5., 7.,],
+                         [9., 8., 6., 8., 5.,],
+                         [3., 7., 2., 7., 4.,],
+                         [4., 2., 8., 2., 9.,]]
                         ).astype(np.float32))
 
     indices = Tensor(np.array([[4000, 1, 300000]]).astype(np.int32))

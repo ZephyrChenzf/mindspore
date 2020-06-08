@@ -35,7 +35,7 @@ class FlattenGpuFwdKernel : public GpuKernel {
   const std::vector<size_t> &GetWorkspaceSizeList() const override { return workspace_size_list_; }
 
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &,
-              const std::vector<AddressPtr> &outputs, uintptr_t stream_ptr) override {
+              const std::vector<AddressPtr> &outputs, void *stream_ptr) override {
     T *input = GetDeviceAddress<T>(inputs, 0);
     T *output = GetDeviceAddress<T>(outputs, 0);
     cudaError_t ret =
@@ -48,14 +48,10 @@ class FlattenGpuFwdKernel : public GpuKernel {
   }
   bool Init(const CNodePtr &kernel_node) override {
     auto shape = AnfAlgo::GetPrevNodeOutputInferShape(kernel_node, 0);
+    input_size_ = sizeof(T);
     for (size_t i = 0; i < shape.size(); ++i) {
-      if (input_size_ == 0) {
-        input_size_ = 1;
-      }
       input_size_ *= shape[i];
     }
-    input_size_ = input_size_ * sizeof(T);
-
     InitSizeLists();
     return true;
   }

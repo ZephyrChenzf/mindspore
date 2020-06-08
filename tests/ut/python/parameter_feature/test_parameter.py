@@ -13,16 +13,17 @@
 # limitations under the License.
 # ============================================================================
 import numpy as np
+
 import mindspore.context as context
+import mindspore.ops.composite as C
 from mindspore import Tensor, Parameter
 from mindspore.nn import Cell
 from mindspore.ops import operations as P
-import mindspore.ops.composite as C
 
-context.set_context(mode=context.GRAPH_MODE)
+context.set_context(mode=context.GRAPH_MODE, save_graphs=True)
+
 
 def test_parser_three_default_mixed_args_subnet():
-
     class SubNetDefaultMixedArgs(Cell):
         def __init__(self):
             super().__init__()
@@ -49,13 +50,14 @@ def test_parser_three_default_mixed_args_subnet():
     assert net(tensor1, tensor2) == tensor1
 
 
+# pylint: disable=keyword-arg-before-vararg
 def test_net_vararg_kwonlyarg_kwarg():
     class FirstNet(Cell):
         def __init__(self):
             super(FirstNet, self).__init__()
             self.net = SecondNet()
 
-        def construct(self, x=1, z=2+2+4, y=3):
+        def construct(self, x=1, z=2 + 2 + 4, y=3):
             c = self.net(22, 33, x, y, z, 2, 3, 4, 5, key1=10, key2=20, key3=30, key4=40)
             return c
 
@@ -74,13 +76,15 @@ def test_net_vararg_kwonlyarg_kwarg():
     net = FirstNet()
     net()
 
+
+# pylint: disable=keyword-arg-before-vararg
 def test_net_vararg_normal_input():
     class FirstNet(Cell):
         def __init__(self):
             super(FirstNet, self).__init__()
             self.net = SecondNet()
 
-        def construct(self, x=1, z=2+2+4, y=3):
+        def construct(self, x=1, z=2 + 2 + 4, y=3):
             c = self.net(22, 33, x, y, z, 2, 3, 4, 5, key1=10, key2=20, key3=30, key4=40)
             return c
 
@@ -95,9 +99,11 @@ def test_net_vararg_normal_input():
             d = var[0] * var[1] * var[2] * var[3]
             e = key1 - key2 - kwargs["key3"] + kwargs["key4"]
             return a + b + c + d + e
+
     x = Tensor(np.ones((2, 3, 4), np.int32))
     net = FirstNet()
     net(x, x, x)
+
 
 def test_prim_vararg_kwonlyarg():
     class FirstNet(Cell):
@@ -201,9 +207,11 @@ def test_net_variable_and_weights():
     z = Tensor(np.ones((4,), np.float32))
     net(x, y, z)
 
+
 def test_net_vargs_expand():
     class InputBackward(Cell):
         """ InputBackward definition """
+
         def __init__(self, network, c1=None, c2=None):
             super(InputBackward, self).__init__()
             self.network = network
@@ -214,9 +222,11 @@ def test_net_vargs_expand():
 
         def construct(self, *inputs):
             return self.grad(self.network)(*inputs)
+
     class AddNet(Cell):
         def __init__(self):
             super(AddNet, self).__init__()
+
         def construct(self, x, y):
             return x + y
 
@@ -227,3 +237,47 @@ def test_net_vargs_expand():
 
     net.set_train()
     net(x, y, sens)
+
+
+def test_mixed_precision_const_parameter():
+    class NetLoss(Cell):
+        def __init__(self):
+            super(NetLoss, self).__init__()
+            self.shape = P.Shape()
+            self.up_sample1 = P.ResizeBilinear((14, 14))
+            self.up_sample2 = P.ResizeBilinear((28, 28))
+            self.up_sample3 = P.ResizeBilinear((36, 36))
+
+        def construct(self, x, y, z, *args):
+            ret = 0
+            if args[0] == self.shape(z)[2]:
+                if args[0] == 14:
+                    ret = self.up_sample1(y) + x
+                elif args[0] == 28:
+                    ret = self.up_sample2(y) - x
+                else:
+                    ret = x / y
+            else:
+                ret = x * y
+            ret = ret * z
+            return ret
+
+    class NetMain(Cell):
+        def __init__(self, loss_fn):
+            super(NetMain, self).__init__()
+            self.loss_fn = loss_fn
+            self.shape = P.Shape()
+
+        def construct(self, x, y, z):
+            size_x = self.shape(x)[2]
+            size_y = self.shape(y)[2]
+            ret = self.loss_fn(x, y, z, size_x, size_y)
+            return ret
+
+    loss_fn = NetLoss()
+    net = NetMain(loss_fn)
+    net.add_flags_recursive(fp32=True)
+    x = Tensor(np.ones((1, 3, 28, 28), np.float32))
+    y = Tensor(np.ones((1, 3, 14, 14), np.float32))
+    z = Tensor(np.ones((1, 3, 28, 28), np.float32))
+    _ = net(x, y, z)

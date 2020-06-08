@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2020 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,20 +16,21 @@
 
 #include "parallel/graph_util/get_parallel_info.h"
 
-#include <string>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
-#include "parallel/tensor_layout/tensor_layout.h"
-#include "parallel/strategy.h"
-#include "ir/func_graph.h"
 #include "common/utils.h"
+#include "ir/func_graph.h"
+#include "parallel/ops_info/operator_info.h"
 #include "parallel/graph_util/graph_info.h"
+#include "parallel/strategy.h"
+#include "parallel/tensor_layout/tensor_layout.h"
 
 namespace mindspore {
 namespace parallel {
-py::dict GetParameterLayout(const FuncGraphPtr& graph) {
+py::dict GetParameterLayout(const FuncGraphPtr &graph) {
   MS_EXCEPTION_IF_NULL(graph);
   py::dict dict;
   std::vector<AnfNodePtr> graph_params = graph->parameters();
@@ -42,7 +43,8 @@ py::dict GetParameterLayout(const FuncGraphPtr& graph) {
     } else {
       auto device_arrangement = tensor_layout->device_arrangement().array();
       auto tensor_map = tensor_layout->tensor_map().array();
-      std::pair<std::vector<int32_t>, std::vector<int32_t>> layout(device_arrangement, tensor_map);
+      auto slice_shape = tensor_layout->slice_shape().array();
+      std::vector<std::vector<int32_t>> layout = {device_arrangement, tensor_map, slice_shape};
       dict[py::str(name)] = layout;
       MS_LOG(INFO) << "GetParameterLayout name = " << name << ", layout " << tensor_layout->ToString();
     }
@@ -50,7 +52,7 @@ py::dict GetParameterLayout(const FuncGraphPtr& graph) {
   return dict;
 }
 
-py::dict GetCNodeStrategy(const FuncGraphPtr& graph) {
+py::dict GetCNodeStrategy(const FuncGraphPtr &graph) {
   MS_EXCEPTION_IF_NULL(graph);
   py::dict dict;
   auto ret = graph->get_return();
@@ -75,7 +77,7 @@ py::dict GetCNodeStrategy(const FuncGraphPtr& graph) {
   return dict;
 }
 
-py::dict GetAllreduceFusion(const FuncGraphPtr& graph) {
+py::dict GetAllreduceFusion(const FuncGraphPtr &graph) {
   MS_EXCEPTION_IF_NULL(graph);
   py::dict dict;
   auto allreduce_prim_list = FindPrimtive(graph, ALL_REDUCE);

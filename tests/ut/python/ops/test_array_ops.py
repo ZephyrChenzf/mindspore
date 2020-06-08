@@ -15,19 +15,19 @@
 """ test array ops """
 import functools
 import numpy as np
+import pytest
+from mindspore._c_expression import signature_dtype as sig_dtype
+from mindspore._c_expression import signature_kind as sig_kind
+from mindspore._c_expression import signature_rw as sig_rw
+
 import mindspore as ms
 from mindspore import Tensor
+from mindspore.common import dtype as mstype
 from mindspore.nn import Cell
 from mindspore.ops import operations as P
-from mindspore.ops import functional as F
-from mindspore.ops import composite as C
 from mindspore.ops import prim_attr_register
-from mindspore.ops.primitive import Primitive, PrimitiveWithInfer
-from mindspore.common.dtype import get_py_obj_dtype
-from mindspore._c_expression import signature_dtype as sig_dtype
-from mindspore._c_expression import signature_rw as sig_rw
-from mindspore._c_expression import signature_kind as sig_kind
-
+from mindspore.ops.primitive import PrimitiveWithInfer
+import mindspore.context as context
 from ..ut_filter import non_graph_engine
 from ....mindspore_test_framework.mindspore_test import mindspore_test
 from ....mindspore_test_framework.pipeline.forward.compile_forward \
@@ -97,18 +97,17 @@ def test_select():
     assert np.all(output.asnumpy() == expect)
 
 
-def test_scalar_cast_grad():
-    """ test_scalar_cast_grad """
-    input_x = 255.5
-    input_t = get_py_obj_dtype(ms.int8)
-
-    def fx_cast(x):
-        output = F.scalar_cast(x, input_t)
-        return output
-
-    gfn = C.grad(fx_cast)(input_x)
-    expect_dx = 1
-    assert gfn == expect_dx
+def test_argmin_invalid_output_type():
+    P.Argmin(-1, mstype.int64)
+    P.Argmin(-1, mstype.int32)
+    with pytest.raises(TypeError):
+        P.Argmin(-1, mstype.float32)
+    with pytest.raises(TypeError):
+        P.Argmin(-1, mstype.float64)
+    with pytest.raises(TypeError):
+        P.Argmin(-1, mstype.uint8)
+    with pytest.raises(TypeError):
+        P.Argmin(-1, mstype.bool_)
 
 
 class CustomOP(PrimitiveWithInfer):
@@ -149,9 +148,9 @@ class CustNet1(Cell):
         self.float1 = 5.1
 
     def construct(self):
-        x =self.op(self.t1, self.t1, self.int1,
-                   self.float1, self.int1, self.float1,
-                   self.t2, self.t1, self.int1)
+        x = self.op(self.t1, self.t1, self.int1,
+                    self.float1, self.int1, self.float1,
+                    self.t2, self.t1, self.int1)
         return x
 
 
@@ -207,6 +206,95 @@ class MathBinaryNet2(Cell):
         return self.logic_or(ret_less_equal, ret_greater)
 
 
+class BatchToSpaceNet(Cell):
+    def __init__(self):
+        super(BatchToSpaceNet, self).__init__()
+        block_size = 2
+        crops = [[0, 0], [0, 0]]
+        self.batch_to_space = P.BatchToSpace(block_size, crops)
+
+    def construct(self, x):
+        return self.batch_to_space(x)
+
+
+class SpaceToBatchNet(Cell):
+    def __init__(self):
+        super(SpaceToBatchNet, self).__init__()
+        block_size = 2
+        paddings = [[0, 0], [0, 0]]
+        self.space_to_batch = P.SpaceToBatch(block_size, paddings)
+
+    def construct(self, x):
+        return self.space_to_batch(x)
+
+
+class PackNet(Cell):
+    def __init__(self):
+        super(PackNet, self).__init__()
+        self.pack = P.Pack()
+
+    def construct(self, x):
+        return self.pack((x, x))
+
+
+class UnpackNet(Cell):
+    def __init__(self):
+        super(UnpackNet, self).__init__()
+        self.unpack = P.Unpack()
+
+    def construct(self, x):
+        return self.unpack(x)
+class SpaceToDepthNet(Cell):
+    def __init__(self):
+        super(SpaceToDepthNet, self).__init__()
+        block_size = 2
+        self.space_to_depth = P.SpaceToDepth(block_size)
+
+    def construct(self, x):
+        return self.space_to_depth(x)
+
+
+class DepthToSpaceNet(Cell):
+    def __init__(self):
+        super(DepthToSpaceNet, self).__init__()
+        block_size = 2
+        self.depth_to_space = P.DepthToSpace(block_size)
+
+    def construct(self, x):
+        return self.depth_to_space(x)
+
+
+class BatchToSpaceNDNet(Cell):
+    def __init__(self):
+        super(BatchToSpaceNDNet, self).__init__()
+        block_shape = [2, 2]
+        crops = [[0, 0], [0, 0]]
+        self.batch_to_space_nd = P.BatchToSpaceND(block_shape, crops)
+
+    def construct(self, x):
+        return self.batch_to_space_nd(x)
+
+
+class SpaceToBatchNDNet(Cell):
+    def __init__(self):
+        super(SpaceToBatchNDNet, self).__init__()
+        block_shape = [2, 2]
+        paddings = [[0, 0], [0, 0]]
+        self.space_to_batch_nd = P.SpaceToBatchND(block_shape, paddings)
+
+    def construct(self, x):
+        return self.space_to_batch_nd(x)
+
+
+class ConfusionMatrixNet(Cell):
+    def __init__(self):
+        super(ConfusionMatrixNet, self).__init__()
+        self.confusion_matrix = P.ConfusionMatrix(4, "int32")
+
+    def construct(self, x, y):
+        return self.confusion_matrix(x, y)
+
+
 test_case_array_ops = [
     ('CustNet1', {
         'block': CustNet1(),
@@ -223,6 +311,33 @@ test_case_array_ops = [
     ('MathBinaryNet2', {
         'block': MathBinaryNet2(),
         'desc_inputs': [Tensor(np.ones([2, 2]), dtype=ms.int32)]}),
+    ('BatchToSpaceNet', {
+        'block': BatchToSpaceNet(),
+        'desc_inputs': [Tensor(np.array([[[[1]]], [[[2]]], [[[3]]], [[[4]]]]).astype(np.float16))]}),
+    ('SpaceToBatchNet', {
+        'block': SpaceToBatchNet(),
+        'desc_inputs': [Tensor(np.array([[[[1, 2], [3, 4]]]]).astype(np.float16))]}),
+    ('PackNet', {
+        'block': PackNet(),
+        'desc_inputs': [Tensor(np.array([[[1, 2], [3, 4]]]).astype(np.float16))]}),
+    ('UnpackNet', {
+        'block': UnpackNet(),
+        'desc_inputs': [Tensor(np.array([[1, 2], [3, 4]]).astype(np.float16))]}),
+    ('SpaceToDepthNet', {
+        'block': SpaceToDepthNet(),
+        'desc_inputs': [Tensor(np.random.rand(1, 3, 2, 2).astype(np.float16))]}),
+    ('DepthToSpaceNet', {
+        'block': DepthToSpaceNet(),
+        'desc_inputs': [Tensor(np.random.rand(1, 12, 1, 1).astype(np.float16))]}),
+    ('SpaceToBatchNDNet', {
+        'block': SpaceToBatchNDNet(),
+        'desc_inputs': [Tensor(np.random.rand(1, 1, 2, 2).astype(np.float16))]}),
+    ('BatchToSpaceNDNet', {
+        'block': BatchToSpaceNDNet(),
+        'desc_inputs': [Tensor(np.random.rand(4, 1, 1, 1).astype(np.float16))]}),
+    ('ConfusionMatrixNet', {
+        'block': ConfusionMatrixNet(),
+        'desc_inputs': [Tensor([0, 1, 1, 3], ms.int32), Tensor([0, 1, 1, 3], ms.int32)]}),
 ]
 
 test_case_lists = [test_case_array_ops]
@@ -231,7 +346,6 @@ test_exec_case = functools.reduce(lambda x, y: x + y, test_case_lists)
 # pytest tests/python/ops/test_ops.py::test_backward -k LayerNorm
 
 
-import mindspore.context as context
 
 @non_graph_engine
 @mindspore_test(pipeline_for_compile_forward_ge_graph_for_case_by_case_config)
@@ -242,13 +356,13 @@ def test_exec():
 
 raise_set = [
     ('Squeeze_1_Error', {
-        'block': (lambda x: P.Squeeze(axis=1.2), {'exception': ValueError}),
+        'block': (lambda x: P.Squeeze(axis=1.2), {'exception': TypeError}),
         'desc_inputs': [Tensor(np.ones(shape=[3, 1, 5]))]}),
     ('Squeeze_2_Error', {
-        'block': (lambda x: P.Squeeze(axis=((1.2, 1.3))), {'exception': ValueError}),
+        'block': (lambda x: P.Squeeze(axis=((1.2, 1.3))), {'exception': TypeError}),
         'desc_inputs': [Tensor(np.ones(shape=[3, 1, 5]))]}),
     ('ReduceSum_Error', {
-        'block': (lambda x: P.ReduceSum(keep_dims=1), {'exception': ValueError}),
+        'block': (lambda x: P.ReduceSum(keep_dims=1), {'exception': TypeError}),
         'desc_inputs': [Tensor(np.ones(shape=[3, 1, 5]))]}),
 ]
 

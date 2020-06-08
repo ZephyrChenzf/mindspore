@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from mindspore.train import Model, ParallelMode
+import numpy as np
+
+import mindspore as ms
+import mindspore.nn as nn
+from mindspore import Tensor, context
+from mindspore.common.api import _executor
 from mindspore.nn.loss import SoftmaxCrossEntropyWithLogits
 from mindspore.nn.optim.momentum import Momentum
-from mindspore import Tensor, context
-import mindspore as ms
-import numpy as np
-import mindspore.nn as nn
-from tests.dataset_mock import MindData
-from mindspore import context
-from mindspore.common.api import _executor
 from mindspore.parallel import _cost_model_context as cost_model_context
-
+from mindspore.parallel._auto_parallel_context import auto_parallel_context
+from mindspore.train import Model, ParallelMode
+from tests.dataset_mock import MindData
 
 
 class Dataset(MindData):
@@ -86,6 +86,7 @@ class DenseNet2(nn.Cell):
         z = self.fc8(w)
         return z
 
+
 class SimpleDMLNet(nn.Cell):
     def __init__(self, net1, net2):
         super(SimpleDMLNet, self).__init__()
@@ -103,9 +104,11 @@ def train_common(net):
     learning_rate = 0.1
     momentum = 0.9
     epoch_size = 2
-    device_num=4
+    device_num = 4
     context.reset_auto_parallel_context()
-    context.set_auto_parallel_context(parallel_mode=ParallelMode.SEMI_AUTO_PARALLEL, device_num=device_num, parameter_broadcast=False)
+    auto_parallel_context().set_enable_all_reduce_fusion(enable_all_reduce_fusion=True)
+    context.set_auto_parallel_context(parallel_mode=ParallelMode.SEMI_AUTO_PARALLEL, device_num=device_num,
+                                      parameter_broadcast=False)
     context.set_context(mode=context.GRAPH_MODE)
 
     predict = Tensor(np.ones([batch_size, 128]), dtype=ms.float32)
@@ -127,52 +130,56 @@ def test_allreduce_fusion_parameters():
     cost_model_context.reset_cost_model_context()
     cost_model_context.set_cost_model_context(costmodel_allreduce_fusion_algorithm=2)
     algorithm = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_algorithm')
-    assert (algorithm == 2)
+    assert algorithm == 2
     cost_model_context.set_cost_model_context(costmodel_allreduce_fusion_algorithm=1)
     algorithm = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_algorithm')
-    assert (algorithm == 1)
+    assert algorithm == 1
     cost_model_context.reset_cost_model_context()
     algorithm = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_algorithm')
-    assert (algorithm == 0)
+    assert algorithm == 0
 
     cost_model_context.set_cost_model_context(costmodel_allreduce_fusion_times=2)
     fusion_times = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_times')
-    assert (fusion_times == 2)
+    assert fusion_times == 2
 
     cost_model_context.set_cost_model_context(costmodel_allreduce_fusion_tail_percent=0.2)
     tail_percent = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_tail_percent')
-    assert (tail_percent == 0.2)
+    assert tail_percent == 0.2
     cost_model_context.reset_cost_model_context()
     tail_percent = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_tail_percent')
-    assert (tail_percent == 0.1)
+    assert tail_percent == 0.1
 
     cost_model_context.set_cost_model_context(costmodel_allreduce_fusion_tail_time=0.2)
     tail_time = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_tail_time')
-    assert (tail_time == 0.2)
+    assert tail_time == 0.2
     cost_model_context.reset_cost_model_context()
     tail_time = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_tail_time')
-    assert (tail_time == 0.1)
+    assert tail_time == 0.1
 
     cost_model_context.set_cost_model_context(costmodel_allreduce_fusion_allreduce_inherent_time=0.2)
-    allreduce_inherent_time = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_allreduce_inherent_time')
-    assert (allreduce_inherent_time == 0.2)
+    allreduce_inherent_time = cost_model_context.get_cost_model_context(
+        'costmodel_allreduce_fusion_allreduce_inherent_time')
+    assert allreduce_inherent_time == 0.2
     cost_model_context.reset_cost_model_context()
-    allreduce_inherent_time = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_allreduce_inherent_time')
-    assert (allreduce_inherent_time == 0.1)
+    allreduce_inherent_time = cost_model_context.get_cost_model_context(
+        'costmodel_allreduce_fusion_allreduce_inherent_time')
+    assert allreduce_inherent_time == 0.1
 
     cost_model_context.set_cost_model_context(costmodel_allreduce_fusion_allreduce_bandwidth=0.2)
     allreduce_bandwidth = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_allreduce_bandwidth')
-    assert (allreduce_bandwidth == 0.2)
+    assert allreduce_bandwidth == 0.2
     cost_model_context.reset_cost_model_context()
     allreduce_bandwidth = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_allreduce_bandwidth')
-    assert (allreduce_bandwidth == 0.1)
+    assert allreduce_bandwidth == 0.1
 
     cost_model_context.set_cost_model_context(costmodel_allreduce_fusion_computation_time_parameter=0.2)
-    computation_time_parameter = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_computation_time_parameter')
-    assert (computation_time_parameter == 0.2)
+    computation_time_parameter = cost_model_context.get_cost_model_context(
+        'costmodel_allreduce_fusion_computation_time_parameter')
+    assert computation_time_parameter == 0.2
     cost_model_context.reset_cost_model_context()
-    computation_time_parameter = cost_model_context.get_cost_model_context('costmodel_allreduce_fusion_computation_time_parameter')
-    assert (computation_time_parameter == 0.1)
+    computation_time_parameter = cost_model_context.get_cost_model_context(
+        'costmodel_allreduce_fusion_computation_time_parameter')
+    assert computation_time_parameter == 0.1
 
 
 def test_allreduce_fusion1():
@@ -193,7 +200,7 @@ def test_allreduce_fusion1():
                    'backbone2.fc2.weight': 1,
                    'backbone2.fc1.weight': 1,
                    'backbone1.fc1.weight': 1}
-    assert (allreduce_fusion_dict == expect_dict)
+    assert allreduce_fusion_dict == expect_dict
     cost_model_context.reset_cost_model_context()
 
 
@@ -206,7 +213,7 @@ def test_allreduce_fusion2():
     net = SimpleDMLNet(DenseNet1(has_bias=False, activation=None), DenseNet2(has_bias=False, activation=None))
     allreduce_fusion_dict = train_common(net)
     expect_dict = {}
-    assert (allreduce_fusion_dict == expect_dict)
+    assert allreduce_fusion_dict == expect_dict
     cost_model_context.reset_cost_model_context()
 
 
@@ -232,7 +239,7 @@ def test_allreduce_fusion3():
                    'backbone1.fc2.weight': 2,
                    'backbone1.fc1.bias': 2,
                    'backbone1.fc1.weight': 2}
-    assert (allreduce_fusion_dict == expect_dict)
+    assert allreduce_fusion_dict == expect_dict
     cost_model_context.reset_cost_model_context()
 
 
@@ -259,7 +266,7 @@ def test_allreduce_fusion4():
                    'backbone1.fc2.weight': 1,
                    'backbone1.fc1.weight': 1}
 
-    assert (allreduce_fusion_dict == expect_dict)
+    assert allreduce_fusion_dict == expect_dict
     cost_model_context.reset_cost_model_context()
 
 
@@ -275,7 +282,7 @@ def test_allreduce_fusion5():
     expect_dict = {'backbone2.fc8.weight': 3,
                    'backbone2.fc7.weight': 3,
                    'backbone2.fc6.weight': 3,
-                   'backbone2.fc5.weight': 2,
+                   'backbone2.fc5.weight': 3,
                    'backbone2.fc4.weight': 2,
                    'backbone2.fc3.weight': 2,
                    'backbone2.fc2.weight': 1,
@@ -283,12 +290,11 @@ def test_allreduce_fusion5():
                    'backbone1.fc8.weight': 3,
                    'backbone1.fc7.weight': 3,
                    'backbone1.fc6.weight': 3,
-                   'backbone1.fc5.weight': 2,
+                   'backbone1.fc5.weight': 3,
                    'backbone1.fc4.weight': 2,
                    'backbone1.fc3.weight': 2,
                    'backbone1.fc2.weight': 1,
                    'backbone1.fc1.weight': 1,}
 
-    assert (allreduce_fusion_dict == expect_dict)
+    assert allreduce_fusion_dict == expect_dict
     cost_model_context.reset_cost_model_context()
-

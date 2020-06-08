@@ -81,10 +81,10 @@ bool IsTrivial(const FuncGraphPtr &fg, AnfNodePtr) {
 }
 
 bool IsUniqueUse(const FuncGraphPtr &fg, AnfNodePtr) {
-  auto &users = fg->func_graph_users();
+  auto &cnodes = fg->func_graph_cnodes_index();
   int n_use =
-    std::accumulate(users.begin(), users.end(), 0,
-                    [](int sum, const std::pair<const FuncGraphPtr, int> &item) { return sum + item.second; });
+    std::accumulate(cnodes.begin(), cnodes.end(), 0,
+                    [](int sum, const std::pair<const CNodeIndexPairPtr, int> &item) { return sum + item.second; });
   return n_use == 1;
 }
 
@@ -167,7 +167,8 @@ class InlinerBase : public AnfVisitor {
     auto params = fg->parameters();
     auto old_size = params.size();
     if (old_size != new_params.size()) {
-      MS_LOG(EXCEPTION) << "Parameter size not match.";
+      MS_LOG(EXCEPTION) << "Parameter size not match." << old_size << " new " << new_params.size()
+                        << fg->output()->DebugString(10);
     }
     for (size_t i = 0; i < old_size; i++) {
       (void)mng->Replace(params[i], new_params[i]);

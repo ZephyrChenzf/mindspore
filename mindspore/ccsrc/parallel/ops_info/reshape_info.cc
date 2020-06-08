@@ -22,12 +22,13 @@
 #include "parallel/device_manager.h"
 #include "parallel/device_matrix.h"
 #include "parallel/step_parallel.h"
+#include "parallel/auto_parallel/graph_costmodel.h"
 #include "utils/convert_utils.h"
 #include "utils/log_adapter.h"
 
 namespace mindspore {
 namespace parallel {
-Status ReshapeInfo::CheckStrategy(const StrategyPtr& strategy) {
+Status ReshapeInfo::CheckStrategy(const StrategyPtr &strategy) {
   if (CheckStrategyValue(strategy, inputs_shape_, is_auto_parallel_) != SUCCESS) {
     if (is_auto_parallel_) {
       MS_LOG(DEBUG) << name_ << ": Invalid strategy.";
@@ -45,26 +46,6 @@ Status ReshapeInfo::CheckStrategy(const StrategyPtr& strategy) {
       MS_LOG(ERROR) << name_ << ": Invalid strategy size " << strategy_size;
     }
     return FAILED;
-  }
-  std::vector<Dimensions> stra = strategy->GetInputDim();
-  for (size_t i = 0; i < strategy_size; ++i) {
-    Shape sub_strategy = stra.at(i);
-    size_t strategy_len = sub_strategy.size();
-    bool flag = false;
-    for (size_t j = 0; j < strategy_len; ++j) {
-      int32_t strategy_value = sub_strategy.at(j);
-      if (strategy_value > 1) {
-        if (flag) {
-          if (is_auto_parallel_) {
-            MS_LOG(DEBUG) << name_ << ": Only support batch parallel strategy.";
-          } else {
-            MS_LOG(ERROR) << name_ << ": Only support batch parallel strategy.";
-          }
-          return FAILED;
-        }
-        flag = true;
-      }
-    }
   }
   return SUCCESS;
 }
@@ -137,7 +118,7 @@ Status ReshapeInfo::GetParameterInput() {
     return FAILED;
   }
 
-  for (auto& element : elements) {
+  for (auto &element : elements) {
     MS_EXCEPTION_IF_NULL(element);
     if (element->isa<Int32Imm>()) {
       int32_t axis = element->cast<Int32ImmPtr>()->value();
@@ -157,9 +138,9 @@ Status ReshapeInfo::ComputeReplaceOp() {
     MS_LOG(ERROR) << name_ << ": tensor_redistribution init failed.";
     return FAILED;
   }
-  MS_LOG(INFO) << name_ << ": input " << input_layout_.ToString();
-  MS_LOG(INFO) << name_ << ": output " << output_layout_.ToString();
-  MS_LOG(INFO) << name_ << ": dev_list " << dev_list.size();
+  MS_LOG(DEBUG) << name_ << ": input " << input_layout_.ToString();
+  MS_LOG(DEBUG) << name_ << ": output " << output_layout_.ToString();
+  MS_LOG(DEBUG) << name_ << ": dev_list " << dev_list.size();
   RedistributionOpListPtr redistribution_oplist_ptr = tensor_redistribution.InferTensorRedistributionOperatorList();
   if (redistribution_oplist_ptr == nullptr) {
     MS_LOG(ERROR) << name_ << "InferTensorRedistribution failed.";
@@ -167,7 +148,7 @@ Status ReshapeInfo::ComputeReplaceOp() {
   }
   replace_op_ = redistribution_oplist_ptr->first;
   replace_op_info_ = redistribution_oplist_ptr->second;
-  MS_LOG(INFO) << name_ << ": replace op size = " << replace_op_.size();
+  MS_LOG(DEBUG) << name_ << ": replace op size = " << replace_op_.size();
   return SUCCESS;
 }
 
@@ -216,7 +197,7 @@ Strategys ReshapeInfo::GetOutputsStrategy() {
   return outputs_strategy;
 }
 
-Status ReshapeInfo::InferTensorLayout(TensorLayouts* inputs_layout, TensorLayouts* outputs_layout) {
+Status ReshapeInfo::InferTensorLayout(TensorLayouts *inputs_layout, TensorLayouts *outputs_layout) {
   if (inputs_layout == nullptr || outputs_layout == nullptr) {
     MS_LOG(ERROR) << name_ << ": InferTensorLayout: the layout is null.";
     return FAILED;
@@ -302,7 +283,7 @@ void ReshapeInfo::InferTensorInfoByLayout() {
  */
 Status ReshapeInfo::GetAttrs() { return GetParameterInput(); }
 
-void ReshapeInfo::device_number(const StrategyPtr& strategy) {
+void ReshapeInfo::device_number(const StrategyPtr &strategy) {
   int32_t stage = 0;
   if (strategy != nullptr) {
     stage = strategy->GetInputStage();
@@ -313,7 +294,7 @@ void ReshapeInfo::device_number(const StrategyPtr& strategy) {
   MS_ASSERT(dev_num_ > 0);
 }
 
-Status ReshapeInfo::InferDefaultLayout(const Shape& shape, TensorLayout* const layout) {
+Status ReshapeInfo::InferDefaultLayout(const Shape &shape, TensorLayout *const layout) {
   std::vector<int32_t> tensor_map_index;
   for (size_t i = 0; i < shape.size(); i++) {
     tensor_map_index.push_back(MAP_NONE);
@@ -326,7 +307,7 @@ Status ReshapeInfo::InferDefaultLayout(const Shape& shape, TensorLayout* const l
   return Status::SUCCESS;
 }
 
-Status ReshapeInfo::Init(const StrategyPtr& strategy) {
+Status ReshapeInfo::Init(const StrategyPtr &strategy) {
   ResetQueueMember();
   device_number(strategy);
   if (strategy) {
@@ -375,7 +356,7 @@ Status ReshapeInfo::Init(const StrategyPtr& strategy) {
   return SUCCESS;
 }
 
-Status ReshapeInfo::InitForCostModel(const StrategyPtr& strategy) {
+Status ReshapeInfo::InitForCostModel(const StrategyPtr &strategy) {
   if (InitForCostModelWithAutoRepeatCalc(strategy) != SUCCESS) {
     if (is_auto_parallel_) {
       MS_LOG(DEBUG) << name_ << ": Init for cost model failed.";
@@ -389,7 +370,7 @@ Status ReshapeInfo::InitForCostModel(const StrategyPtr& strategy) {
   return SUCCESS;
 }
 
-Status ReshapeInfo::SetCostUnderStrategy(const mindspore::parallel::StrategyPtr& strategy) {
+Status ReshapeInfo::SetCostUnderStrategy(const mindspore::parallel::StrategyPtr &strategy) {
   if (SetCostUnderStrategyBase(strategy) != SUCCESS) {
     if (is_auto_parallel_) {
       MS_LOG(DEBUG) << name_ << ": Set cost under strategy failed.";
@@ -400,6 +381,41 @@ Status ReshapeInfo::SetCostUnderStrategy(const mindspore::parallel::StrategyPtr&
   }
 
   return SUCCESS;
+}
+
+void ReshapeInfo::SetCostForReshapeWithParameter() {
+  size_t success = 0;
+  for (auto &sp : sp_vector_) {
+    if (SetCostUnderStrategy(sp) == SUCCESS) {
+      success++;
+      MS_LOG(INFO) << name_ << ": Successfully generated " << success << " strategy.";
+      PrintStrategy(sp);
+    }
+  }
+}
+
+void ReshapeInfo::SetCostForReshape(const mindspore::parallel::StrategyPtr &strategy) {
+  MS_EXCEPTION_IF_NULL(strategy);
+  int32_t stage_id = strategy->GetInputStage();
+  double computation_cost =
+    operator_cost()->GetForwardComputationCost(inputs_tensor_info_, outputs_tensor_info_, stage_id);
+  double communication_cost = operator_cost()->GetCommCost(inputs_tensor_info_, outputs_tensor_info_, stage_id);
+  std::shared_ptr<Cost> result = std::make_shared<Cost>(computation_cost, communication_cost);
+  result->communication_without_parameter_ =
+    operator_cost()->GetForwardCommCost(inputs_tensor_info_, outputs_tensor_info_, stage_id);
+  result->communication_with_partial_para_ =
+    result->communication_without_parameter_ +
+    COST_MODEL_GAMMA * (communication_cost - result->communication_without_parameter_);
+
+  // Breaking ties for preferring data parallelization
+  BreakingTiesForPerferringDataParallel(strategy, result);
+  // refine communication cost calculation for practice
+  RefineForPracticalCost(result, false);
+
+  std::shared_ptr<StrategyWithCost> swc =
+    std::make_shared<StrategyWithCost>(strategy, inputs_tensor_info_, outputs_tensor_info_);
+  swc->cost_list.push_back(result);
+  strategy_cost_.emplace_back(swc);
 }
 
 Status ReshapeInfo::GenerateStrategies(int32_t stage_id) {
@@ -413,21 +429,67 @@ Status ReshapeInfo::GenerateStrategies(int32_t stage_id) {
     return FAILED;
   }
   is_auto_parallel_ = true;
-  Shape input0_split(inputs_shape_[0].size(), 0);
-  input0_split[0] = 1;
+  Shape input0_split;
+  (void)input0_split.insert(input0_split.end(), inputs_shape_[0].size(), 1);
   Shapes splittable_inputs = {input0_split};
-  std::vector<StrategyPtr> sp_vector;
-  if (GenerateStrategiesForIndependentInputs(stage_id, inputs_shape_, splittable_inputs, &sp_vector) != SUCCESS) {
+  // strategy used only in the input node is parameter,
+  // in other case, use the input node's output_layout as input_layout.
+  if (GenerateStrategiesForIndependentInputs(stage_id, inputs_shape_, splittable_inputs, &sp_vector_) != SUCCESS) {
     MS_LOG(ERROR) << name_ << ": GenerateStrategiesForIndependentInputs failed.";
     return FAILED;
   }
-  size_t success = 0;
-  for (auto& sp : sp_vector) {
-    if (SetCostUnderStrategy(sp) == SUCCESS) {
-      success++;
-      MS_LOG(INFO) << name_ << ": Successfully generated " << success << " strategy.";
-      PrintStrategy(sp);
+  return SUCCESS;
+}
+
+Status ReshapeInfo::GenetateStrategyCosts(const std::vector<std::shared_ptr<StrategyWithCost>> &pre_stra_costs,
+                                          const std::vector<std::shared_ptr<StrategyWithCost>> &next_stra_costs,
+                                          int32_t out_index, int32_t in_index, bool is_prev_param) {
+  for (auto pre_stra_cost : pre_stra_costs) {
+    std::vector<TensorInfo> pre_out_tensor_infos;
+    if (is_prev_param) {
+      pre_out_tensor_infos = pre_stra_cost->inputs_ptr;
+    } else {
+      pre_out_tensor_infos = pre_stra_cost->outputs_ptr;
     }
+    if (pre_out_tensor_infos.size() <= IntToSize(out_index)) {
+      MS_LOG(ERROR) << "out_index is out of range of the tensor_infos in setting reshape's input_layout";
+      return FAILED;
+    }
+    TensorInfo pre_out_tensor_info = pre_out_tensor_infos[out_index];
+    SetInputLayout(pre_out_tensor_info.tensor_layout());
+    // infer pre_node output strategy from output_layout.
+    Dimensions stra = pre_out_tensor_info.InferStrategy();
+    if (stra.empty()) {
+      MS_LOG(ERROR) << "Infer strategy by tensor_info failed";
+      return FAILED;
+    }
+    std::vector<Dimensions> stra_inputs = {stra};
+    StrategyPtr reshape_stra = std::make_shared<Strategy>(pre_stra_cost->strategy_ptr->GetInputStage(), stra_inputs);
+    if (next_stra_costs.empty()) {
+      if (Init(nullptr) == FAILED) {
+        MS_LOG(ERROR) << "Failure:operator reshape init failed";
+        return FAILED;
+      }
+      SetCostForReshape(reshape_stra);
+      continue;
+    }
+    for (auto next_stra_cost : next_stra_costs) {
+      std::vector<TensorInfo> next_in_tensor_infos = next_stra_cost->inputs_ptr;
+      if (next_in_tensor_infos.size() <= IntToSize(in_index)) {
+        MS_LOG(ERROR) << "in_index is out of range of the tensor_infos in setting reshape's output_layout";
+        return FAILED;
+      }
+      TensorInfo next_in_tensor_info = next_in_tensor_infos[in_index];
+      SetOutputLayout(next_in_tensor_info.tensor_layout());
+      if (Init(nullptr) == FAILED) {
+        MS_LOG(DEBUG) << "Failure:operator reshape init failed";
+        continue;
+      }
+      SetCostForReshape(reshape_stra);
+    }
+  }
+  if (strategy_cost_.empty()) {
+    return FAILED;
   }
   return SUCCESS;
 }

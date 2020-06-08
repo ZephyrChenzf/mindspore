@@ -13,6 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 import numpy as np
+import pytest
 
 import mindspore.dataset as ds
 from mindspore import log as logger
@@ -53,7 +54,7 @@ def test_case_1():
     # apply dataset operations
     data1 = ds.TFRecordDataset(DATA_DIR, SCHEMA_DIR, shuffle=False)
     data1 = data1.map(input_columns=col, output_columns=["out0", "out1"], operations=(lambda x: (x, x + x)),
-                  columns_order=["out0", "out1"])
+                      columns_order=["out0", "out1"])
 
     i = 0
     for item in data1.create_dict_iterator():  # each data is a dictionary
@@ -77,7 +78,7 @@ def test_case_2():
     data1 = ds.TFRecordDataset(DATA_DIR, SCHEMA_DIR, shuffle=False)
 
     data1 = data1.map(input_columns=col, output_columns="out", operations=(lambda x, y: x + y),
-                  columns_order=["out"])
+                      columns_order=["out"])
 
     i = 0
     for item in data1.create_dict_iterator():  # each data is a dictionary
@@ -99,7 +100,7 @@ def test_case_3():
     data1 = ds.TFRecordDataset(DATA_DIR, SCHEMA_DIR, shuffle=False)
 
     data1 = data1.map(input_columns=col, output_columns=["out0", "out1", "out2"],
-                  operations=(lambda x, y: (x, x + y, x + y + 1)), columns_order=["out0", "out1", "out2"])
+                      operations=(lambda x, y: (x, x + y, x + y + 1)), columns_order=["out0", "out1", "out2"])
 
     i = 0
     for item in data1.create_dict_iterator():  # each data is a dictionary
@@ -125,7 +126,7 @@ def test_case_4():
     data1 = ds.TFRecordDataset(DATA_DIR, SCHEMA_DIR, shuffle=False)
 
     data1 = data1.map(input_columns=col, output_columns=["out0", "out1", "out2"], num_parallel_workers=4,
-                  operations=(lambda x, y: (x, x + y, x + y + 1)), columns_order=["out0", "out1", "out2"])
+                      operations=(lambda x, y: (x, x + y, x + y + 1)), columns_order=["out0", "out1", "out2"])
 
     i = 0
     for item in data1.create_dict_iterator():  # each data is a dictionary
@@ -171,7 +172,7 @@ def test_case_6():
     data1 = ds.TFRecordDataset(DATA_DIR, SCHEMA_DIR, shuffle=False)
 
     data1 = data1.map(input_columns="col0", output_columns="out",
-                  operations=[(lambda x: x + x), (lambda x: x + x)])
+                      operations=[(lambda x: x + x), (lambda x: x + x)])
 
     i = 0
     for item in data1.create_dict_iterator():  # each data is a dictionary
@@ -179,6 +180,106 @@ def test_case_6():
         golden = np.array([[i * 4, (i + 1) * 4], [(i + 2) * 4, (i + 3) * 4]])
         assert np.array_equal(item["out"], golden)
         i = i + 4
+
+
+def test_case_7():
+    """
+    Test PyFunc
+    """
+    logger.info("Test 1-1 PyFunc Multiprocess: lambda x : x + x")
+
+    # apply dataset operations
+    data1 = ds.TFRecordDataset(DATA_DIR, SCHEMA_DIR, shuffle=False)
+
+    data1 = data1.map(input_columns="col0", output_columns="out", operations=(lambda x: x + x),
+                      num_parallel_workers=4, python_multiprocessing=True)
+
+    i = 0
+    for item in data1.create_dict_iterator():  # each data is a dictionary
+        # In this test, the dataset is 2x2 sequential tensors
+        golden = np.array([[i * 2, (i + 1) * 2], [(i + 2) * 2, (i + 3) * 2]])
+        assert np.array_equal(item["out"], golden)
+        i = i + 4
+
+
+def test_case_8():
+    """
+    Test PyFunc
+    """
+    logger.info("Test Multiprocess n-m PyFunc : lambda x, y : (x , x + 1, x + y)")
+
+    col = ["col0", "col1"]
+
+    # apply dataset operations
+    data1 = ds.TFRecordDataset(DATA_DIR, SCHEMA_DIR, shuffle=False)
+
+    data1 = data1.map(input_columns=col, output_columns=["out0", "out1", "out2"], num_parallel_workers=4,
+                      operations=(lambda x, y: (x, x + y, x + y + 1)), columns_order=["out0", "out1", "out2"],
+                      python_multiprocessing=True)
+
+    i = 0
+    for item in data1.create_dict_iterator():  # each data is a dictionary
+        # In this test, the dataset is 2x2 sequential tensors
+        golden = np.array([[i, i + 1], [i + 2, i + 3]])
+        assert np.array_equal(item["out0"], golden)
+        golden = np.array([[i * 2, (i + 1) * 2], [(i + 2) * 2, (i + 3) * 2]])
+        assert np.array_equal(item["out1"], golden)
+        golden = np.array([[i * 2 + 1, (i + 1) * 2 + 1], [(i + 2) * 2 + 1, (i + 3) * 2 + 1]])
+        assert np.array_equal(item["out2"], golden)
+        i = i + 4
+
+
+def test_case_9():
+    """
+    Test PyFunc
+    """
+    logger.info("Test multiple 1-1 PyFunc Multiprocess: lambda x : x + x")
+
+    # apply dataset operations
+    data1 = ds.TFRecordDataset(DATA_DIR, SCHEMA_DIR, shuffle=False)
+
+    data1 = data1.map(input_columns="col0", output_columns="out", operations=[(lambda x: x + x), (lambda x: x + 1),
+                                                                              (lambda x: x + 2)],
+                      num_parallel_workers=4, python_multiprocessing=True)
+
+    i = 0
+    for item in data1.create_dict_iterator():  # each data is a dictionary
+        # In this test, the dataset is 2x2 sequential tensors
+        golden = np.array([[i * 2 + 3, (i + 1) * 2 + 3], [(i + 2) * 2 + 3, (i + 3) * 2 + 3]])
+        assert np.array_equal(item["out"], golden)
+        i = i + 4
+
+
+def test_pyfunc_execption():
+    logger.info("Test PyFunc Execption Throw: lambda x : raise Execption()")
+
+    def pyfunc(x):
+        raise Exception("Pyfunc Throw")
+
+    with pytest.raises(RuntimeError) as info:
+        # apply dataset operations
+        data1 = ds.TFRecordDataset(DATA_DIR, SCHEMA_DIR, shuffle=False)
+        data1 = data1.map(input_columns="col0", output_columns="out", operations=pyfunc,
+                          num_parallel_workers=4)
+        for _ in data1:
+            pass
+        assert "Pyfunc Throw" in str(info.value)
+
+
+def skip_test_pyfunc_execption_multiprocess():
+    logger.info("Test Multiprocess PyFunc Execption Throw: lambda x : raise Execption()")
+
+    def pyfunc(x):
+        raise Exception("MP Pyfunc Throw")
+
+    with pytest.raises(RuntimeError) as info:
+        # apply dataset operations
+        data1 = ds.TFRecordDataset(DATA_DIR, SCHEMA_DIR, shuffle=False)
+        data1 = data1.map(input_columns="col0", output_columns="out", operations=pyfunc,
+                          num_parallel_workers=4, python_multiprocessing=True)
+        for _ in data1:
+            pass
+        assert "MP Pyfunc Throw" in str(info.value)
 
 
 if __name__ == "__main__":
@@ -189,3 +290,8 @@ if __name__ == "__main__":
     test_case_4()
     test_case_5()
     test_case_6()
+    test_case_7()
+    test_case_8()
+    test_case_9()
+    test_pyfunc_execption()
+    skip_test_pyfunc_execption_multiprocess()

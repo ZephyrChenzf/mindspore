@@ -17,11 +17,11 @@
 #ifndef MINDSPORE_CCSRC_PARALLEL_AUTO_PARALLEL_COSTMODEL_H_
 #define MINDSPORE_CCSRC_PARALLEL_AUTO_PARALLEL_COSTMODEL_H_
 
-#include <memory>
 #include <algorithm>
-#include <vector>
+#include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 #include "parallel/strategy.h"
 #include "parallel/tensor_layout/tensor_info.h"
 
@@ -44,21 +44,29 @@ using RedistributionOpListPtr = std::shared_ptr<std::pair<OperatorVector, OutPut
 
 struct Cost {
   Cost();
-  Cost(double memory, double commuication, const std::shared_ptr<Decision>& decision_ = nullptr)
-      : memory_cost_(memory), communication_cost_(commuication), decision_ptr_(std::move(decision_)) {
+  Cost(double computation, double commuication, const std::shared_ptr<Decision> &decision_ = nullptr)
+      : computation_cost_(computation), communication_cost_(commuication), decision_ptr_(std::move(decision_)) {
+    memory_with_reuse_ = 0.0;
     communication_without_parameter_ = 0.0;
     communication_with_partial_para_ = 0.0;
     communication_redis_forward_ = 0.0;
     communication_redis_backward_ = 0.0;
+    communication_forward_ = 0.0;
   }
-  double memory_cost_;
-  // 'communication_cost_' includes communications from operators (forward and backward) and edges
+  // 'memory_with_reuse_' calculates the peak memory usage in a training (or inference) phase
+  double memory_with_reuse_;
+  // 'computation_cost_'  models the training time of an iteration in a training phase. Currently, this is calculated
+  // by ONLY forward phase
+  double computation_cost_;
+  // 'communication_cost_' includes communications from operators (forward and backward) and edges (redistribution)
   double communication_cost_;
   // communication_without_parameter_ = communication_cost_ - (backward communication from operators)
   double communication_without_parameter_;
   // communication_with_partial_para_ =
   // communication_without_parameter_ + COST_MODEL_GAMMA * (communication_cost_ - communication_without_parameter_ )
   double communication_with_partial_para_;
+  // communication_forward_ = communication cost from operators (only forward phase) and forward redistribution.
+  double communication_forward_;
   double communication_redis_forward_;
   double communication_redis_backward_;
   std::shared_ptr<Decision> decision_ptr_;
@@ -72,8 +80,8 @@ class StrategyWithCost {
   StrategyWithCost(StrategyPtr strategy, std::vector<TensorInfo> inputs_, std::vector<TensorInfo> outputs_)
       : strategy_ptr(std::move(strategy)), inputs_ptr(std::move(inputs_)), outputs_ptr(std::move(outputs_)) {}
 
-  StrategyWithCost(const StrategyWithCost& swc) = delete;
-  StrategyWithCost(StrategyWithCost&& swc)
+  StrategyWithCost(const StrategyWithCost &swc) = delete;
+  StrategyWithCost(StrategyWithCost &&swc)
       : strategy_ptr(swc.strategy_ptr),
         inputs_ptr(swc.inputs_ptr),
         outputs_ptr(swc.outputs_ptr),
@@ -203,15 +211,14 @@ struct ContractEliminationDecision : public Decision {
  */
 struct TriangleEliminationDecision : public Decision {
   TriangleEliminationDecision(StrategyPtr elimi_stra, CostPtr elimi_op_cost, CostPtr l_edge_cost, CostPtr r_edge_cost,
-                              StrategyPtr left_stra, CostPtr l_node_cost, StrategyPtr right_stra, CostPtr r_node_cost)
+                              StrategyPtr left_stra, CostPtr l_node_cost, StrategyPtr right_stra)
       : eliminated_op_strategy_(std::move(elimi_stra)),
         eliminated_op_cost_(std::move(elimi_op_cost)),
         left_edge_cost_(std::move(l_edge_cost)),
         right_edge_cost_(std::move(r_edge_cost)),
         left_node_strategy_(std::move(left_stra)),
         left_node_cost_(std::move(l_node_cost)),
-        right_node_strategy_(std::move(right_stra)),
-        right_node_cost_(std::move(r_node_cost)) {
+        right_node_strategy_(std::move(right_stra)) {
     type_ = DecisionType::TRIANGLE_ELIMINATION;
   }
 
@@ -222,7 +229,6 @@ struct TriangleEliminationDecision : public Decision {
   StrategyPtr left_node_strategy_;
   CostPtr left_node_cost_;
   StrategyPtr right_node_strategy_;
-  CostPtr right_node_cost_;
   MS_DECLARE_PARENT(TriangleEliminationDecision, Decision);
 };
 
@@ -295,9 +301,10 @@ using StarEliminationDecisionPtr = std::shared_ptr<StarEliminationDecision>;
 using FinalDecisionPtr = std::shared_ptr<FinalDecision>;
 using FinalSingleDecisionPtr = std::shared_ptr<FinalSingleDecision>;
 
-void Simplify(CostPtrList* clist);
-void SimplifyForDreasingCommunicationWithPartialPara(CostPtrList* clist);
-void RefineForPracticalCost(const CostPtr&, bool is_redistribution);
+void Simplify(CostPtrList *clist);
+void SimplifyForDecreasingCommunicationForward(CostPtrList *clist);
+void SimplifyForDecreasingCommunicationWithPartialPara(CostPtrList *clist);
+void RefineForPracticalCost(const CostPtr &, bool is_redistribution);
 }  // namespace parallel
 }  // namespace mindspore
 

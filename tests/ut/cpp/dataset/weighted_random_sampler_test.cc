@@ -35,19 +35,11 @@ class MindDataTestWeightedRandomSampler : public UT::Common {
  public:
   class DummyRandomAccessOp : public RandomAccessOp {
    public:
-    DummyRandomAccessOp(uint64_t num_rows) : num_rows_(num_rows) {};
-    Status GetNumSamples(int64_t *num) const {
-      *num = num_rows_;
-      return Status::OK();
+    DummyRandomAccessOp(uint64_t num_rows) {
+      // row count is in base class as protected member
+      // GetNumRowsInDataset does not need an override, the default from base class is fine.
+      num_rows_ = num_rows;
     }
-
-    Status GetNumRowsInDataset(int64_t *num) const {
-      *num = num_rows_;
-      return Status::OK();
-    }
-
-   private:
-    uint64_t num_rows_;
   };
 };
 
@@ -59,9 +51,9 @@ TEST_F(MindDataTestWeightedRandomSampler, TestOneshotReplacement) {
   std::vector<uint64_t> freq(total_samples, 0);
 
   // create sampler with replacement = true
-  WeightedRandomSampler m_sampler(weights, num_samples, true);
-  DummyRandomAccessOp dummy_random_access_op(total_samples);
-  m_sampler.Init(&dummy_random_access_op);
+  WeightedRandomSampler m_sampler(num_samples, weights, true);
+  DummyRandomAccessOp dummyRandomAccessOp(total_samples);
+  m_sampler.HandshakeRandomAccessOp(&dummyRandomAccessOp);
 
   std::unique_ptr<DataBuffer> db;
   TensorRow row;
@@ -89,9 +81,9 @@ TEST_F(MindDataTestWeightedRandomSampler, TestOneshotNoReplacement) {
   std::vector<uint64_t> freq(total_samples, 0);
 
   // create sampler with replacement = replacement
-  WeightedRandomSampler m_sampler(weights, num_samples, false);
-  DummyRandomAccessOp dummy_random_access_op(total_samples);
-  m_sampler.Init(&dummy_random_access_op);
+  WeightedRandomSampler m_sampler(num_samples, weights, false);
+  DummyRandomAccessOp dummyRandomAccessOp(total_samples);
+  m_sampler.HandshakeRandomAccessOp(&dummyRandomAccessOp);
 
   std::unique_ptr<DataBuffer> db;
   TensorRow row;
@@ -125,9 +117,9 @@ TEST_F(MindDataTestWeightedRandomSampler, TestGetNextBufferReplacement) {
   std::vector<double> weights(total_samples, std::rand() % 100);
 
   // create sampler with replacement = replacement
-  WeightedRandomSampler m_sampler(weights, num_samples, true, samples_per_buffer);
-  DummyRandomAccessOp dummy_random_access_op(total_samples);
-  m_sampler.Init(&dummy_random_access_op);
+  WeightedRandomSampler m_sampler(num_samples, weights, true, samples_per_buffer);
+  DummyRandomAccessOp dummyRandomAccessOp(total_samples);
+  m_sampler.HandshakeRandomAccessOp(&dummyRandomAccessOp);
 
   std::unique_ptr<DataBuffer> db;
   TensorRow row;
@@ -161,9 +153,9 @@ TEST_F(MindDataTestWeightedRandomSampler, TestGetNextBufferNoReplacement) {
   std::vector<uint64_t> freq(total_samples, 0);
 
   // create sampler with replacement = replacement
-  WeightedRandomSampler m_sampler(weights, num_samples, false, samples_per_buffer);
-  DummyRandomAccessOp dummy_random_access_op(total_samples);
-  m_sampler.Init(&dummy_random_access_op);
+  WeightedRandomSampler m_sampler(num_samples, weights, false, samples_per_buffer);
+  DummyRandomAccessOp dummyRandomAccessOp(total_samples);
+  m_sampler.HandshakeRandomAccessOp(&dummyRandomAccessOp);
 
   std::unique_ptr<DataBuffer> db;
   TensorRow row;
@@ -202,9 +194,9 @@ TEST_F(MindDataTestWeightedRandomSampler, TestResetReplacement) {
   std::vector<uint64_t> freq(total_samples, 0);
 
   // create sampler with replacement = true
-  WeightedRandomSampler m_sampler(weights, num_samples, true);
-  DummyRandomAccessOp dummy_random_access_op(total_samples);
-  m_sampler.Init(&dummy_random_access_op);
+  WeightedRandomSampler m_sampler(num_samples, weights, true);
+  DummyRandomAccessOp dummyRandomAccessOp(total_samples);
+  m_sampler.HandshakeRandomAccessOp(&dummyRandomAccessOp);
 
   std::unique_ptr<DataBuffer> db;
   TensorRow row;
@@ -247,9 +239,9 @@ TEST_F(MindDataTestWeightedRandomSampler, TestResetNoReplacement) {
   std::vector<uint64_t> freq(total_samples, 0);
 
   // create sampler with replacement = true
-  WeightedRandomSampler m_sampler(weights, num_samples, false);
-  DummyRandomAccessOp dummy_random_access_op(total_samples);
-  m_sampler.Init(&dummy_random_access_op);
+  WeightedRandomSampler m_sampler(num_samples, weights, false);
+  DummyRandomAccessOp dummyRandomAccessOp(total_samples);
+  m_sampler.HandshakeRandomAccessOp(&dummyRandomAccessOp);
 
   std::unique_ptr<DataBuffer> db;
   TensorRow row;

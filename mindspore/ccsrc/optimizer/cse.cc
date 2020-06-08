@@ -40,14 +40,14 @@ BasePtr AbsOf(const AnfNodePtr &node) {
   return node_abs;
 }
 
-namespace {
-void BuildOrderGroup(const FuncGraphManagerPtr manager, std::vector<std::size_t> *const order_group,
-                     std::unordered_map<std::size_t, std::vector<AnfNodePtr>> *groups) {
-  MS_EXCEPTION_IF_NULL(order_group);
-
-  std::unordered_map<AnfNodePtr, std::size_t> hashes;
+bool CSE::BuildOrderGroupAndDoReplace(const FuncGraphManagerPtr manager) const {
+  bool changed = false;
   for (FuncGraphPtr fg : manager->func_graphs()) {
     MS_EXCEPTION_IF_NULL(fg);
+    std::vector<std::size_t> order_group;
+    std::unordered_map<std::size_t, std::vector<AnfNodePtr>> groups;
+    std::unordered_map<AnfNodePtr, std::size_t> hashes;
+
     std::vector<AnfNodePtr> toposet = TopoSort(fg->get_return());
     for (auto node : toposet) {
       MS_EXCEPTION_IF_NULL(node);
@@ -75,17 +75,36 @@ void BuildOrderGroup(const FuncGraphManagerPtr manager, std::vector<std::size_t>
       }
 
       hashes[node] = h;
-      if (groups->find(h) == groups->end()) {
+      if (groups.find(h) == groups.end()) {
         std::vector<AnfNodePtr> innervec({node});
-        (*groups)[h] = innervec;
-        order_group->emplace_back(h);
+        groups[h] = innervec;
+        order_group.emplace_back(h);
       } else {
-        (*groups)[h].push_back(node);
+        groups[h].push_back(node);
       }
     }
+
+    changed = DoReplace(manager, order_group, &groups) || changed;
   }
+
+  return changed;
 }
-}  // namespace
+
+bool CSE::CheckRandomEffect(const AnfNodePtr &main, const AnfNodePtr &node) const {
+  bool has_random_effect = false;
+  auto prim_main = GetCNodePrimitive(main);
+  auto prim_node = GetCNodePrimitive(node);
+  if (prim_main == prim_node) {
+    return false;
+  }
+  if (prim_main != nullptr) {
+    auto effect_val = prim_main->GetAttr(GRAPH_FLAG_RANDOM_EFFECT);
+    if (effect_val != nullptr && effect_val->isa<BoolImm>()) {
+      has_random_effect = GetValue<bool>(effect_val);
+    }
+  }
+  return has_random_effect;
+}
 
 bool CSE::CheckReplace(const AnfNodePtr &main, const AnfNodePtr &node) const {
   MS_EXCEPTION_IF_NULL(main);
@@ -118,6 +137,9 @@ bool CSE::CheckReplace(const AnfNodePtr &main, const AnfNodePtr &node) const {
           appsame = false;
           break;
         }
+      }
+      if (CheckRandomEffect(c_main, c_node)) {
+        appsame = false;
       }
       replace = appsame;
     }
@@ -177,10 +199,7 @@ bool CSE::Cse(const FuncGraphPtr root, const FuncGraphManagerPtr manager) const 
   MS_EXCEPTION_IF_NULL(manager);
   manager->AddFuncGraph(root);
 
-  std::unordered_map<std::size_t, std::vector<AnfNodePtr>> groups;
-  std::vector<std::size_t> order_group;
-  BuildOrderGroup(manager, &order_group, &groups);
-  return DoReplace(manager, order_group, &groups);
+  return BuildOrderGroupAndDoReplace(manager);
 }
 }  // namespace opt
 }  // namespace mindspore

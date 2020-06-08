@@ -27,7 +27,6 @@
 #include "dataset/core/data_type.h"
 #include "dataset/engine/datasetops/source/storage_client.h"
 #include "dataset/engine/data_schema.h"
-#include "dataset/util/make_unique.h"
 
 namespace mindspore {
 namespace dataset {
@@ -36,13 +35,7 @@ TFBuffer::TFBuffer(
   uint32_t id,                                           // In: The id for this buffer
   BufferFlags flags,                                     // In: The flags for this buffer
   const std::shared_ptr<StorageClient> &storage_client)  // In: Storage client that is related to this buffer type
-    : DataBuffer(id, flags), storage_client_(storage_client) {
-  // Initializing mColumnNameMap from the schema file
-  const DataSchema *the_schema = storage_client_->schema();
-  for (int32_t i = 0; i < the_schema->NumColumns(); ++i) {
-    column_name_map_[the_schema->column(i).name()] = i;
-  }
-}
+    : DataBuffer(id, flags), storage_client_(storage_client) {}
 
 // destructor
 TFBuffer::~TFBuffer() {}
@@ -72,7 +65,7 @@ Status TFBuffer::Load() {
   }
 
   // Construct the Tensor table for this buffer.
-  tensor_table_ = mindspore::make_unique<TensorQTable>();
+  tensor_table_ = std::make_unique<TensorQTable>();
 
   // At each position in the tensor table, instantiate the shared pointer to it's Tensor.
   uint32_t row = 0;
@@ -119,7 +112,7 @@ Status TFBuffer::ParseSingleExample(dataengine::Example *ptr) {
     cur_reader_.open(cur_f_info_.fileName);
     // Seek to the offset
     (void)cur_reader_.seekg(static_cast<std::streamsize>(cur_f_info_.startOffset));
-    MS_LOG(INFO) << "got new file " << cur_f_info_.fileName << ".";
+    MS_LOG(DEBUG) << "got new file " << cur_f_info_.fileName << ".";
   }
 
   // one record in tf_file looks like:
@@ -272,7 +265,7 @@ Status TFBuffer::LoadFloatList(const ColDescriptor &current_col, const dataengin
   // Identify how many values we have and then create a local array of these
   // to deserialize into
   *num_elements = float_list.value_size();
-  *float_array = mindspore::make_unique<float[]>(*num_elements);
+  *float_array = std::make_unique<float[]>(*num_elements);
   for (int i = 0; i < float_list.value_size(); i++) {
     (*float_array)[i] = float_list.value(i);
   }
@@ -294,7 +287,7 @@ Status TFBuffer::LoadIntList(const ColDescriptor &current_col, const dataengine:
   // Identify how many values we have and then create a local array of these
   // to deserialize into
   *num_elements = int64_list.value_size();
-  *int_array = mindspore::make_unique<int64_t[]>(*num_elements);
+  *int_array = std::make_unique<int64_t[]>(*num_elements);
   for (int i = 0; i < int64_list.value_size(); i++) {
     (*int_array)[i] = int64_list.value(i);
   }

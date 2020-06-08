@@ -14,17 +14,31 @@
 # ============================================================================
 
 """debug_ops"""
+from types import FunctionType, MethodType
+from ..._checkparam import Validator as validator
 from ...common import dtype as mstype
-from ..primitive import Primitive, prim_attr_register, PrimitiveWithInfer
+from ..primitive import prim_attr_register, PrimitiveWithInfer
 
 
-class ScalarSummary(Primitive):
+def _check_summary_param(name, value, class_name):
+    """Check the name and value is valid for summary."""
+    n_type = name['dtype']
+    n_value = name['value']
+    validator.check_value_type('name', n_type, [type(mstype.string)], class_name)
+    if not n_value:
+        raise ValueError(f"For 'name' the value should by valid string in {class_name}, but got an empty string.")
+
+    v_type = value['dtype']
+    validator.check_value_type('value', v_type, [type(mstype.tensor)], class_name)
+
+
+class ScalarSummary(PrimitiveWithInfer):
     """
     Output scalar to protocol buffer through scalar summary operator.
 
     Inputs:
-        - **name** (str) - The name of the input variable.
-        - **value** (Tensor) - The value of scalar.
+        - **name** (str) - The name of the input variable, it should not be an empty string.
+        - **value** (Tensor) - The value of scalar, and the shape of value should be [] or [1].
 
     Examples:
         >>> class SummaryDemo(nn.Cell):
@@ -44,14 +58,25 @@ class ScalarSummary(Primitive):
     def __init__(self):
         """init"""
 
+    def __infer__(self, name, value):
+        _check_summary_param(name, value, self.__class__.__name__)
 
-class ImageSummary(Primitive):
+        v_shape = value['shape']
+        # In the summary, the value whose shape is [1] is also considered as a scalar.
+        if v_shape and v_shape != [1]:
+            raise ValueError(f"For 'value' the type should be scalar, "
+                             f"shape should be [] or [1] in {self.__class__.__name__}, but got {v_shape}.")
+
+        return value
+
+
+class ImageSummary(PrimitiveWithInfer):
     """
     Output image tensor to protocol buffer through image summary operator.
 
     Inputs:
-        - **name** (str) - The name of the input variable.
-        - **value** (Tensor) - The value of image.
+        - **name** (str) - The name of the input variable, it should not be an empty string.
+        - **value** (Tensor) - The value of image, the rank of tensor should be 4.
 
     Examples:
         >>> class Net(nn.Cell):
@@ -69,14 +94,26 @@ class ImageSummary(Primitive):
     def __init__(self):
         """init"""
 
+    def __infer__(self, name, value):
+        _check_summary_param(name, value, self.__class__.__name__)
 
-class TensorSummary(Primitive):
+        # The shape dim of image should be 4.
+        v_shape = value['shape']
+        image_dim = 4
+        if len(v_shape) != image_dim:
+            raise ValueError(f"For 'value' the dim should be {image_dim} in {self.__class__.__name__},"
+                             f" but got {len(v_shape)}.")
+
+        return value
+
+
+class TensorSummary(PrimitiveWithInfer):
     """
     Output tensor to protocol buffer through tensor summary operator.
 
     Inputs:
         - **name** (str) - The name of the input variable.
-        - **value** (Tensor) - The value of tensor.
+        - **value** (Tensor) - The value of tensor, and the rank of tensor should be greater than 0.
 
     Examples:
         >>> class SummaryDemo(nn.Cell):
@@ -95,6 +132,55 @@ class TensorSummary(Primitive):
     @prim_attr_register
     def __init__(self):
         """init"""
+
+    def __infer__(self, name, value):
+        _check_summary_param(name, value, self.__class__.__name__)
+
+        v_shape = value['shape']
+        # In the summary, the value whose shape is [] is not considered as a tensor.
+        if not v_shape:
+            raise ValueError(f"For 'value' the type should be tensor in {self.__class__.__name__}, "
+                             f"shape should not be [].")
+
+        return value
+
+
+class HistogramSummary(PrimitiveWithInfer):
+    """
+    Output tensor to protocol buffer through histogram summary operator.
+
+    Inputs:
+        - **name** (str) - The name of the input variable.
+        - **value** (Tensor) - The value of tensor, and the rank of tensor should be greater than 0.
+
+    Examples:
+        >>> class SummaryDemo(nn.Cell):
+        >>>     def __init__(self,):
+        >>>         super(SummaryDemo, self).__init__()
+        >>>         self.summary = P.HistogramSummary()
+        >>>         self.add = P.TensorAdd()
+        >>>
+        >>>     def construct(self, x, y):
+        >>>         x = self.add(x, y)
+        >>>         name = "x"
+        >>>         self.summary(name, x)
+        >>>         return x
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """init"""
+
+    def __infer__(self, name, value):
+        _check_summary_param(name, value, self.__class__.__name__)
+
+        v_shape = value['shape']
+        # In the summary, the histogram value should be a tensor whose shape is not [].
+        if not v_shape:
+            raise ValueError(f"For 'value' the type should be tensor in {self.__class__.__name__}, "
+                             f"shape should not be [].")
+
+        return value
 
 
 class InsertGradientOf(PrimitiveWithInfer):
@@ -122,6 +208,7 @@ class InsertGradientOf(PrimitiveWithInfer):
         >>>     return ret
         >>>
         >>> clip = P.InsertGradientOf(clip_gradient)
+        >>> grad_all = C.GradOperation('get_all', get_all=True)
         >>> def InsertGradientOfClipDemo():
         >>>     def clip_test(x, y):
         >>>         x = clip(x)
@@ -134,7 +221,7 @@ class InsertGradientOf(PrimitiveWithInfer):
         >>>         return clip_test(x, y)
         >>>
         >>>     def fd(x, y):
-        >>>         return C.grad_all(clip_test)(x, y)
+        >>>         return grad_all(clip_test)(x, y)
         >>>
         >>>     print("forward: ", f(1.1, 0.1))
         >>>     print("clip_gradient:", fd(1.1, 0.1))
@@ -155,21 +242,86 @@ class InsertGradientOf(PrimitiveWithInfer):
         return x_type
 
 
-class Print(PrimitiveWithInfer):
+class HookBackward(PrimitiveWithInfer):
     """
-    Output tensor to stdout.
+    Used as tag to hook gradient in intermediate variables.
+
+    Note:
+        The hook function should be defined like `hook_fn(grad) -> Tensor or None`,
+        which grad is the gradient passed to the primitive and gradient may be
+        modified and passed to nex primitive. the difference between hook function and
+        callback of InsertGradientOf is that hook function is executed in python
+        environment while callback will be parsed and added to the graph.
+
+    Args:
+        hook_fn (Function): Python function. hook function.
 
     Inputs:
-        - **input_x** (Tensor) - The graph node to attach to.
+        - **inputs** (Tensor) - The variable to hook.
+
+    Examples:
+        >>> def hook_fn(grad_out):
+        >>>     print(grad_out)
+        >>>
+        >>> hook = P.HookBackward(hook_fn)
+        >>>
+        >>> def hook_test(x, y):
+        >>>     z = x * y
+        >>>     z = hook(z)
+        >>>     z = z * y
+        >>>     return z
+        >>>
+        >>> def backward(x, y):
+        >>>     return C.grad_all(hook_test)(x, y)
+        >>>
+        >>> backward(1, 2)
+    """
+
+    def __init__(self, hook_fn, cell_id=""):
+        super(HookBackward, self).__init__(self.__class__.__name__)
+        self.add_prim_attr("cell_id", cell_id)
+        self.init_attrs["cell_id"] = cell_id
+        if not isinstance(hook_fn, (FunctionType, MethodType)):
+            raise TypeError("Hook function should be python function type.")
+        self.register_hook(hook_fn)
+        self.cell_id = cell_id
+
+    def infer_shape(self, *inputs_shape):
+        if len(inputs_shape) == 1:
+            return inputs_shape[0]
+        return inputs_shape
+
+    def infer_dtype(self, *inputs_type):
+        if len(inputs_type) == 1:
+            return inputs_type[0]
+        return inputs_type
+
+
+class Print(PrimitiveWithInfer):
+    """
+    Output tensor or string to stdout.
+
+    Note:
+        The print operation cannot support the following cases currently.
+
+        1. The type of tensor is float64 or bool.
+
+        2. The data of tensor is a scalar type.
+
+        In pynative mode, please use python print function.
+
+    Inputs:
+        - **input_x** (Union[Tensor, str]) - The graph node to attach to. The input supports
+          multiple strings and tensors which are separated by ','.
 
     Examples:
         >>> class PrintDemo(nn.Cell):
-        >>>     def __init__(self,):
+        >>>     def __init__(self):
         >>>         super(PrintDemo, self).__init__()
         >>>         self.print = P.Print()
         >>>
-        >>>     def construct(self, x):
-        >>>         self.print(x)
+        >>>     def construct(self, x, y):
+        >>>         self.print('Print Tensor x and Tensor y:', x, y)
         >>>         return x
     """
 
@@ -177,8 +329,14 @@ class Print(PrimitiveWithInfer):
     def __init__(self):
         pass
 
+    def __call__(self, *args):
+        for arg in args:
+            print(arg)
+
     def infer_shape(self, *inputs):
         return [1]
 
     def infer_dtype(self, *inputs):
+        for dtype in inputs:
+            validator.check_subclass("input", dtype, (mstype.tensor, mstype.string), self.name)
         return mstype.int32

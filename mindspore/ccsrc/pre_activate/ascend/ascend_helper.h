@@ -21,6 +21,7 @@
 #include <vector>
 #include "device/ascend/kernel_select_ascend.h"
 #include "kernel/kernel_query.h"
+#include "kernel/tbe/tbe_kernel_select.h"
 
 namespace mindspore {
 namespace opt {
@@ -29,12 +30,23 @@ class KernelSelect {
   KernelSelect() = default;
   virtual ~KernelSelect() = default;
   virtual void SelectKernel(const CNodePtr &cnode) { device::ascend::SelectKernelInfo(cnode); }
-  virtual bool CheckKernelAccuracySupported(const CNodePtr &kernel_node,
-                                            const kernel::KernelBuildInfoPtr &new_kernel_build_info) {
-    return device::ascend::CheckKernelAccuracySupported(kernel_node, new_kernel_build_info);
-  }
 };
 using KernelSelectPtr = std::shared_ptr<KernelSelect>;
+
+class SupportedChecker {
+ public:
+  SupportedChecker() = default;
+  virtual ~SupportedChecker() = default;
+  virtual bool CheckAiCoreSupported(const AnfNodePtr &anf_node,
+                                    const kernel::KernelBuildInfoPtr &select_kernel_build_info) {
+    return kernel::IsSupportedByAICore(anf_node, select_kernel_build_info);
+  }
+  virtual bool CheckAiCpuSupported(const AnfNodePtr &anf_node,
+                                   const kernel::KernelBuildInfoPtr &select_kernel_build_info) {
+    return kernel::IsSupportedByAICPU(anf_node, select_kernel_build_info);
+  }
+};
+using SupportedCheckerPtr = std::shared_ptr<SupportedChecker>;
 
 class KernelQuery {
  public:
@@ -46,11 +58,11 @@ class KernelQuery {
   }
 };
 using KernelQueryPtr = std::shared_ptr<KernelQuery>;
+void RefreshKernelBuildInfo(const std::string &input_format, const std::string &output_format, const TypeId device_type,
+                            const AnfNodePtr &trans_data, const std::vector<kernel::Axis> &reshape_type = {});
 
-AnfNodePtr AddTransOpNodeToGraph(const FuncGraphPtr &func_graph, const AnfNodePtr &node,
-                                 const KernelSelectPtr &kernel_select, size_t insert_index, bool padding_flag,
-                                 const std::string &origin_format, const std::string &dest_format,
-                                 const std::string &op_name, bool is_insert_input);
+CNodePtr NewTransOpNode(const FuncGraphPtr &func_graph, const AnfNodePtr &input, const KernelSelectPtr &kernel_select,
+                        const bool need_padding, const std::string &op_name);
 
 AnfNodePtr AddCastOpNodeToGraph(const FuncGraphPtr &func_graph, const AnfNodePtr &input, const std::string &format,
                                 const TypeId &input_type, const TypeId &output_type,
@@ -64,7 +76,7 @@ AnfNodePtr InsertTransOpForOutput(const FuncGraphPtr &func_graph, const AnfNodeP
 
 CNodePtr InsertCastForInput(const FuncGraphPtr &func_graph, const CNodePtr &cnode);
 
-AnfNodePtr CreatTupleGetItemNode(const FuncGraphPtr &func_graph, const AnfNodePtr &node, size_t output_idx);
+AnfNodePtr CreateMemcpyAsyncOp(const FuncGraphPtr &graph, const AnfNodePtr &node);
 }  // namespace opt
 }  // namespace mindspore
 #endif  // MINDSPORE_CCSRC_PRE_ACTIVATE_ASCEND_ASCEND_HELPER_H_

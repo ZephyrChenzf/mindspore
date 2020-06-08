@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 #include "parallel/tensor_layout/util_layout_gen_test.h"
+#include <cmath>
 #include <map>
 #include <tuple>
 #include <vector>
@@ -22,6 +23,8 @@
 #include <iterator>
 #include "parallel/tensor_layout/shape_util.h"
 #include "common/common_test.h"
+
+using std::pow;
 
 namespace mindspore {
 namespace parallel {
@@ -51,7 +54,7 @@ std::vector<std::vector<int32_t>> combine(const std::vector<int32_t>& in, int32_
   return output;
 }
 
-void GenerateValidShapeBySizeAndDim(const int32_t& pow_size, const int32_t& dim,
+void GenerateValidShapeBySizeAndDim(int32_t pow_size, int32_t dim,
                                     std::vector<std::vector<int32_t>>* out) {
   out->clear();
   std::vector<int32_t> in;
@@ -78,7 +81,7 @@ void GenerateValidShapeBySizeAndDim(const int32_t& pow_size, const int32_t& dim,
   return;
 }
 
-void GenerateValidShapeBySize(const int32_t& pow_size, std::vector<std::vector<int32_t>>* out) {
+void GenerateValidShapeBySize(int32_t pow_size, std::vector<std::vector<int32_t>>* out) {
   out->clear();
   for (int32_t dim = 1; dim <= pow_size; dim++) {
     std::vector<std::vector<int32_t>> combine_result;
@@ -148,8 +151,8 @@ void GenerateValidTensorMap(const std::vector<int32_t>& device_arrangement, cons
 }
 
 void GenerateValidLayoutByDeviceSizeAndTensorSize(
-  const int32_t& device_pow_size, const int32_t& tensor_pow_size, const int32_t& max_device_dim,
-  const int32_t& max_shape_dim,
+  int32_t device_pow_size, int32_t tensor_pow_size, int32_t max_device_dim,
+  int32_t max_shape_dim,
   std::vector<std::tuple<std::vector<int32_t>, std::vector<int32_t>, std::vector<int32_t>>>* layout_list) {
   layout_list->clear();
   std::vector<std::vector<int32_t>> device_arrangement_list;

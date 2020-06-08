@@ -18,17 +18,15 @@
 #define MINDSPORE_CCSRC_PARALLEL_STRATEGY_H_
 
 #include <cstdint>
-#include <list>
-#include <string>
-#include <vector>
 #include <memory>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "parallel/status.h"
 
 namespace mindspore {
 namespace parallel {
-
 #define MIN_SLICE_NUM 1
 
 using Dimensions = std::vector<int32_t>;
@@ -48,7 +46,17 @@ class Strategy {
       inputs_.push_back(inputs_[0]);
     }
   }
-  void ResetInputs(const std::vector<Dimensions>& input) { inputs_ = input; }
+  void ResetInputs(const std::vector<Dimensions> &input) { inputs_ = input; }
+
+  bool IsEqual(const StrategyPtr &another_stra) {
+    if (another_stra == nullptr) {
+      return false;
+    }
+    if ((stage_ != another_stra->GetInputStage()) || (inputs_ != another_stra->GetInputDim())) {
+      return false;
+    }
+    return true;
+  }
 
  private:
   const int32_t stage_;
@@ -57,7 +65,7 @@ class Strategy {
   std::vector<Dimensions> inputs_;
 };
 
-inline StrategyPtr NewStrategy(const int32_t stage, const std::vector<Dimensions>& inputs) {
+inline StrategyPtr NewStrategy(const int32_t stage, const std::vector<Dimensions> &inputs) {
   return std::make_shared<Strategy>(stage, inputs);
 }
 }  // namespace parallel

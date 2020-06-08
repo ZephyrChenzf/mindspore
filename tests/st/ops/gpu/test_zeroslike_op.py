@@ -13,17 +13,17 @@
 # limitations under the License.
 # ============================================================================
 
+import numpy as np
 import pytest
+
+import mindspore.context as context
+import mindspore.nn as nn
 from mindspore import Tensor
 from mindspore.ops import operations as P
-import mindspore.nn as nn
-from mindspore.common.api import ms_function
-import numpy as np
-import mindspore.context as context
-from mindspore.common.initializer import initializer
-from mindspore.common.parameter import Parameter
 
 context.set_context(mode=context.PYNATIVE_MODE, device_target="GPU")
+
+
 class NetZerosLike(nn.Cell):
     def __init__(self):
         super(NetZerosLike, self).__init__()
@@ -50,14 +50,14 @@ def test_ZerosLike():
     diff0 = output0.asnumpy() - expect0
     error0 = np.ones(shape=expect0.shape) * 1.0e-5
     assert np.all(diff0 < error0)
-    assert (output0.shape() == expect0.shape)
+    assert output0.shape() == expect0.shape
 
     output1 = zeros_like(x1)
     expect1 = np.zeros_like(x1_np)
     diff1 = output1.asnumpy() - expect1
     error1 = np.ones(shape=expect1.shape) * 1.0e-5
     assert np.all(diff1 < error1)
-    assert (output1.shape() == expect1.shape)
+    assert output1.shape() == expect1.shape
 
     context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
     zeros_like = NetZerosLike()
@@ -66,11 +66,11 @@ def test_ZerosLike():
     diff0 = output0.asnumpy() - expect0
     error0 = np.ones(shape=expect0.shape) * 1.0e-5
     assert np.all(diff0 < error0)
-    assert (output0.shape() == expect0.shape)
+    assert output0.shape() == expect0.shape
 
     output1 = zeros_like(x1)
     expect1 = np.zeros_like(x1_np)
     diff1 = output1.asnumpy() - expect1
     error1 = np.ones(shape=expect1.shape) * 1.0e-5
     assert np.all(diff1 < error1)
-    assert (output1.shape() == expect1.shape)
+    assert output1.shape() == expect1.shape

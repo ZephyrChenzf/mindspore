@@ -22,53 +22,75 @@ using mindspore::MsLogLevel::ERROR;
 
 namespace mindspore {
 namespace mindrecord {
-ShardSample::ShardSample(int n) {
-  numerator_ = 0;
-  denominator_ = 0;
-  no_of_samples_ = n;
-  partition_id_ = 0;
+ShardSample::ShardSample(int n)
+    : numerator_(0),
+      denominator_(0),
+      partition_id_(0),
+      no_of_samples_(n),
+      indices_({}),
+      sampler_type_(kCustomTopNSampler) {}
+
+ShardSample::ShardSample(int num, int den)
+    : numerator_(num),
+      denominator_(den),
+      partition_id_(0),
+      no_of_samples_(0),
+      indices_({}),
+      sampler_type_(kCustomTopPercentSampler) {}
+
+ShardSample::ShardSample(int num, int den, int par)
+    : numerator_(num),
+      denominator_(den),
+      partition_id_(par),
+      no_of_samples_(0),
+      indices_({}),
+      sampler_type_(kCustomTopPercentSampler) {}
+
+ShardSample::ShardSample(const std::vector<int64_t> &indices, uint32_t seed)
+    : numerator_(0),
+      denominator_(0),
+      partition_id_(0),
+      no_of_samples_(0),
+      indices_(indices),
+      sampler_type_(kSubsetRandomSampler) {
+  shuffle_op_ = std::make_shared<ShardShuffle>(seed);
 }
 
-ShardSample::ShardSample(int num, int den) {
-  if (num < 0 || den <= 0 || num > den) {
-    no_of_samples_ = 5;
-    numerator_ = 0;
-    denominator_ = 0;
-    partition_id_ = 0;
-    return;
+int64_t ShardSample::GetNumSamples(int64_t dataset_size, int64_t num_classes) {
+  if (sampler_type_ == kCustomTopNSampler) {
+    return no_of_samples_;
   }
-  numerator_ = num;
-  denominator_ = den;
-  no_of_samples_ = 0;
-  partition_id_ = 0;
-}
 
-ShardSample::ShardSample(int num, int den, int par) {
-  numerator_ = num;
-  denominator_ = den;
-  no_of_samples_ = 0;
-  partition_id_ = par;
-}
-
-const std::pair<int, int> ShardSample::get_partitions() const {
-  if (numerator_ == 1 && denominator_ > 1) {
-    return std::pair<int, int>(denominator_, partition_id_);
+  if (sampler_type_ == kCustomTopPercentSampler) {
+    if (dataset_size % denominator_ == 0) {
+      return dataset_size / denominator_ * numerator_;
+    } else {
+      return dataset_size / denominator_ * numerator_ + 1;
+    }
   }
-  return std::pair<int, int>(-1, -1);
+  if (sampler_type_ == kSubsetRandomSampler) {
+    return indices_.size();
+  }
+  return 0;
 }
 
-MSRStatus ShardSample::operator()(ShardTask &tasks) {
+MSRStatus ShardSample::Execute(ShardTask &tasks) {
   int no_of_categories = static_cast<int>(tasks.categories);
-  int total_no = static_cast<int>(tasks.Size());
+  int total_no = static_cast<int>(tasks.Size());  // make sure task_size
 
   int taking = 0;
-  if (no_of_samples_ > 0) {  // non sharding case constructor #1
+  if (sampler_type_ == kCustomTopNSampler) {  // non sharding case constructor #1
     no_of_samples_ = std::min(no_of_samples_, total_no);
     taking = no_of_samples_ - no_of_samples_ % no_of_categories;
-  } else {  // constructor #2 & #3
+  } else if (sampler_type_ == kSubsetRandomSampler) {
+    if (indices_.size() > total_no) {
+      MS_LOG(ERROR) << "parameter indices's size is greater than dataset size.";
+      return FAILED;
+    }
+  } else {  // constructor TopPercent
     if (numerator_ > 0 && denominator_ > 0 && numerator_ <= denominator_) {
       if (numerator_ == 1 && denominator_ > 1) {  // sharding
-        taking = (total_no / denominator_) + (total_no % denominator_ == 0 ? 0 : 1);
+        taking = (total_no + denominator_ - 1) / denominator_;
       } else {  // non sharding
         taking = total_no * numerator_ / denominator_;
         taking -= (taking % no_of_categories);
@@ -82,8 +104,15 @@ MSRStatus ShardSample::operator()(ShardTask &tasks) {
   if (tasks.permutation_.empty()) {
     ShardTask new_tasks;
     total_no = static_cast<int>(tasks.Size());
-    for (int i = partition_id_ * taking; i < (partition_id_ + 1) * taking; i++) {
-      new_tasks.InsertTask(tasks.get_task_by_id(i % total_no));  // rounding up. if overflow, go back to start
+    if (sampler_type_ == kSubsetRandomSampler) {
+      for (int i = 0; i < indices_.size(); ++i) {
+        int index = ((indices_[i] % total_no) + total_no) % total_no;
+        new_tasks.InsertTask(tasks.GetTaskByID(index));  // different mod result between c and python
+      }
+    } else {
+      for (int i = partition_id_ * taking; i < (partition_id_ + 1) * taking; i++) {
+        new_tasks.InsertTask(tasks.GetTaskByID(i % total_no));  // rounding up. if overflow, go back to start
+      }
     }
     std::swap(tasks, new_tasks);
   } else {
@@ -93,9 +122,18 @@ MSRStatus ShardSample::operator()(ShardTask &tasks) {
     }
     total_no = static_cast<int>(tasks.permutation_.size());
     for (size_t i = partition_id_ * taking; i < (partition_id_ + 1) * taking; i++) {
-      new_tasks.InsertTask(tasks.get_task_by_id(tasks.permutation_[i % total_no]));
+      new_tasks.InsertTask(tasks.GetTaskByID(tasks.permutation_[i % total_no]));
     }
     std::swap(tasks, new_tasks);
+  }
+  return SUCCESS;
+}
+
+MSRStatus ShardSample::SufExecute(ShardTask &tasks) {
+  if (sampler_type_ == kSubsetRandomSampler) {
+    if (SUCCESS != (*shuffle_op_)(tasks)) {
+      return FAILED;
+    }
   }
   return SUCCESS;
 }

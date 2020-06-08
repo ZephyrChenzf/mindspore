@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2020 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 #include "common/backend_common_test.h"
 #include "kernel/kernel.h"
 #include "operator/ops.h"
-#include "ir/meta_tensor.h"
+#include "ir/tensor.h"
 #include "ir/manager.h"
 #include "debug/anf_ir_dump.h"
 #include "common/py_func_graph_fetcher.h"
@@ -30,6 +30,7 @@
 #include "utils/context/ms_context.h"
 #include "session/anf_runtime_algorithm.h"
 #include "device/kernel_info.h"
+#include "utils/context/ms_context.h"
 
 #define private public
 #define protected public
@@ -71,6 +72,9 @@ TEST_F(TestHWEliminateRedundantOp, test_eliminate_5to4_4to5) {
    *     output = make_tuple(res)
    *     return output
    */
+  auto ms_context = MsContext::GetInstance();
+  MS_EXCEPTION_IF_NULL(ms_context);
+  ms_context->set_execution_mode(kGraphMode);
   FuncGraphPtr g = getPyFun_.CallAndParseRet("test_eliminate_5to4_4to5", "before");
   // Renormalize func_graph to infer and set shape and type information.
   std::vector<int> shp{2, 32, 224, 224};

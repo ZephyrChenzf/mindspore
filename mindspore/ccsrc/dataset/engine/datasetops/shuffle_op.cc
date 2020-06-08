@@ -13,9 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#if defined(_WIN32) || defined(_WIN64)
+#include <stdlib.h>
+#endif
 #include <securec.h>
 #include <algorithm>
 #include <chrono>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <random>
@@ -26,6 +30,7 @@
 #include "dataset/engine/dataset_iterator.h"
 #include "dataset/engine/data_buffer.h"
 #include "dataset/engine/db_connector.h"
+#include "dataset/engine/opt/pass.h"
 #include "dataset/util/random.h"
 #include "dataset/util/status.h"
 
@@ -70,27 +75,23 @@ ShuffleOp::ShuffleOp(int32_t shuffle_size, uint32_t shuffle_seed, int32_t op_con
       rng_(shuffle_seed),
       buffer_counter_(0),
       rows_per_buffer_(rows_per_buffer),
-      shuffle_buffer_(mindspore::make_unique<TensorTable>()),
+      shuffle_buffer_(std::make_unique<TensorTable>()),
       shuffle_last_row_idx_(0),
       shuffle_buffer_state_(kShuffleStateInit) {}
 
 // Private function to re-init the shuffle op for another epoch.  Shuffle op calls this by
 // itself rather than waiting for the reset driven from operators above it in the pipeline.
 Status ShuffleOp::SelfReset() {
-  MS_LOG(INFO) << "Shuffle operator performing a self-reset.";
-  // If ReshuffleEachEpoch is false, then we always use the same seed for every
+  MS_LOG(DEBUG) << "Shuffle operator performing a self-reset.";
+  // If reshuffle_each_epoch is false, then we always use the same seed for every
   // epoch.
-  // If ReshuffleEachEpoch is true, then the first epoch uses the given seed,
-  // and all subsequent epochs will then reset the seed based on random device.
+  // If reshuffle_each_epoch is true, then the first epoch uses the given seed,
+  // and all subsequent epochs will then keep on using the rng_ without resetting it
   if (!reshuffle_each_epoch_) {
     rng_ = std::mt19937_64(shuffle_seed_);
-  } else {
-    std::random_device random_device("/dev/urandom");
-    std::uniform_int_distribution<int32_t> distribution(0, std::numeric_limits<int32_t>::max());
-    shuffle_seed_ = distribution(random_device);
-    rng_ = std::mt19937_64(shuffle_seed_);
   }
-  shuffle_buffer_ = mindspore::make_unique<TensorTable>();
+
+  shuffle_buffer_ = std::make_unique<TensorTable>();
   buffer_counter_ = 0;
   shuffle_last_row_idx_ = 0;
   shuffle_buffer_state_ = kShuffleStateInit;
@@ -99,13 +100,20 @@ Status ShuffleOp::SelfReset() {
 
 // A print method typically used for debugging
 void ShuffleOp::Print(std::ostream &out, bool show_all) const {
-  // Call base class printer first
-  PipelineOp::Print(out, show_all);
-
-  // Then display our own stuff
-  out << "ShuffleOp:\n  Shuffle size: " << shuffle_size_ << "\n  rows_per_buffer_: " << rows_per_buffer_
-      << "\n  shuffle_buffer_state_: " << shuffle_buffer_state_ << "\n  shuffle_seed_: " << shuffle_seed_;
-  out << "\n-------------------------\n\n";  // End the display with this line
+  // Always show the id and name as first line regardless if this summary or detailed print
+  out << "(" << std::setw(2) << operator_id_ << ") <ShuffleOp>:";
+  if (!show_all) {
+    // Call the super class for displaying any common 1-liner info
+    PipelineOp::Print(out, show_all);
+    // Then show any custom derived-internal 1-liner info for this op
+    out << " [shuffle size: " << shuffle_size_ << "]\n";
+  } else {
+    // Call the super class for displaying any common detailed info
+    PipelineOp::Print(out, show_all);
+    // Then show any custom derived-internal stuff
+    out << "\nShuffle size: " << shuffle_size_ << "\nRows per buffer: " << rows_per_buffer_
+        << "\nShuffle buffer state: " << shuffle_buffer_state_ << "\nShuffle seed: " << shuffle_seed_ << "\n\n";
+  }
 }
 
 // Private function to add a new row to the shuffle buffer.
@@ -142,7 +150,7 @@ Status ShuffleOp::operator()() {
   // Create the child iterator to fetch our data from.
   int32_t worker_id = 0;
   int32_t child_idx = 0;
-  child_iterator_ = mindspore::make_unique<ChildIterator>(this, worker_id, child_idx);
+  child_iterator_ = std::make_unique<ChildIterator>(this, worker_id, child_idx);
 
   // Main operator loop
   while (true) {
@@ -161,7 +169,7 @@ Status ShuffleOp::operator()() {
       // Step 1)
       // Create an output tensor table if one is not created yet.
       if (!new_buffer_table) {
-        new_buffer_table = mindspore::make_unique<TensorQTable>();
+        new_buffer_table = std::make_unique<TensorQTable>();
       }
 
       // Step 2)
@@ -176,9 +184,8 @@ Status ShuffleOp::operator()() {
       // and send this buffer on it's way up the pipeline. Special case is if this is the
       // last row then we also send it.
       if (new_buffer_table->size() == rows_per_buffer_ || shuffle_last_row_idx_ == 0) {
-        auto new_buffer = mindspore::make_unique<DataBuffer>(buffer_counter_, DataBuffer::kDeBFlagNone);
+        auto new_buffer = std::make_unique<DataBuffer>(buffer_counter_, DataBuffer::kDeBFlagNone);
         new_buffer->set_tensor_table(std::move(new_buffer_table));
-        new_buffer->set_column_name_map(column_name_map_);
         buffer_counter_++;
         MS_LOG(DEBUG) << "Shuffle operator sending a buffer to output.";
         RETURN_IF_NOT_OK(out_connector_->Add(0, std::move(new_buffer)));
@@ -217,8 +224,8 @@ Status ShuffleOp::operator()() {
 
     // Since we overloaded eoeReceived function, we are responsible to flow the EOE up the
     // pipepline manually now that we are done draining the shuffle buffer
-    MS_LOG(INFO) << "Shuffle operator sending EOE.";
-    auto eoe_buffer = mindspore::make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOE);
+    MS_LOG(DEBUG) << "Shuffle operator sending EOE.";
+    auto eoe_buffer = std::make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOE);
     RETURN_IF_NOT_OK(out_connector_->Add(0, std::move(eoe_buffer)));
 
     // Do not wait for any reset to be flown down from operators above us.
@@ -232,7 +239,7 @@ Status ShuffleOp::operator()() {
 // Private function populate the shuffle buffer initially by fetching from the child output
 // connector until the shuffle buffer is full (or there is no more data coming).
 Status ShuffleOp::InitShuffleBuffer() {
-  MS_LOG(INFO) << "Shuffle operator initializing the shuffle buffer.";
+  MS_LOG(DEBUG) << "Shuffle operator initializing the shuffle buffer.";
 
   // The first phase of this operator is to read incoming buffers and then drain those
   // rows from the buffers, putting them into our own local table of tensors (the shuffle
@@ -251,7 +258,7 @@ Status ShuffleOp::InitShuffleBuffer() {
   RETURN_IF_NOT_OK(child_iterator_->FetchNextTensorRow(&new_row));
 
   if (child_iterator_->eof_handled()) {
-    MS_LOG(INFO) << "Shuffle operator init picked up EOF. No more epochs.";
+    MS_LOG(DEBUG) << "Shuffle operator init picked up EOF. No more epochs.";
     return Status::OK();
   }
 
@@ -259,8 +266,8 @@ Status ShuffleOp::InitShuffleBuffer() {
     RETURN_STATUS_UNEXPECTED("Unable to fetch a single row for shuffle buffer.");
   }
 
-  // Take a copy of the column name mapping.  We'll use this when constructing output buffers later.
-  column_name_map_ = child_iterator_->col_name_id_map();
+  // Now that a first fetch is done, assign the column map for this operator
+  RETURN_IF_NOT_OK(DatasetOp::AssignColMapFromChild());
 
   // Now fill the rest of the shuffle buffer until we are unable to get the next row or we reached
   // the desired shuffle buffer size.
@@ -282,13 +289,19 @@ Status ShuffleOp::InitShuffleBuffer() {
     shuffle_buffer_state_ = kShuffleStateDrain;
   }
 
-  MS_LOG(INFO) << "Shuffle operator finished intializing the shuffle buffer.";
+  MS_LOG(DEBUG) << "Shuffle operator finished intializing the shuffle buffer.";
   return Status::OK();
 }
 
 Status ShuffleOp::EoeReceived(int32_t worker_id) {
   state_ = OpState::kDeOpIdle;
   return Status::OK();
+}
+
+// Visitor accept method for NodePass
+Status ShuffleOp::Accept(NodePass *p, bool *modified) {
+  // Downcast shared pointer then call visitor
+  return p->RunOnNode(std::static_pointer_cast<ShuffleOp>(shared_from_this()), modified);
 }
 }  // namespace dataset
 }  // namespace mindspore

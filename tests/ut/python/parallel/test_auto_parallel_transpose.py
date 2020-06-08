@@ -13,15 +13,16 @@
 # limitations under the License.
 
 import numpy as np
-from mindspore import context
-import mindspore.nn as nn
-from mindspore.ops import operations as P
-from mindspore import Tensor
-from tests.ut.python.ops.test_math_ops import VirtualLoss
+
 import mindspore as ms
+import mindspore.nn as nn
+from mindspore import Tensor
+from mindspore import context
 from mindspore.common.api import _executor
 from mindspore.ops import composite as C
+from mindspore.ops import operations as P
 from mindspore.parallel._utils import _reset_op_id as reset_op_id
+from tests.ut.python.ops.test_math_ops import VirtualLoss
 
 
 class NetWithLoss(nn.Cell):
@@ -34,6 +35,7 @@ class NetWithLoss(nn.Cell):
         predict = self.network(x, y, b)
         return self.loss(predict)
 
+
 class GradWrap(nn.Cell):
     def __init__(self, network):
         super(GradWrap, self).__init__()
@@ -41,6 +43,7 @@ class GradWrap(nn.Cell):
 
     def construct(self, x, y, b):
         return C.grad_all(self.network)(x, y, b)
+
 
 # core dump, step_auto_parallel should SetInputs for transpose axis
 def test_two_matmul_transpose():
@@ -67,12 +70,13 @@ def test_two_matmul_transpose():
 
     net = NetWithLoss(Net())
     context.set_auto_parallel_context(parallel_mode="auto_parallel")
+    net.set_auto_parallel()
     reset_op_id()
 
     _executor.compile(net, x, y, b, phase='train')
     strategies = _executor._get_strategy(net)
-    expected_strategies = {'Default/network-Net/Transpose-op4': [[1, 16]],
-                           'Default/network-Net/Transpose-op5': [[16, 1]],
-                           'Default/network-Net/MatMul-op6': [[16, 1], [1, 1]],
-                           'Default/network-Net/MatMul-op7': [[16, 1], [1, 1]]}
+    expected_strategies = {'Default/network-Net/Transpose-op0': [[1, 16]],
+                           'Default/network-Net/Transpose-op1': [[16, 1]],
+                           'Default/network-Net/MatMul-op2': [[16, 1], [1, 1]],
+                           'Default/network-Net/MatMul-op3': [[16, 1], [1, 1]]}
     assert strategies == expected_strategies

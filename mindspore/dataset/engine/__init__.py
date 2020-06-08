@@ -29,9 +29,9 @@ from .samplers import *
 from ..core.configuration import config, ConfigurationManager
 
 
-__all__ = ["config", "ConfigurationManager", "zip", "StorageDataset",
+__all__ = ["config", "ConfigurationManager", "zip",
            "ImageFolderDatasetV2", "MnistDataset",
            "MindDataset", "GeneratorDataset", "TFRecordDataset",
            "ManifestDataset", "Cifar10Dataset", "Cifar100Dataset", "CelebADataset",
-           "VOCDataset", "Schema", "DistributedSampler", "PKSampler", "RandomSampler",
-           "SequentialSampler", "SubsetRandomSampler", "WeightedRandomSampler"]
+           "VOCDataset", "TextFileDataset", "Schema", "DistributedSampler", "PKSampler",
+           "RandomSampler", "SequentialSampler", "SubsetRandomSampler", "WeightedRandomSampler"]

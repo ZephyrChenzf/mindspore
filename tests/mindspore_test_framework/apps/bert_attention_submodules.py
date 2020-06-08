@@ -19,13 +19,14 @@
 
 import math
 import numpy as np
+
 import mindspore.common.dtype as mstype
 import mindspore.ops.functional as F
 from mindspore import nn
 from mindspore.common.initializer import TruncatedNormal
-from mindspore.ops import operations as P
 from mindspore.common.tensor import Tensor
 from mindspore.model_zoo.Bert_NEZHA.bert_model import SaturateCast, RelaPosEmbeddingsGenerator
+from mindspore.ops import operations as P
 
 
 class BertAttentionQueryKeyMul(nn.Cell):
@@ -189,6 +190,7 @@ class BertAttentionMask(nn.Cell):
 
         return attention_scores
 
+
 class BertAttentionMaskBackward(nn.Cell):
     def __init__(self,
                  attention_mask_shape,
@@ -217,6 +219,7 @@ class BertAttentionMaskBackward(nn.Cell):
             adder = self.multiply(multiply_out, self.multiply_data)
             attention_scores = self.add(adder, attention_scores)
         return attention_scores
+
 
 class BertAttentionSoftmax(nn.Cell):
     def __init__(self,

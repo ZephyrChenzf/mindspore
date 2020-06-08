@@ -42,14 +42,14 @@ class Tensor(Tensor_):
 
     Examples:
         >>> # init a tensor with input data
-        >>> t1 = mindspore.Tensor(np.zeros([1, 2, 3]), mindspore.float32)
-        >>> assert isinstance(t1, mindspore.Tensor)
+        >>> t1 = Tensor(np.zeros([1, 2, 3]), mindspore.float32)
+        >>> assert isinstance(t1, Tensor)
         >>> assert t1.shape() == (1, 2, 3)
         >>> assert t1.dtype() == mindspore.float32
         >>>
         >>> # init a tensor with a float scalar
-        >>> t2 = mindspore.Tensor(0.1)
-        >>> assert isinstance(t2, mindspore.Tensor)
+        >>> t2 = Tensor(0.1)
+        >>> assert isinstance(t2, Tensor)
         >>> assert t2.dtype() == mindspore.float64
     """
 
@@ -65,39 +65,93 @@ class Tensor(Tensor_):
         else:
             super(Tensor, self).__init__(input_data, dtype)
         self._virtual_flag = False
+        self._init_flag = False
 
     def __repr__(self):
         return str(self.__str__())
 
     def __add__(self, other):
-        if not isinstance(other, Tensor):
-            raise TypeError("input_data must be a tensor")
         out = tensor_operator_registry.get('__add__')(self, other)
         return out
 
-    def __mul__(self, other):
+    def __eq__(self, other):
         if not isinstance(other, Tensor):
-            raise TypeError("input_data must be a tensor")
+            return False
+        return tensor_operator_registry.get('__eq__')(self, other)
+
+    def __ne__(self, other):
+        if not isinstance(other, Tensor):
+            return True
+        return tensor_operator_registry.get('__ne__')(self, other)
+
+    def __hash__(self):
+        return hash(id(self))
+
+    def __mul__(self, other):
         out = tensor_operator_registry.get('__mul__')(self, other)
+        return out
+
+    def __neg__(self):
+        out = tensor_operator_registry.get('__neg__')(self)
         return out
 
     def __iadd__(self, other):
         out = self.__add__(other)
         return out
 
+    def __radd__(self, other):
+        out = tensor_operator_registry.get('__add__')(other, self)
+        return out
+
     def __imul__(self, other):
         out = self.__mul__(other)
         return out
 
+    def __rmul__(self, other):
+        out = tensor_operator_registry.get('__mul__')(other, self)
+        return out
+
+    def __truediv__(self, other):
+        out = tensor_operator_registry.get('__div__')(self, other)
+        return out
+
+    def __rtruediv__(self, other):
+        out = tensor_operator_registry.get('__div__')(other, self)
+        return out
+
     def __sub__(self, other):
-        if not isinstance(other, Tensor):
-            raise TypeError("input_data must be a tensor")
-        out = self.__add__(Tensor(-other.asnumpy()))
+        out = tensor_operator_registry.get('__sub__')(self, other)
         return out
 
     def __isub__(self, other):
         out = self.__sub__(other)
         return out
+
+    def __rsub__(self, other):
+        out = tensor_operator_registry.get('__sub__')(other, self)
+        return out
+
+    def __lt__(self, other):
+        out = tensor_operator_registry.get('__lt__')(self, other)
+        return out
+
+    def __le__(self, other):
+        out = tensor_operator_registry.get('__le__')(self, other)
+        return out
+
+    def __gt__(self, other):
+        out = tensor_operator_registry.get('__gt__')(self, other)
+        return out
+
+    def __ge__(self, other):
+        out = tensor_operator_registry.get('__ge__')(self, other)
+        return out
+
+    def __len__(self):
+        out = tensor_operator_registry.get('__shape__')(self)
+        if not out:
+            return 1
+        return out[0]
 
     def __str__(self):
         if self.dtype() == mstype.type_none:
@@ -115,3 +169,16 @@ class Tensor(Tensor_):
         if not isinstance(value, bool):
             raise TypeError("virtual_flag must be bool.")
         self._virtual_flag = value
+
+    @property
+    def init_flag(self):
+        """whether the tensor is init."""
+        return self._init_flag
+
+    @init_flag.setter
+    def init_flag(self, value):
+        """Set the tensor is init_flag."""
+        if not isinstance(value, bool):
+            raise TypeError("init_flag must be bool.")
+        self.set_init_flag(value)
+        self._init_flag = value

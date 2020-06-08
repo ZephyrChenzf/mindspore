@@ -40,16 +40,7 @@ dsize_t TensorShape::NumOfElements() const {
   if (!known()) {
     return 0;
   }
-  dsize_t num = 1;
-  for (auto i : raw_shape_) {
-    if (multi_ok(num, i)) {
-      num *= i;
-    } else {
-      // dsize_t can wrap since it is signed int, we double check here
-      MS_LOG(ERROR) << "Tensor shape larger than maximum allowed value!";
-    }
-  }
-  return num;
+  return strides_[0];
 }
 
 void TensorShape::Print(std::ostream &out) const {
@@ -72,25 +63,44 @@ void TensorShape::Print(std::ostream &out) const {
 }
 
 TensorShape::TensorShape(const std::initializer_list<dsize_t> &list)
-    : raw_shape_(*GlobalContext::Instance()->int_allocator()) {
+    : raw_shape_(*GlobalContext::Instance()->int_allocator()), strides_(*GlobalContext::Instance()->int_allocator()) {
   AddListToShape(list);
 }
 
-TensorShape::TensorShape(const std::vector<dsize_t> &list) : raw_shape_(*GlobalContext::Instance()->int_allocator()) {
+TensorShape::TensorShape(const std::vector<dsize_t> &list)
+    : raw_shape_(*GlobalContext::Instance()->int_allocator()), strides_(*GlobalContext::Instance()->int_allocator()) {
   AddListToShape(list);
 }
 
-TensorShape::TensorShape(const TensorShape &shape) : raw_shape_(*GlobalContext::Instance()->int_allocator()) {
+TensorShape::TensorShape(const TensorShape &shape)
+    : raw_shape_(*GlobalContext::Instance()->int_allocator()), strides_(*GlobalContext::Instance()->int_allocator()) {
   AddListToShape(shape.AsVector());
   known_ = shape.known_;  // override with the input shape in case of unknown-rank tensor shape.
 }
 
-TensorShape::TensorShape(py::list l) : raw_shape_(*GlobalContext::Instance()->int_allocator()) {
+TensorShape::TensorShape(py::list l)
+    : raw_shape_(*GlobalContext::Instance()->int_allocator()), strides_(*GlobalContext::Instance()->int_allocator()) {
   std::vector<dsize_t> list_c;
-  for (auto i : l) {
-    list_c.push_back(i.cast<int>());
+  for (auto &i : l) {
+    if (!i.is_none()) {
+      list_c.push_back(i.cast<int>());
+    } else {
+      list_c.push_back(TensorShape::kDimUnknown);
+    }
   }
   AddListToShape(list_c);
+}
+
+TensorShape::TensorShape(cv::MatSize cv_size, uint32_t type)
+    : raw_shape_(*GlobalContext::Instance()->int_allocator()), strides_(*GlobalContext::Instance()->int_allocator()) {
+  for (int i = 0; i < cv_size.dims(); i++) {
+    raw_shape_.push_back(cv_size[i]);
+  }
+  auto channels = static_cast<uint8_t>(1 + (type >> static_cast<uint8_t>(CV_CN_SHIFT)));
+  if (channels != 1) {
+    raw_shape_.push_back(channels);
+  }
+  known_ = true;
 }
 
 TensorShape TensorShape::CreateUnknownRankShape() {
@@ -103,17 +113,6 @@ TensorShape TensorShape::InsertDim(dsize_t axis, dsize_t dim) const {
   std::vector<dsize_t> tmp = AsVector();
   (void)tmp.insert(tmp.begin() + axis, dim);
   return TensorShape(tmp);
-}
-
-TensorShape::TensorShape(cv::MatSize cv_size, uint32_t type) : raw_shape_(*GlobalContext::Instance()->int_allocator()) {
-  for (int i = 0; i < cv_size.dims(); i++) {
-    raw_shape_.push_back(cv_size[i]);
-  }
-  auto channels = static_cast<uint8_t>(1 + (type >> static_cast<uint8_t>(CV_CN_SHIFT)));
-  if (channels != 1) {
-    raw_shape_.push_back(channels);
-  }
-  known_ = true;
 }
 
 std::vector<dsize_t> TensorShape::AsVector() const {
@@ -135,23 +134,28 @@ bool TensorShape::IsValidIndex(const std::vector<dsize_t> &index) const {
 
 template <typename T>
 void TensorShape::AddListToShape(const T &list) {
+  raw_shape_.resize(list.size());
+  strides_.resize(list.size() + 1);
+  strides_[list.size()] = 1;
   known_ = true;
-  dsize_t num = 1;
   dsize_t size = 0;
-  for (const auto &itr : list) {
-    if (itr > 0) {
-      if (num > std::numeric_limits<int64_t>::max() / itr) {
+  auto itr = std::rbegin(list);  // iterate over the list in reverse order
+  auto s = list.size() - 1;      // to compute strides while adding dims
+  for (; itr != std::rend(list); itr++, s--) {
+    dsize_t dim = *itr;
+    if (dim > 0) {
+      if (strides_[s + 1] > std::numeric_limits<int64_t>::max() / dim) {
         MS_LOG(ERROR) << "Invalid shape data, overflow occurred!";
         known_ = false;
         raw_shape_.clear();
         return;
       }
-      num *= itr;
+      strides_[s] = dim * strides_[s + 1];
     }
-    if (itr < 0) {
+    if (dim < 0) {
       known_ = false;
     }
-    if (itr > kDeMaxDim) {
+    if (dim > kDeMaxDim) {
       std::stringstream ss;
       ss << "Invalid shape data, dim (" << size << ") is larger than the maximum dim size(" << kDeMaxDim << ")!";
       MS_LOG(ERROR) << ss.str().c_str();
@@ -159,7 +163,7 @@ void TensorShape::AddListToShape(const T &list) {
       raw_shape_.clear();
       return;
     }
-    raw_shape_.push_back(itr);
+    raw_shape_[s] = dim;
     size++;
   }
   if (size > kDeMaxRank) {
@@ -210,6 +214,19 @@ TensorShape TensorShape::Squeeze() const {
     }
   }
   return TensorShape(new_shape);
+}
+
+std::vector<dsize_t> TensorShape::Strides() const { return std::vector<dsize_t>{strides_.begin() + 1, strides_.end()}; }
+
+// Name: ToFlatIndex()
+// Description: convert a vector style index to number, used to access memory internal use only
+Status TensorShape::ToFlatIndex(const std::vector<dsize_t> &index, dsize_t *flat_index) const {
+  *flat_index = 0;
+  for (size_t k = 0; k < index.size(); k++) {
+    *flat_index += index[k] * strides_[k + 1];  // skip the first element of strides_ which is numOfElements
+  }
+  CHECK_FAIL_RETURN_UNEXPECTED(*flat_index < NumOfElements(), "Not a valid index");
+  return Status::OK();
 }
 }  // namespace dataset
 }  // namespace mindspore

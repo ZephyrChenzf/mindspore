@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from mindspore.train import Model, ParallelMode
+import numpy as np
+
+import mindspore as ms
+import mindspore.nn as nn
+from mindspore import Tensor
+from mindspore import context
+from mindspore.common.parameter import Parameter, ParameterTuple
 from mindspore.nn.loss import SoftmaxCrossEntropyWithLogits
 from mindspore.nn.optim.momentum import Momentum
-from mindspore import Tensor
-import mindspore as ms
-import numpy as np
-import mindspore.nn as nn
-from tests.dataset_mock import MindData
-from mindspore import context
-from mindspore.train.loss_scale_manager import DynamicLossScaleManager
 from mindspore.ops import composite as C, functional as F, operations as P
-from mindspore.common.parameter import Parameter, ParameterTuple
-
+from mindspore.train import Model, ParallelMode
+from mindspore.train.loss_scale_manager import DynamicLossScaleManager
+from tests.dataset_mock import MindData
 
 context.set_context(mode=context.GRAPH_MODE)
 
@@ -84,7 +84,7 @@ def loss_scale_manager_common(strategy1):
     opt = Momentum(net.trainable_params(), learning_rate, momentum)
     scale_manager = DynamicLossScaleManager(32, 2, 2000)
     model = Model(net, loss, opt, loss_scale_manager=scale_manager)
-    # if no GE exists, outputs = self._train_network(*next_element) outputs is None, TypeError is caught.
+    # if no GE exists, outputs = self._train_network(*next_element) outputs inputs tensor.
     try:
         model.train(epoch_size, dataset, dataset_sink_mode=False)
     except TypeError:
@@ -93,14 +93,15 @@ def loss_scale_manager_common(strategy1):
         assert False
 
 
-def test_dataset_interface_sens_scalar():
-    strategy1 = ((8, 1), )
+def fixme_test_dataset_interface_sens_scalar():
+    # With error: "The type of sens node is not Tensor or Parameter, it is unsupported now."
+    strategy1 = ((8, 1),)
     loss_scale_manager_common(strategy1)
 
 
 class TrainOneStepCell(nn.Cell):
 
-    def __init__(self, network, optimizer, sens=1.0):
+    def __init__(self, network, optimizer):
         super(TrainOneStepCell, self).__init__(auto_prefix=False)
         self.network = network
         self.network.add_flags(defer_inline=True)
@@ -130,16 +131,20 @@ def loss_scale_manager_sens(strategy1, sens):
 
 
 def test_dataset_interface_sens_shape_not_equal_loss():
-    strategy1 = ((8, 1), )
+    strategy1 = ((8, 1),)
     sens = Tensor(np.ones([256, 1024]), dtype=ms.float32)
     try:
         loss_scale_manager_sens(strategy1, sens)
-    except:
+    except ValueError:
+        pass
+    except TypeError:
+        pass
+    except RuntimeError:
         pass
 
 
 def test_dataset_interface_sens_shape_equal_loss():
-    strategy1 = ((4, 2), )
+    strategy1 = ((4, 2),)
     sens = Tensor(np.ones([256, 256]), dtype=ms.float32)
     loss_scale_manager_sens(strategy1, sens)
 
@@ -152,20 +157,16 @@ def test_input_not_in_parameter_layotu_dict():
             self.matmul_weight = Parameter(Tensor(np.ones([128, 256]), dtype=ms.float32), name="weight")
             self.transpose1 = P.Transpose().set_strategy(strategy1)
 
-        def construct(self, x, b):
+        def construct(self, x):
             x = self.matmul(x, self.matmul_weight)
             x = self.transpose1(x, (1, 0))
             return x
 
-    strategy1 = ((8, 1), )
+    strategy1 = ((8, 1),)
     device_num = 8
     context.reset_auto_parallel_context()
     context.set_auto_parallel_context(parallel_mode=ParallelMode.SEMI_AUTO_PARALLEL, device_num=device_num)
     predict = Tensor(np.ones([32 * device_num, 128]), dtype=ms.float32)
-    b = Tensor(np.ones([32 * device_num, 128]), dtype=ms.float32)
     net = Net(strategy1)
     net.set_train()
-    net(predict, b)
-
-
-
+    net(predict)

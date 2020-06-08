@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
+import numpy as np
 from util import save_and_check
 
 import mindspore.dataset as ds
@@ -98,6 +99,46 @@ def test_shuffle_04():
     save_and_check(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
 
 
+def test_shuffle_05():
+    """
+    Test shuffle: buffer_size > number-of-rows-in-dataset
+    """
+    logger.info("test_shuffle_05")
+    # define parameters
+    buffer_size = 13
+    seed = 1
+    parameters = {"params": {'buffer_size': buffer_size, "seed": seed}}
+
+    # apply dataset operations
+    data1 = ds.TFRecordDataset(DATA_DIR, shuffle=ds.Shuffle.FILES)
+    ds.config.set_seed(seed)
+    data1 = data1.shuffle(buffer_size=buffer_size)
+
+    filename = "shuffle_05_result.npz"
+    save_and_check(data1, parameters, filename, generate_golden=GENERATE_GOLDEN)
+
+
+def test_shuffle_06():
+    """
+    Test shuffle: with set seed, both datasets
+    """
+    logger.info("test_shuffle_06")
+    # define parameters
+    buffer_size = 13
+    seed = 1
+
+    # apply dataset operations
+    data1 = ds.TFRecordDataset(DATA_DIR, shuffle=ds.Shuffle.FILES)
+    ds.config.set_seed(seed)
+    data1 = data1.shuffle(buffer_size=buffer_size)
+
+    data2 = ds.TFRecordDataset(DATA_DIR, shuffle=ds.Shuffle.FILES)
+    data2 = data2.shuffle(buffer_size=buffer_size)
+
+    for item1, item2 in zip(data1.create_dict_iterator(), data2.create_dict_iterator()):
+        np.testing.assert_equal(item1, item2)
+
+
 def test_shuffle_exception_01():
     """
     Test shuffle exception: buffer_size<0
@@ -111,7 +152,7 @@ def test_shuffle_exception_01():
         data1 = data1.shuffle(buffer_size=-1)
         sum([1 for _ in data1])
 
-    except BaseException as e:
+    except Exception as e:
         logger.info("Got an exception in DE: {}".format(str(e)))
         assert "buffer_size" in str(e)
 
@@ -129,7 +170,7 @@ def test_shuffle_exception_02():
         data1 = data1.shuffle(buffer_size=0)
         sum([1 for _ in data1])
 
-    except BaseException as e:
+    except Exception as e:
         logger.info("Got an exception in DE: {}".format(str(e)))
         assert "buffer_size" in str(e)
 
@@ -147,25 +188,7 @@ def test_shuffle_exception_03():
         data1 = data1.shuffle(buffer_size=1)
         sum([1 for _ in data1])
 
-    except BaseException as e:
-        logger.info("Got an exception in DE: {}".format(str(e)))
-        assert "buffer_size" in str(e)
-
-
-def test_shuffle_exception_04():
-    """
-    Test shuffle exception: buffer_size > number-of-rows-in-dataset
-    """
-    logger.info("test_shuffle_exception_04")
-
-    # apply dataset operations
-    data1 = ds.TFRecordDataset(DATA_DIR)
-    ds.config.set_seed(1)
-    try:
-        data1 = data1.shuffle(buffer_size=13)
-        sum([1 for _ in data1])
-
-    except BaseException as e:
+    except Exception as e:
         logger.info("Got an exception in DE: {}".format(str(e)))
         assert "buffer_size" in str(e)
 
@@ -183,7 +206,7 @@ def test_shuffle_exception_05():
         data1 = data1.shuffle()
         sum([1 for _ in data1])
 
-    except BaseException as e:
+    except Exception as e:
         logger.info("Got an exception in DE: {}".format(str(e)))
         assert "buffer_size" in str(e)
 
@@ -201,7 +224,7 @@ def test_shuffle_exception_06():
         data1 = data1.shuffle(buffer_size=False)
         sum([1 for _ in data1])
 
-    except BaseException as e:
+    except Exception as e:
         logger.info("Got an exception in DE: {}".format(str(e)))
         assert "buffer_size" in str(e)
 
@@ -219,7 +242,7 @@ def test_shuffle_exception_07():
         data1 = data1.shuffle(buffer_size=True)
         sum([1 for _ in data1])
 
-    except BaseException as e:
+    except Exception as e:
         logger.info("Got an exception in DE: {}".format(str(e)))
         assert "buffer_size" in str(e)
 
@@ -229,10 +252,11 @@ if __name__ == '__main__':
     test_shuffle_02()
     test_shuffle_03()
     test_shuffle_04()
+    test_shuffle_05()
+    test_shuffle_06()
     test_shuffle_exception_01()
     test_shuffle_exception_02()
     test_shuffle_exception_03()
-    test_shuffle_exception_04()
     test_shuffle_exception_05()
     test_shuffle_exception_06()
     test_shuffle_exception_07()

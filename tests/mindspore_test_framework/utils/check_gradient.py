@@ -17,15 +17,18 @@
 # pylint: disable=missing-docstring
 
 from typing import Callable, List, Any
+
 import numpy as np
-from mindspore import Tensor
-from mindspore.ops.composite import GradOperation
+import mindspore._c_expression as _c_expression
+
 from mindspore import ParameterTuple
+from mindspore import Tensor
 from mindspore import context
 from mindspore.common.api import ms_function
-import mindspore._c_expression as _c_expression
+from mindspore.ops.composite import GradOperation
 from .block_util import get_output_cell, gen_net, gen_grad_net, \
     get_uniform_with_shape, set_block_phase, get_output_reduce_cell, set_block_param_with_rand
+
 
 class _GradChecker:
     """
@@ -130,6 +133,7 @@ class _GradChecker:
                 @ms_function
                 def _func_pynative(*inputs):
                     return net(*inputs)
+
                 return _func_pynative(*inputs)
 
             return func_forward_pynative
@@ -277,7 +281,7 @@ class _GradChecker:
         print('GradChecker.compute_theoretical.args', args)
         gout = self.wrap(self.gfns[out_index](*args))
         gout = [self.to_numpy_and_scale(g) if isinstance(g, _c_expression.Tensor) \
-                         else self.to_numpy_and_scale(np.array(g)) for g in gout]
+                    else self.to_numpy_and_scale(np.array(g)) for g in gout]
         print('GradChecker.compute_theoretical.gout', gout)
         dy_mask.ravel().view()[jacobian_col] = 0.0
 
@@ -432,6 +436,7 @@ def check_gradient(fn, *args, delta=1e-3, max_error=1e-3,
                                       sampling_times=sampling_times,
                                       reduce_output=reduce_output)
     grad_checker.assert_match()
+
 
 def check_jacobian(fn, *args, delta=1e-3, max_error=1e-3,
                    grad_checker_class=OperationGradChecker,

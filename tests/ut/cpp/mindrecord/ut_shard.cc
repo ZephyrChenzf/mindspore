@@ -29,7 +29,6 @@
 #include "mindrecord/include/shard_statistics.h"
 #include "securec.h"
 #include "ut_common.h"
-#include "ut_shard_writer_test.h"
 
 using mindspore::MsLogLevel::INFO;
 using mindspore::ExceptionType::NoExceptionType;
@@ -43,7 +42,7 @@ class TestShard : public UT::Common {
 };
 
 TEST_F(TestShard, TestShardSchemaPart) {
-  TestShardWriterImageNet();
+  ShardWriterImageNet();
 
   MS_LOG(INFO) << FormatInfo("Test schema");
 
@@ -53,8 +52,14 @@ TEST_F(TestShard, TestShardSchemaPart) {
 
   std::shared_ptr<Schema> schema = Schema::Build(desc, j);
   ASSERT_TRUE(schema != nullptr);
-  MS_LOG(INFO) << "schema description: " << schema->get_desc() << ", schema:  " <<
+  MS_LOG(INFO) << "schema description: " << schema->GetDesc() << ", schema:  " <<
     common::SafeCStr(schema->GetSchema().dump());
+  for (int i = 1; i <= 4; i++) {
+    string filename = std::string("./imagenet.shard0") + std::to_string(i);
+    string db_name = std::string("./imagenet.shard0") + std::to_string(i) + ".db";
+    remove(common::SafeCStr(filename));
+    remove(common::SafeCStr(db_name));
+  }
 }
 
 TEST_F(TestShard, TestStatisticPart) {
@@ -66,8 +71,8 @@ TEST_F(TestShard, TestStatisticPart) {
   nlohmann::json statistic_json = json::parse(kStatistics[2]);
   std::shared_ptr<Statistics> statistics = Statistics::Build(desc, statistic_json);
   ASSERT_TRUE(statistics != nullptr);
-  MS_LOG(INFO) << "test get_desc(), result: " << statistics->get_desc();
-  MS_LOG(INFO) << "test get_statistics, result: " << statistics->get_statistics().dump();
+  MS_LOG(INFO) << "test get_desc(), result: " << statistics->GetDesc();
+  MS_LOG(INFO) << "test get_statistics, result: " << statistics->GetStatistics().dump();
 
   std::string desc2 = "axis";
   nlohmann::json statistic_json2 = R"({})";
@@ -106,13 +111,13 @@ TEST_F(TestShard, TestShardHeaderPart) {
   ASSERT_EQ(res, 0);
   header_data.AddStatistic(statistics1);
   std::vector<Schema> re_schemas;
-  for (auto &schema_ptr : header_data.get_schemas()) {
+  for (auto &schema_ptr : header_data.GetSchemas()) {
     re_schemas.push_back(*schema_ptr);
   }
   ASSERT_EQ(re_schemas, validate_schema);
 
   std::vector<Statistics> re_statistics;
-  for (auto &statistic : header_data.get_statistics()) {
+  for (auto &statistic : header_data.GetStatistics()) {
     re_statistics.push_back(*statistic);
   }
   ASSERT_EQ(re_statistics, validate_statistics);
@@ -124,10 +129,9 @@ TEST_F(TestShard, TestShardHeaderPart) {
   std::pair<uint64_t, std::string> pair1(0, "name");
   fields.push_back(pair1);
   ASSERT_TRUE(header_data.AddIndexFields(fields) == SUCCESS);
-  std::vector<std::pair<uint64_t, std::string>> resFields = header_data.get_fields();
+  std::vector<std::pair<uint64_t, std::string>> resFields = header_data.GetFields();
   ASSERT_EQ(resFields, fields);
 }
 
-TEST_F(TestShard, TestShardWriteImage) { MS_LOG(INFO) << FormatInfo("Test writer"); }
 }  // namespace mindrecord
 }  // namespace mindspore

@@ -13,14 +13,15 @@
 # limitations under the License.
 # ============================================================================
 
+import numpy as np
 import pytest
+
+import mindspore.context as context
+import mindspore.nn as nn
 from mindspore import Tensor
+from mindspore.common.api import ms_function
 from mindspore.ops import operations as P
 from mindspore.ops.operations import _grad_ops as G
-import mindspore.nn as nn
-from mindspore.common.api import ms_function
-import numpy as np
-import mindspore.context as context
 
 context.set_context(device_target='GPU')
 
@@ -35,8 +36,8 @@ class Conv2dFilter(nn.Cell):
                                                   pad_mode="valid",
                                                   pad=0,
                                                   mode=1,
-                                                  stride=1,
-                                                  dilation=1,
+                                                  stride=(1, 1),
+                                                  dilation=(1, 1, 1, 1),
                                                   group=1)
 
         self.get_shape = P.Shape()
@@ -44,6 +45,7 @@ class Conv2dFilter(nn.Cell):
     @ms_function
     def construct(self, out, x, w):
         return self.conv_filter(out, x, self.get_shape(w))
+
 
 @pytest.mark.level0
 @pytest.mark.platform_x86_gpu_training
@@ -64,13 +66,6 @@ def test_conv2d_backprop_filter():
         [-3, -2, -3, -16]]]]).astype(np.float32))
     conv2d_filter = Conv2dFilter()
     output = conv2d_filter(out, x, w)
-    print("================================")
-    """
-    expect output:
-    [[[[ -60, -142, -265]
-       [-104, -211, -322]
-       [-102, -144, -248]]]]
-    """
     expect = np.array([[[[-60, -142, -265],
                          [-104, -211, -322],
                          [-102, -144, -248]]]]).astype(np.float32)

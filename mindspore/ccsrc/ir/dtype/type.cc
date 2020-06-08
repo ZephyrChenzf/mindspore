@@ -1,7 +1,7 @@
 /**
  * This is the C++ adaptation and derivative work of Myia (https://github.com/mila-iqia/myia/).
  *
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2020 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,13 +17,14 @@
  */
 
 #include "ir/dtype/type.h"
-#include <string>
-#include <cstdlib>
+
 #include <algorithm>
+#include <cstdlib>
+#include <string>
+
+#include "ir/dtype/number.h"
 #include "utils/log_adapter.h"
-#include "pipeline/static_analysis/abstract_value.h"
-#include "pybind_api/api_register.h"
-#include "pybind_api/export_flags.h"
+#include "utils/convert_utils_base.h"
 
 namespace mindspore {
 TypeId IntBitsToTypeId(const int nbits) {
@@ -37,7 +38,7 @@ TypeId IntBitsToTypeId(const int nbits) {
     case 64:
       return kNumberTypeInt64;
     default:
-      MS_LOG(EXCEPTION) << "wrong number of bits.";
+      MS_LOG(EXCEPTION) << "Wrong number of bits.";
   }
 }
 
@@ -52,7 +53,7 @@ TypeId UIntBitsToTypeId(const int nbits) {
     case 64:
       return kNumberTypeUInt64;
     default:
-      MS_LOG(EXCEPTION) << "wrong number of bits.";
+      MS_LOG(EXCEPTION) << "Wrong number of bits.";
   }
 }
 
@@ -65,11 +66,11 @@ TypeId FloatBitsToTypeId(const int nbits) {
     case 64:
       return kNumberTypeFloat64;
     default:
-      MS_LOG(EXCEPTION) << "wrong number of bits.";
+      MS_LOG(EXCEPTION) << "Wrong number of bits.";
   }
 }
 
-const char* MetaIdLabel(const TypeId& v) {
+const char *MetaIdLabel(const TypeId &v) {
   switch (v) {
     case kTypeUnknown:
       return "kTypeUnknown";
@@ -87,12 +88,18 @@ const char* MetaIdLabel(const TypeId& v) {
       return "kMetaTypeExternal";
     case kMetaTypeNone:
       return "kMetaTypeNone";
+    case kMetaTypeNull:
+      return "kMetaTypeNull";
+    case kMetaTypeEllipsis:
+      return "kMetaTypeEllipsis";
+    case kMetaTypeEnd:
+      return "kMetaTypeEnd";
     default:
       return "[Unknown Type Id]";
   }
 }
 
-const char* ObjectIdLabel(const TypeId& v) {
+const char *ObjectIdLabel(const TypeId &v) {
   switch (v) {
     case kObjectTypeNumber:
       return "kObjectTypeNumber";
@@ -129,7 +136,7 @@ const char* ObjectIdLabel(const TypeId& v) {
   }
 }
 
-const char* NumberIdLabel(const TypeId& v) {
+const char *NumberIdLabel(const TypeId &v) {
   switch (v) {
     case kNumberTypeBool:
       return "kNumberTypeBool";
@@ -166,7 +173,7 @@ const char* NumberIdLabel(const TypeId& v) {
   }
 }
 
-const char* TypeIdLabel(const TypeId& v) {
+const char *TypeIdLabel(const TypeId &v) {
   if (v < kMetaTypeEnd) {
     return MetaIdLabel(v);
   } else {
@@ -190,14 +197,14 @@ TypeId NormalizeTypeId(const TypeId type_id) {
   }
 }
 
-bool IsSameObjectType(const Type& lhs, const Type& rhs) {
+bool IsSameObjectType(const Type &lhs, const Type &rhs) {
   if ((lhs.meta_type() != kMetaTypeObject) || (rhs.meta_type() != kMetaTypeObject)) {
     return false;
   }
   return lhs.object_type() == rhs.object_type();
 }
 
-size_t GetTypeByte(const TypePtr& type_ptr) {
+size_t GetTypeByte(const TypePtr &type_ptr) {
   if (type_ptr && type_ptr->isa<Number>()) {
     auto number = dyn_cast<Number>(type_ptr);
     if (!number) {
@@ -212,26 +219,21 @@ size_t GetTypeByte(const TypePtr& type_ptr) {
   }
 }
 
-bool Type::operator==(const Value& other) const {
+bool Type::operator==(const Value &other) const {
   if (other.isa<Type>()) {
-    auto other_type = static_cast<const Type*>(&other);
+    auto other_type = static_cast<const Type *>(&other);
     return *this == *other_type;
   } else {
     return false;
   }
 }
 
-abstract::AbstractBasePtr Type::ToAbstract() {
-  abstract::AbstractBasePtr ptr = std::make_shared<abstract::AbstractType>(shared_from_base<Type>());
-  return ptr;
-}
-
-std::ostream& operator<<(std::ostream& os, const Type& type) {
+std::ostream &operator<<(std::ostream &os, const Type &type) {
   os << type.ToString();
   return os;
 }
 
-std::ostream& operator<<(std::ostream& os, const TypePtr type) {
+std::ostream &operator<<(std::ostream &os, const TypePtr type) {
   os << type->ToString();
   return os;
 }
@@ -244,17 +246,17 @@ bool Object::equal(const TypePtr other) const {
   return false;
 }
 
-std::ostream& operator<<(std::ostream& os, const Object& obj) {
+std::ostream &operator<<(std::ostream &os, const Object &obj) {
   os << obj.ToString();
   return os;
 }
 
-std::ostream& operator<<(std::ostream& os, const std::shared_ptr<Object> obj) {
+std::ostream &operator<<(std::ostream &os, const std::shared_ptr<Object> obj) {
   os << obj->ToString();
   return os;
 }
 
-std::ostream& operator<<(std::ostream& os, const TypePtrList& types) {
+std::ostream &operator<<(std::ostream &os, const TypePtrList &types) {
   os << "[";
   for (size_t i = 0; i < types.size(); ++i) {
     if (i > 0) {

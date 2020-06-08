@@ -16,19 +16,20 @@
 """Test bert submodules."""
 
 import os
+
 import numpy as np
 from mindspore.model_zoo.Bert_NEZHA import EmbeddingLookup, GetMaskedLMOutput, \
     BertConfig, BertPreTraining, BertNetworkWithLoss
 from mindspore.model_zoo.Bert_NEZHA.bert_model import BertModel
 
-from mindspore import nn, context
 from mindspore import Tensor
-from ..utils.block_util import get_output_cell
+from mindspore import nn, context
 from ..mindspore_test import mindspore_test
 from ..pipeline.forward.compile_forward import pipeline_for_compile_forward_anf_graph_for_case_by_case_config, \
     pipeline_for_compile_forward_ge_graph_for_case_by_case_config
 from ..pipeline.gradient.compile_gradient import pipeline_for_compile_grad_anf_graph_for_case_by_case_config, \
     pipeline_for_compile_grad_ge_graph_for_case_by_case_config
+from ..utils.block_util import get_output_cell
 from ...dataset_mock import MindData
 
 # pylint: disable=missing-docstring, W0612, arguments-differ
@@ -173,9 +174,8 @@ test_sets = [
                                                   embedding_size=768,
                                                   embedding_shape=[1, 128, 768],
                                                   use_one_hot_embeddings=True,
-                                                  initializer_range=0.02), 1, 1), {
-                      'init_param_with': lambda shp: np.ones(shp).astype(np.float32)
-                  }),
+                                                  initializer_range=0.02), 1, 1),
+                  {'init_param_with': lambda shp: np.ones(shp).astype(np.float32)}),
         'desc_inputs': [input_ids],
         'desc_bprop': [[128]]}),
     ('EmbeddingLookup_multi_outputs_init_param', {
@@ -183,9 +183,8 @@ test_sets = [
                                   embedding_size=768,
                                   embedding_shape=[1, 128, 768],
                                   use_one_hot_embeddings=False,
-                                  initializer_range=0.02), {
-                      'init_param_with': lambda shp: np.ones(shp).astype(np.float32)
-                  }),
+                                  initializer_range=0.02),
+                  {'init_param_with': lambda shp: np.ones(shp).astype(np.float32)}),
         'desc_inputs': [input_ids],
         'desc_bprop': [[1, 128, 768], [128]]}),
     ('EmbeddingLookup_multi_outputs_grad_with_no_sens', {
@@ -193,9 +192,8 @@ test_sets = [
                                   embedding_size=768,
                                   embedding_shape=[1, 128, 768],
                                   use_one_hot_embeddings=False,
-                                  initializer_range=0.02), {
-                      'init_param_with': lambda shp: np.ones(shp).astype(np.float32)
-                  }),
+                                  initializer_range=0.02),
+                  {'init_param_with': lambda shp: np.ones(shp).astype(np.float32)}),
         'desc_inputs': [input_ids]}),
     ('GetMaskedLMOutput_grad_with_no_sens', {
         'block': GetMaskedLMOutput(BertConfig(batch_size=1)),

@@ -12,28 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from mindspore.train import Model, ParallelMode
-from mindspore.nn.loss import SoftmaxCrossEntropyWithLogits
-from mindspore.nn.optim.momentum import Momentum
-import mindspore as ms
 import numpy as np
+
+import mindspore as ms
 from mindspore import context
+from mindspore.common.parameter import Parameter
 from mindspore.common.tensor import Tensor
-from mindspore.nn.layer.activation import ReLU
 from mindspore.nn.cell import Cell
+from mindspore.nn.layer.activation import ReLU
 from mindspore.nn.layer.conv import Conv2d
 from mindspore.nn.layer.normalization import BatchNorm2d
 from mindspore.nn.layer.pooling import MaxPool2d
+from mindspore.nn.loss import SoftmaxCrossEntropyWithLogits
+from mindspore.nn.optim.momentum import Momentum
 from mindspore.ops import operations as P
-from mindspore.common.parameter import Parameter
+from mindspore.train import Model, ParallelMode
 from tests.dataset_mock import MindData
 
-
 dev_num = 8
-strategy_no_weight = ((dev_num, 1, 1, 1), )
 strategy_weight = ((dev_num, 1, 1, 1), (1, 1, 1, 1))
-strategy_bn = ((dev_num, 1, 1, 1), (1, ), (1, ))
-strategy_fc_weight_bias = ((dev_num, 1), (1, 1), (1, ))
+strategy_bn = ((dev_num, 1, 1, 1), (1,), (1,))
+strategy_fc_weight_bias = ((dev_num, 1), (1, 1), (1,))
 
 
 class DatasetLenet(MindData):
@@ -62,7 +61,7 @@ def conv7x7(in_channels, out_channels, stride=1, padding=0):
     weight_shape = (out_channels, in_channels, 7, 7)
     weight = Tensor(np.ones(weight_shape).astype(np.float32))
     conv = Conv2d(in_channels, out_channels,
-                  kernel_size=7, stride=stride, padding=0, weight_init=weight, has_bias=False,
+                  kernel_size=7, stride=stride, padding=padding, weight_init=weight, has_bias=False,
                   pad_mode="same")
     conv.conv2d.set_strategy(strategy_weight)
     return conv
@@ -94,8 +93,8 @@ class ResNet(Cell):
 
     def __init__(self, num_classes=100):
         super(ResNet, self).__init__()
-        strategy_no_weight = ((dev_num, 1, 1, 1), )
-        self.conv1 = conv7x7(3, 64, stride=2, padding=3)
+        strategy_no_weight = ((dev_num, 1, 1, 1),)
+        self.conv1 = conv7x7(3, 64, stride=2, padding=0)
         self.bn1 = bn_with_initialize(64)
         self.relu = ReLU()
         self.relu.relu.set_strategy(strategy_no_weight)
@@ -124,7 +123,6 @@ def test_batchnorm_batch_parallel():
     learning_rate = 0.1
     momentum = 0.9
     epoch_size = 2
-    rank_size = 0
 
     predict = Tensor(np.ones([batch_size, 3, 224, 224]), dtype=ms.float32)
     label = Tensor(np.ones([batch_size]), dtype=ms.int32)

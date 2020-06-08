@@ -19,6 +19,7 @@
 #include <chrono>
 #include <exception>
 #include <functional>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -27,7 +28,6 @@
 #include <string>
 #include <thread>
 #include "dataset/util/de_error.h"
-#include "dataset/util/make_unique.h"
 #include "dataset/util/intrp_resource.h"
 #include "dataset/util/list.h"
 #include "dataset/util/memory_pool.h"
@@ -42,8 +42,9 @@ class TaskManager;
 class Task : public IntrpResource {
  public:
   friend class TaskManager;
-
   friend class TaskGroup;
+
+  enum class WaitFlag : int { kBlocking, kNonBlocking };
 
   Task(const std::string &myName, const std::function<Status()> &f);
 
@@ -60,7 +61,7 @@ class Task : public IntrpResource {
 
   Task &operator=(Task &&) = delete;
 
-  Status GetTaskErrorIfAny();
+  Status GetTaskErrorIfAny() const;
 
   void ChangeName(const std::string &newName) { my_name_ = newName; }
 
@@ -74,7 +75,7 @@ class Task : public IntrpResource {
   // Run the task
   Status Run();
 
-  Status Join();
+  Status Join(WaitFlag wf = WaitFlag::kBlocking);
 
   bool Running() const { return running_; }
 
@@ -95,10 +96,10 @@ class Task : public IntrpResource {
 
   Status Wait() { return (wp_.Wait()); }
 
-  void set_task_group(TaskGroup *vg);
+  static Status OverrideInterruptRc(const Status &rc);
 
  private:
-  std::mutex mux_;
+  mutable std::mutex mux_;
   std::string my_name_;
   Status rc_;
   WaitPost wp_;
@@ -107,7 +108,7 @@ class Task : public IntrpResource {
   std::function<Status()> fnc_obj_;
   // Misc fields used by TaskManager.
   TaskGroup *task_group_;
-  std::thread thrd_;
+  std::future<void> thrd_;
   std::thread::id id_;
   bool is_master_;
   volatile bool running_;
@@ -115,6 +116,7 @@ class Task : public IntrpResource {
 
   void ShutdownGroup();
   TaskGroup *MyTaskGroup();
+  void set_task_group(TaskGroup *vg);
 };
 
 extern thread_local Task *gMyTask;

@@ -26,16 +26,18 @@ namespace dataset {
 class SequentialSampler : public Sampler {
  public:
   // Constructor
+  // @param num_samples - The number of samples to draw. A value of 0 indicates the sampler should produce the
+  //                      full amount of ids from the dataset
+  // @param start_index - The starting index value
   // @param int64_t samplesPerBuffer - Num of Sampler Ids to fetch via 1 GetNextBuffer call
-  explicit SequentialSampler(int64_t samples_per_buffer = std::numeric_limits<int64_t>::max());
+  explicit SequentialSampler(int64_t num_samples, int64_t start_index,
+                             int64_t samples_per_buffer = std::numeric_limits<int64_t>::max());
 
   // Destructor.
   ~SequentialSampler() = default;
 
-  // Initialize the sampler.
-  // @param op
-  // @return Status
-  Status Init(const RandomAccessOp *op) override;
+  // init sampler, called by python
+  Status InitSampler() override;
 
   // for next epoch of sampleIds
   // @return - The error code return
@@ -47,8 +49,12 @@ class SequentialSampler : public Sampler {
   // @return - The error code return
   Status GetNextBuffer(std::unique_ptr<DataBuffer> *out_buffer) override;
 
+  void Print(std::ostream &out, bool show_all) const override;
+
  private:
-  int64_t next_id_;
+  int64_t current_id_;   // The id sequencer.  Each new id increments from this
+  int64_t start_index_;  // The starting id.  current_id_ begins from here.
+  int64_t id_count_;     // An internal counter that tracks how many ids have been produced
 };
 }  // namespace dataset
 }  // namespace mindspore

@@ -1,9 +1,10 @@
+file(GLOB_RECURSE _CURRENT_SRC_FILES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*.cc")
+set_property(SOURCE ${_CURRENT_SRC_FILES} PROPERTY COMPILE_DEFINITIONS SUBMODULE_ID=mindspore::SubModuleId::SM_MD)
 add_library(utils OBJECT
     arena.cc
     circular_pool.cc
     memory_pool.cc
     cond_var.cc
-    semaphore.cc
     intrp_service.cc
     task.cc
     task_manager.cc
@@ -14,4 +15,4 @@ add_library(utils OBJECT
     path.cc
     wait_post.cc
     sig_handler.cc
-    random.cc)
+    profiling.cc)

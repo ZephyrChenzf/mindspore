@@ -16,7 +16,6 @@
 import json
 import os
 
-
 class TBEException(Exception):
     """tbe exception class"""
 
@@ -50,7 +49,7 @@ def get_build_in_impl_path():
     tbe_impl_path = os.environ.get("TBE_IMPL_PATH")
     if tbe_impl_path is None:
         default_install_path = '/usr/local/HiAI/runtime/ops/op_impl/built-in/ai_core/tbe/'
-        backup_install_path = '/usr/local/Ascend/Ascend/opp/op_impl/built-in/ai_core/tbe/'
+        backup_install_path = '/usr/local/Ascend/opp/op_impl/built-in/ai_core/tbe/'
         if os.path.exists(default_install_path):
             tbe_impl_path = default_install_path
         elif os.path.exists(backup_install_path):
@@ -80,7 +79,62 @@ def _check_arg_info(item):
         raise ValueError("Json string Errors, key:ori_format not found.")
     if 'dtype' not in item or not item['dtype']:
         raise ValueError("Json string Errors, key:dtype not found.")
+    if 'param_type' not in item or not item['param_type']:
+        raise ValueError("Json string Errors, key:param_type not found.")
 
+def get_input_output(io_info, args):
+    """
+    Parse args.
+
+    Args:
+        io_info (dict): input or output info dict.
+        args (list): the arguments list.
+
+    Raises:
+        Exception: If specific keyword is not found.
+    """
+    for item in io_info:
+        arg = []
+        for info in item:
+            if 'valid' not in info:
+                raise ValueError("Json string Errors, key:valid not found.")
+            if info['valid']:
+                _check_arg_info(info)
+                del info['valid']
+                del info['name']
+                if len(item) > 1:
+                    arg.append(info)
+                else:
+                    if info['param_type'] == 'dynamic':
+                        arg.append(info)
+                        args.append(arg)
+                    else:
+                        args.append(info)
+            else:
+                if len(item) > 1:
+                    arg.append(None)
+                else:
+                    args.append(None)
+        if len(item) > 1:
+            args.append(arg)
+
+def get_attr(attr_info, args):
+    """
+    Parse args.
+
+    Args:
+        attr_info (dict): input or output info dict.
+        args (list): the arguments list.
+
+    Raises:
+        Exception: If specific keyword is not found.
+    """
+    for item in attr_info:
+        if item["valid"]:
+            if 'value' not in item:
+                raise ValueError("Json string Errors, attr key:value not found.")
+            if item["name"] != "isRef":
+                args.append(item['value'])
 
 def get_args(op_info, arg_type):
     """
@@ -98,34 +152,13 @@ def get_args(op_info, arg_type):
     args = []
     if not op_info[arg_type]:
         return args
-    if arg_type in ['inputs', 'outputs']:
-        for item in op_info[arg_type]:
-            arg = []
-            for info in item:
-                if 'valid' not in info:
-                    raise ValueError("Json string Errors, key:valid not found.")
-                if info['valid']:
-                    _check_arg_info(info)
-                    del info['valid']
-                    del info['name']
-                    if len(item) > 1:
-                        arg.append(info)
-                    else:
-                        args.append(info)
-                else:
-                    if len(item) > 1:
-                        arg.append(None)
-                    else:
-                        args.append(None)
-            if len(item) > 1:
-                args.append(arg)
 
+    arg_info = op_info[arg_type]
+    if arg_type in ['inputs', 'outputs']:
+        get_input_output(arg_info, args)
     elif arg_type == 'attrs':
-        for item in op_info[arg_type]:
-            if 'value' not in item:
-                raise ValueError("Json string Errors, attr key:value not found.")
-            if item["name"] != "isRef":
-                args.append(item['value'])
+        get_attr(arg_info, args)
+
     return args
 
 

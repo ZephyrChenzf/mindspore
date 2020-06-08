@@ -17,11 +17,11 @@ resnet50 example
 """
 import numpy as np
 
-from mindspore import Tensor, Model, ParallelMode
-from mindspore.ops.operations import TensorAdd
-import mindspore.nn as nn
 import mindspore.context as context
+import mindspore.nn as nn
+from mindspore import Tensor, Model, ParallelMode
 from mindspore.nn.optim import Momentum
+from mindspore.ops.operations import TensorAdd
 from ....dataset_mock import MindData
 
 
@@ -107,7 +107,7 @@ class ResNet18(nn.Cell):
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, pad_mode='pad')
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU()
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1, pad_mode='pad')
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, pad_mode='same')
 
         self.layer1 = self.MakeLayer(
             block, 2, in_channels=64, out_channels=256, stride=1)
@@ -176,7 +176,7 @@ class ResNet9(nn.Cell):
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, pad_mode='pad')
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU()
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1, pad_mode='same')
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, pad_mode='same')
 
         self.layer1 = self.MakeLayer(
             block, 1, in_channels=64, out_channels=256, stride=1)

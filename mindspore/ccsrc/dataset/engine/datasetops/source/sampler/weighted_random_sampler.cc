@@ -27,29 +27,34 @@
 namespace mindspore {
 namespace dataset {
 //  Constructor.
-WeightedRandomSampler::WeightedRandomSampler(const std::vector<double> &weights, int64_t num_samples, bool replacement,
+WeightedRandomSampler::WeightedRandomSampler(int64_t num_samples, const std::vector<double> &weights, bool replacement,
                                              int64_t samples_per_buffer)
-    : Sampler(samples_per_buffer), weights_(weights), replacement_(replacement), sample_id_(0), buffer_id_(0) {
-  num_samples_ = num_samples;  // this variable is defined in base class sampler
-}
+    : Sampler(num_samples, samples_per_buffer),
+      weights_(weights),
+      replacement_(replacement),
+      sample_id_(0),
+      buffer_id_(0) {}
 
 // Initialized this Sampler.
-Status WeightedRandomSampler::Init(const RandomAccessOp *op) {
-  RETURN_UNEXPECTED_IF_NULL(op);
-  RETURN_IF_NOT_OK(op->GetNumRowsInDataset(&num_rows_));
+Status WeightedRandomSampler::InitSampler() {
+  // Special value of 0 for num_samples means that the user wants to sample the entire set of data.
+  // If the user asked to sample more rows than exists in the dataset, adjust the num_samples accordingly.
+  if (num_samples_ == 0 || num_samples_ > num_rows_) {
+    num_samples_ = num_rows_;
+  }
+  CHECK_FAIL_RETURN_UNEXPECTED(num_rows_ > 0 && num_samples_, "num_samples & num_rows need to be positive");
+  CHECK_FAIL_RETURN_UNEXPECTED(samples_per_buffer_ > 0, "samples_per_buffer<=0\n");
 
   // Initialize random generator with seed from config manager
   rand_gen_.seed(GetSeed());
 
   samples_per_buffer_ = (samples_per_buffer_ > num_samples_) ? num_samples_ : samples_per_buffer_;
 
-  CHECK_FAIL_RETURN_UNEXPECTED(num_samples_ > 0 && samples_per_buffer_ > 0, "Fail to init WeightedRandomSampler");
-
   if (!replacement_) {
-    exp_dist_ = mindspore::make_unique<std::exponential_distribution<>>(1);
+    exp_dist_ = std::make_unique<std::exponential_distribution<>>(1);
     InitOnePassSampling();
   } else {
-    discrete_dist_ = mindspore::make_unique<std::discrete_distribution<int64_t>>(weights_.begin(), weights_.end());
+    discrete_dist_ = std::make_unique<std::discrete_distribution<int64_t>>(weights_.begin(), weights_.end());
   }
 
   return Status::OK();
@@ -81,6 +86,11 @@ Status WeightedRandomSampler::Reset() {
   } else {
     discrete_dist_->reset();
   }
+
+  if (HasChildSampler()) {
+    RETURN_IF_NOT_OK(child_[0]->Reset());
+  }
+
   return Status::OK();
 }
 
@@ -96,9 +106,13 @@ Status WeightedRandomSampler::GetNextBuffer(std::unique_ptr<DataBuffer> *out_buf
   }
 
   if (sample_id_ == num_samples_) {
-    (*out_buffer) = make_unique<DataBuffer>(buffer_id_++, DataBuffer::kDeBFlagEOE);
+    (*out_buffer) = std::make_unique<DataBuffer>(buffer_id_++, DataBuffer::kDeBFlagEOE);
   } else {
-    (*out_buffer) = make_unique<DataBuffer>(buffer_id_++, DataBuffer::kDeBFlagNone);
+    if (HasChildSampler()) {
+      RETURN_IF_NOT_OK(child_[0]->GetNextBuffer(&child_ids_));
+    }
+
+    (*out_buffer) = std::make_unique<DataBuffer>(buffer_id_++, DataBuffer::kDeBFlagNone);
     std::shared_ptr<Tensor> outputIds;
 
     int64_t last_id = sample_id_ + samples_per_buffer_;
@@ -111,7 +125,7 @@ Status WeightedRandomSampler::GetNextBuffer(std::unique_ptr<DataBuffer> *out_buf
     RETURN_IF_NOT_OK(CreateSamplerTensor(&outputIds, last_id - sample_id_));
 
     // Initialize tensor.
-    int64_t *id_ptr = reinterpret_cast<int64_t *>(outputIds->StartAddr());
+    int64_t *id_ptr = reinterpret_cast<int64_t *>(outputIds->GetMutableBuffer());
     // Assign the data to tensor element.
     while (sample_id_ < last_id) {
       int64_t genId;
@@ -127,12 +141,17 @@ Status WeightedRandomSampler::GetNextBuffer(std::unique_ptr<DataBuffer> *out_buf
         RETURN_STATUS_UNEXPECTED("generated id is bigger than numRows (out of bound).");
       }
 
-      *(id_ptr++) = genId;
+      if (HasChildSampler()) {
+        RETURN_IF_NOT_OK(GetAssociatedChildId(&genId, genId));
+      }
+
+      *id_ptr = genId;
+      id_ptr++;
       sample_id_++;
     }
 
     // Create a TensorTable from that single tensor and push into DataBuffer
-    (*out_buffer)->set_tensor_table(make_unique<TensorQTable>(1, TensorRow(1, outputIds)));
+    (*out_buffer)->set_tensor_table(std::make_unique<TensorQTable>(1, TensorRow(1, outputIds)));
   }
 
   return Status::OK();

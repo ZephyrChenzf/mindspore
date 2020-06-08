@@ -13,19 +13,21 @@
 # limitations under the License.
 # ============================================================================
 
-import pytest
 import numpy as np
-from mindspore.nn.optim import Momentum
-from mindspore.ops import operations as P
-from mindspore.nn import TrainOneStepCell, WithLossCell
-from mindspore.nn import Dense
+import pytest
+
+import mindspore.context as context
+import mindspore.nn as nn
 from mindspore import Tensor
 from mindspore.common.initializer import initializer
 from mindspore.common.parameter import Parameter
-import mindspore.context as context
-import mindspore.nn as nn
+from mindspore.nn import Dense
+from mindspore.nn import TrainOneStepCell, WithLossCell
+from mindspore.nn.optim import Momentum
+from mindspore.ops import operations as P
 
 context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
+
 
 def InitialLstmWeight(input_size, hidden_size, num_layers, bidirectional, has_bias=False):
     num_directions = 1
@@ -55,6 +57,7 @@ def InitialLstmWeight(input_size, hidden_size, num_layers, bidirectional, has_bi
         [num_layers * num_directions, batch_size, hidden_size]), name='c')
 
     return h, c, w
+
 
 class SentimentNet(nn.Cell):
     def __init__(self, vocab_size, embed_size, num_hiddens, num_layers,
@@ -99,7 +102,10 @@ class SentimentNet(nn.Cell):
         outputs = self.decoder(encoding)
         return outputs
 
+
 batch_size = 64
+
+
 @pytest.mark.level0
 @pytest.mark.platform_x86_gpu_training
 @pytest.mark.env_onecard
@@ -113,9 +119,9 @@ def test_LSTM():
     vocab_size = 252193
     max_len = 500
 
-    weight = np.ones((vocab_size+1, embed_size)).astype(np.float32)
+    weight = np.ones((vocab_size + 1, embed_size)).astype(np.float32)
 
-    net = SentimentNet(vocab_size=(vocab_size+1), embed_size=embed_size,
+    net = SentimentNet(vocab_size=(vocab_size + 1), embed_size=embed_size,
                        num_hiddens=num_hiddens, num_layers=num_layers,
                        bidirectional=bidirectional, weight=weight,
                        labels=labels, batch_size=batch_size)
@@ -135,4 +141,5 @@ def test_LSTM():
     for epoch in range(num_epochs):
         loss = train_network(train_features, train_labels)
         losses.append(loss)
-    assert(losses[-1].asnumpy() < 0.01)
+        print("loss:", loss.asnumpy())
+    assert (losses[-1].asnumpy() < 0.01)

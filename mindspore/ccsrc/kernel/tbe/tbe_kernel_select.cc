@@ -19,6 +19,7 @@
 #include <unordered_map>
 #include <memory>
 #include <map>
+#include <set>
 
 #include "session/anf_runtime_algorithm.h"
 #include "kernel/oplib/oplib.h"
@@ -35,6 +36,8 @@ namespace kernel {
 constexpr auto kName = "name";
 constexpr auto kDtype = "dtype";
 constexpr auto kFormat = "format";
+constexpr auto kPrefixInput = "input";
+constexpr auto kPrefixOutput = "output";
 const std::map<std::string, std::string> DYNAMIC_FORMAT_MAP = {{"NCHW", "DefaultFormat"},
                                                                {"NHWC", "DefaultFormat"},
                                                                {"ND", "DefaultFormat"},
@@ -97,7 +100,7 @@ std::vector<std::string> SplitStr(const std::string &string, const std::string &
       substr = string.substr(start, index - start);
     }
     (void)substr.erase(0, substr.find_first_not_of(' '));
-    (void)substr.erase(substr.find_last_not_of(" ") + 1);
+    (void)substr.erase(substr.find_last_not_of(' ') + 1);
     auto iter = DYNAMIC_FORMAT_MAP.find(substr);
     if (iter != DYNAMIC_FORMAT_MAP.end()) {
       substr = iter->second;
@@ -110,8 +113,8 @@ std::vector<std::string> SplitStr(const std::string &string, const std::string &
   if (string.size() > start) {
     substr = string.substr(start);
   }
-  (void)substr.erase(0, substr.find_first_not_of(" "));
-  (void)substr.erase(substr.find_last_not_of(" ") + 1);
+  (void)substr.erase(0, substr.find_first_not_of(' '));
+  (void)substr.erase(substr.find_last_not_of(' ') + 1);
   auto iter = DYNAMIC_FORMAT_MAP.find(substr);
   if (iter != DYNAMIC_FORMAT_MAP.end()) {
     substr = iter->second;
@@ -120,7 +123,7 @@ std::vector<std::string> SplitStr(const std::string &string, const std::string &
   return result;
 }
 
-void ConvertFormatDtype(const std::string &format, const std::string &dtype, const std::shared_ptr<OpIOInfo> io_info) {
+void ConvertFormatDtype(const std::string &format, const std::string &dtype, const std::shared_ptr<OpIOInfo> &io_info) {
   MS_EXCEPTION_IF_NULL(io_info);
   std::vector<std::string> format_vec = SplitStr(format, ",");
   std::vector<std::string> dtype_vec = SplitStr(dtype, ",");
@@ -146,13 +149,13 @@ bool ParseDynamicFormatJson(const std::string &jsonStr, std::vector<std::shared_
     if (!CheckJsonItemValidity(json_obj, key_name, keys)) {
       return false;
     }
-    if (key_name.find("input", 0) != std::string::npos) {
+    if (key_name.compare(0, strlen(kPrefixInput), kPrefixInput) == 0) {
       std::shared_ptr<OpIOInfo> input = std::make_shared<OpIOInfo>();
       MS_EXCEPTION_IF_NULL(input);
       input->set_name(json_obj[key_name].at(kName));
       ConvertFormatDtype(json_obj[key_name].at(kFormat), json_obj[key_name].at(kDtype), input);
       inputs->emplace_back(input);
-    } else if (key_name.find("output", 0) != std::string::npos) {
+    } else if (key_name.compare(0, strlen(kPrefixOutput), kPrefixOutput) == 0) {
       std::shared_ptr<OpIOInfo> output = std::make_shared<OpIOInfo>();
       MS_EXCEPTION_IF_NULL(output);
       output->set_name(json_obj[key_name].at(kName));
@@ -166,7 +169,7 @@ bool ParseDynamicFormatJson(const std::string &jsonStr, std::vector<std::shared_
   return true;
 }
 
-std::string OpSelectFormat(const shared_ptr<AnfNode> &anf_node) {
+std::string OpSelectFormat(const std::shared_ptr<AnfNode> &anf_node) {
   nlohmann::json kernel_json;
   std::string res_json_str;
   TbeKernelJsonCreator creator(OP_SELECT_FORMAT);
@@ -180,7 +183,7 @@ std::string OpSelectFormat(const shared_ptr<AnfNode> &anf_node) {
   return res_json_str;
 }
 
-void SetTidyInputsInfo(const shared_ptr<AnfNode> &anf_node,
+void SetTidyInputsInfo(const std::shared_ptr<AnfNode> &anf_node,
                        const std::shared_ptr<KernelBuildInfo::KernelBuildInfoBuilder> &builder,
                        const std::vector<std::shared_ptr<OpIOInfo>> &inputs) {
   std::vector<TypeId> inputs_type;
@@ -198,7 +201,7 @@ void SetTidyInputsInfo(const shared_ptr<AnfNode> &anf_node,
     MS_EXCEPTION_IF_NULL(inputs[i]);
     std::string param_type = inputs[i]->param_type();
     if (i >= real_input_num) {
-      MS_LOG(INFO) << "Input index:" << i << "is out of real_input_num:" << real_input_num;
+      MS_LOG(INFO) << "Input index: " << i << " is out of real_input_num:" << real_input_num;
       continue;
     }
     auto type_id = AnfAlgo::GetPrevNodeOutputInferDataType(anf_node, i);
@@ -229,14 +232,14 @@ void SetTidyInputsInfo(const shared_ptr<AnfNode> &anf_node,
   builder->SetInputsFormat(inputs_format);
 }
 
-void SetTidyOutputsInfo(const shared_ptr<AnfNode> &anf_node,
+void SetTidyOutputsInfo(const std::shared_ptr<AnfNode> &anf_node,
                         const std::shared_ptr<KernelBuildInfo::KernelBuildInfoBuilder> &builder,
                         const std::vector<std::shared_ptr<OpIOInfo>> &outputs) {
   std::vector<TypeId> outputs_type;
   std::vector<std::string> outputs_format;
   auto real_output_num = AnfAlgo::GetOutputTensorNum(anf_node);
   size_t output_idx = 0;
-  for (const auto output : outputs) {
+  for (const auto &output : outputs) {
     MS_EXCEPTION_IF_NULL(output);
     if (output_idx >= real_output_num) {
       continue;
@@ -266,7 +269,8 @@ void SetTidyOutputsInfo(const shared_ptr<AnfNode> &anf_node,
   builder->SetOutputsFormat(outputs_format);
 }
 
-void GenTidyKernelBuildInfo(const shared_ptr<AnfNode> &anf_node, const std::vector<std::shared_ptr<OpIOInfo>> &inputs,
+void GenTidyKernelBuildInfo(const std::shared_ptr<AnfNode> &anf_node,
+                            const std::vector<std::shared_ptr<OpIOInfo>> &inputs,
                             const std::vector<std::shared_ptr<OpIOInfo>> &outputs) {
   auto builder_tmp = std::make_shared<KernelBuildInfo::KernelBuildInfoBuilder>();
   builder_tmp->SetKernelType(TBE_KERNEL);
@@ -276,7 +280,7 @@ void GenTidyKernelBuildInfo(const shared_ptr<AnfNode> &anf_node, const std::vect
 }
 
 void ReplaceByDynamicFormatDtype(const CNodePtr &kernel_node, const std::shared_ptr<const OpInfo> &op_info_ptr,
-                                 const std::shared_ptr<OpInfo> op_info_new_ptr) {
+                                 const std::shared_ptr<OpInfo> &op_info_new_ptr) {
   std::vector<std::shared_ptr<OpIOInfo>> inputs_static = op_info_ptr->inputs_ptr();
   std::vector<std::shared_ptr<OpIOInfo>> outputs_static = op_info_ptr->outputs_ptr();
   std::vector<std::shared_ptr<OpIOInfo>> inputs_dyn;
@@ -317,9 +321,11 @@ void ReplaceByDynamicFormatDtype(const CNodePtr &kernel_node, const std::shared_
     MS_LOG(INFO) << "Dynamic select format response successful, use dynamic format.";
     for (size_t i = 0; i < inputs_static.size(); i++) {
       inputs_dyn[i]->set_param_type(inputs_static[i]->param_type());
+      inputs_dyn[i]->set_reshape_type(inputs_static[i]->reshape_type());
     }
     for (size_t j = 0; j < outputs_static.size(); j++) {
       outputs_dyn[j]->set_param_type(outputs_static[j]->param_type());
+      outputs_dyn[j]->set_reshape_type(outputs_static[j]->reshape_type());
     }
     op_info_new_ptr->set_inputs_ptr(inputs_dyn);
     op_info_new_ptr->set_outputs_ptr(outputs_dyn);
@@ -329,6 +335,29 @@ void ReplaceByDynamicFormatDtype(const CNodePtr &kernel_node, const std::shared_
   op_info_new_ptr->set_op_name(op_info_ptr->op_name());
   op_info_new_ptr->set_imply_type(op_info_ptr->imply_type());
   op_info_new_ptr->set_fusion_type(op_info_ptr->fusion_type());
+}
+
+bool StringToAxisVector(const std::string &reshape_type_str, std::vector<Axis> *reshape_type_vec) {
+  for (const auto &c : reshape_type_str) {
+    switch (c) {
+      case 'N':
+        reshape_type_vec->push_back(kernel::N);
+        break;
+      case 'C':
+        reshape_type_vec->push_back(kernel::C);
+        break;
+      case 'H':
+        reshape_type_vec->push_back(kernel::H);
+        break;
+      case 'W':
+        reshape_type_vec->push_back(kernel::W);
+        break;
+      default:
+        MS_LOG(ERROR) << "Unknown axis " << c << "in reshape type.";
+        return false;
+    }
+  }
+  return true;
 }
 
 bool SetKernelBuilderInputInfo(const std::vector<std::shared_ptr<OpIOInfo>> &inputs, size_t real_input_num,
@@ -343,6 +372,7 @@ bool SetKernelBuilderInputInfo(const std::vector<std::shared_ptr<OpIOInfo>> &inp
   MS_EXCEPTION_IF_NULL(inputs[0]);
   size_t kernel_info_cnt = inputs[0]->dtypes().size();
 
+  std::vector<std::vector<Axis>> reshape_types;
   for (const auto &input : inputs) {
     MS_EXCEPTION_IF_NULL(input);
     std::string param_type = input->param_type();
@@ -350,6 +380,11 @@ bool SetKernelBuilderInputInfo(const std::vector<std::shared_ptr<OpIOInfo>> &inp
     std::vector<std::string> formats = input->formats();
     if (dtypes.size() != kernel_info_cnt || formats.size() != kernel_info_cnt) {
       MS_LOG(ERROR) << "Set input kernel builder info, dtyps size != formats size.";
+      return false;
+    }
+
+    std::vector<Axis> reshape_type;
+    if (!StringToAxisVector(input->reshape_type(), &reshape_type)) {
       return false;
     }
 
@@ -364,6 +399,7 @@ bool SetKernelBuilderInputInfo(const std::vector<std::shared_ptr<OpIOInfo>> &inp
         auto type_id = tbe::DtypeToTypeId(dtypes[builder_idex]);
         inputs_device_type.push_back(type_id);
         inputs_format.push_back(formats[builder_idex]);
+        reshape_types.push_back(reshape_type);
       }
       dyn_input_idx++;
     } else if (param_type == "required") {
@@ -371,6 +407,7 @@ bool SetKernelBuilderInputInfo(const std::vector<std::shared_ptr<OpIOInfo>> &inp
       auto type_id = tbe::DtypeToTypeId(dtypes[builder_idex]);
       inputs_device_type.push_back(type_id);
       inputs_format.push_back(formats[builder_idex]);
+      reshape_types.push_back(reshape_type);
     } else {
       if (kernel_info_index < real_input_num) {
         MS_LOG(INFO) << "Set input kernel builder info, input type is optional, input index is " << kernel_info_index;
@@ -378,10 +415,12 @@ bool SetKernelBuilderInputInfo(const std::vector<std::shared_ptr<OpIOInfo>> &inp
         auto type_id = tbe::DtypeToTypeId(dtypes[builder_idex]);
         inputs_device_type.push_back(type_id);
         inputs_format.push_back(formats[builder_idex]);
+        reshape_types.push_back(reshape_type);
       }
     }
   }
 
+  builder->SetInputReshapeType(reshape_types);
   builder->SetInputsDeviceType(inputs_device_type);
   builder->SetInputsFormat(inputs_format);
   return true;
@@ -399,12 +438,18 @@ bool SetKernelBuilderOutputInfo(const std::vector<std::shared_ptr<OpIOInfo>> &ou
   MS_EXCEPTION_IF_NULL(outputs[0]);
   size_t kernel_info_cnt = outputs[0]->dtypes().size();
 
+  std::vector<std::vector<Axis>> reshape_types;
   for (const auto &output : outputs) {
     MS_EXCEPTION_IF_NULL(output);
     if (output_idx >= real_output_num) {
       MS_LOG(WARNING) << "real_output_num: " << real_output_num << ", output_idx: " << output_idx << "is out of limit!";
       continue;
     }
+    std::vector<Axis> reshape_type;
+    if (!StringToAxisVector(output->reshape_type(), &reshape_type)) {
+      return false;
+    }
+
     size_t output_num = 0;
     if (output->param_type() == "dynamic") {
       if (outputs.size() > 1) {
@@ -430,10 +475,12 @@ bool SetKernelBuilderOutputInfo(const std::vector<std::shared_ptr<OpIOInfo>> &ou
       auto type_id = tbe::DtypeToTypeId(dtypes[builder_idex]);
       outputs_device_type.push_back(type_id);
       outputs_format.push_back(formats[builder_idex]);
+      reshape_types.push_back(reshape_type);
       output_idx++;
     }
   }
 
+  builder->SetOutputReshapeType(reshape_types);
   builder->SetOutputsFormat(outputs_format);
   builder->SetOutputsDeviceType(outputs_device_type);
   return true;
@@ -449,6 +496,7 @@ void SetKernelBuildCommonInfo(const std::shared_ptr<KernelBuildInfo::KernelBuild
   if (tbe::GetFusionType(fusion_type) != UNKNOWN_FUSION_TYPE) {
     builder->SetFusionType(tbe::GetFusionType(fusion_type));
   }
+  builder->SetOpPattern(op_info_ptr->op_pattern());
   builder->SetKernelType(TBE_KERNEL);
 }
 
@@ -466,7 +514,7 @@ bool ParseMetadata(const CNodePtr &kernel_node, const std::shared_ptr<const OpIn
   if (primitive->GetAttr("dyn_input_sizes") != nullptr) {
     dyn_input_sizes = GetValue<std::vector<int>>(primitive->GetAttr("dyn_input_sizes"));
   }
-  if (inputs.size() > 0) {
+  if (!inputs.empty()) {
     MS_EXCEPTION_IF_NULL(inputs[0]);
     size_t kernel_info_cnt = inputs[0]->dtypes().size();
     for (size_t j = 0; j < kernel_info_cnt; j++) {
@@ -479,7 +527,7 @@ bool ParseMetadata(const CNodePtr &kernel_node, const std::shared_ptr<const OpIn
         return false;
       }
 
-      if (outputs.size() > 0) {
+      if (!outputs.empty()) {
         if (!SetKernelBuilderOutputInfo(outputs, j, real_output_num, builder)) {
           MS_LOG(ERROR) << "Parse kernel metadata, set outputs kernel builder info failed.";
           return false;
@@ -488,7 +536,7 @@ bool ParseMetadata(const CNodePtr &kernel_node, const std::shared_ptr<const OpIn
 
       kernel_info_list->push_back(builder->Build());
     }
-  } else if (outputs.size() > 0) {
+  } else if (!outputs.empty()) {
     MS_EXCEPTION_IF_NULL(outputs[0]);
     size_t kernel_info_cnt = outputs[0]->dtypes().size();
     for (size_t j = 0; j < kernel_info_cnt; j++) {
@@ -507,10 +555,82 @@ bool ParseMetadata(const CNodePtr &kernel_node, const std::shared_ptr<const OpIn
   return true;
 }
 
+bool IsShapeMatchFormat(const std::vector<size_t> &shape, const std::string &format) {
+  // if format is default, it remarkes support all format
+  if (kOpFormatList.find(format) == kOpFormatList.end()) {
+    MS_LOG(EXCEPTION) << "Got the unknown format " << format;
+  }
+  if (format == kOpFormat_DEFAULT) {
+    return true;
+  }
+  if (format == kOpFormat_NDHWC && shape.size() != kShape5dDims) {
+    return false;
+  }
+  // if shape size is 0, the shape will be a scalar
+  if (shape.empty()) {
+    return true;
+  }
+  if (shape.size() > kShape4dDims) {
+    return false;
+  }
+  if (format == kOpFormat_FRAC_NZ && shape.size() < 2) {
+    return false;
+  }
+  return true;
+}
+
+bool IsValidKernelInfo(const std::shared_ptr<CNode> &kernel_node, const kernel::KernelBuildInfo &kernel_build_info) {
+  MS_EXCEPTION_IF_NULL(kernel_node);
+  auto kernel_name = AnfAlgo::GetCNodeName(kernel_node);
+  const size_t kCAxis = 1;
+  for (size_t index = 0; index < kernel_build_info.GetOutputNum(); ++index) {
+    auto output_shape = AnfAlgo::GetOutputInferShape(kernel_node, index);
+    if (kernel_build_info.GetOutputFormat(index) == kOpFormat_FRACTAL_Z_C04) {
+      if (output_shape.size() != kShape4dDims || output_shape[kCAxis] > 4) {
+        return false;
+      }
+      return false;
+    }
+    if (!IsShapeMatchFormat(output_shape, kernel_build_info.GetOutputFormat(index))) {
+      return false;
+    }
+    if (kernel_name == "ReduceMean") {
+      auto keep_dims = AnfAlgo::GetNodeAttr<bool>(kernel_node, kAttrKeepDims);
+      if (!keep_dims && kernel_build_info.GetOutputFormat(index) != kOpFormat_DEFAULT) {
+        return false;
+      }
+    }
+  }
+  for (size_t index = 0; index < kernel_build_info.GetInputNum(); ++index) {
+    auto input_shape = AnfAlgo::GetPrevNodeOutputInferShape(kernel_node, index);
+    if (!IsShapeMatchFormat(input_shape, kernel_build_info.GetInputFormat(index))) {
+      return false;
+    }
+    if (kernel_build_info.GetInputFormat(index) == kOpFormat_FRACTAL_Z_C04) {
+      if (input_shape.size() != kShape4dDims || input_shape[kCAxis] > 4) {
+        return false;
+      }
+      return false;
+    }
+    if (kernel_name == "ReduceMean") {
+      auto keep_dims = AnfAlgo::GetNodeAttr<bool>(kernel_node, kAttrKeepDims);
+      if (!keep_dims && kernel_build_info.GetInputFormat(index) != kOpFormat_DEFAULT) {
+        return false;
+      }
+    }
+  }
+  if (AnfAlgo::GetCNodeName(kernel_node) == prim::kPrimCast->name()) {
+    return AnfAlgo::GetOutputInferDataType(kernel_node, 0) == kernel_build_info.GetOutputDeviceType(0) &&
+           AnfAlgo::GetPrevNodeOutputInferDataType(kernel_node, 0) == kernel_build_info.GetInputDeviceType(0);
+  }
+  return true;
+}
+
 void TbeMetadataInfo(const CNodePtr &kernel_node, std::vector<std::shared_ptr<KernelBuildInfo>> *kernel_info_list) {
   MS_EXCEPTION_IF_NULL(kernel_node);
   MS_EXCEPTION_IF_NULL(kernel_info_list);
   std::vector<std::shared_ptr<kernel::KernelBuildInfo>> parse_info_list;
+
   std::string op_name = AnfAlgo::GetCNodeName(kernel_node);
   auto op_info_ptr = mindspore::kernel::OpLib::FindOp(op_name, OpImplyType::kTBE);
   if (op_info_ptr == nullptr) {
@@ -527,19 +647,17 @@ void TbeMetadataInfo(const CNodePtr &kernel_node, std::vector<std::shared_ptr<Ke
 
   auto context_ptr = MsContext::GetInstance();
   MS_EXCEPTION_IF_NULL(context_ptr);
-  for (auto parse_info : parse_info_list) {
-    if (context_ptr->execution_mode() == kPynativeMode) {
-      kernel_info_list->push_back(parse_info);
-    } else {
+  for (const auto &parse_info : parse_info_list) {
+    if (IsValidKernelInfo(kernel_node, *(parse_info))) {
       if (CheckSupported(kernel_node, parse_info)) {
         kernel_info_list->push_back(parse_info);
       } else {
         MS_LOG(INFO) << "CheckSupported Failed for TBE op" << op_name << " kernel info.";
       }
     }
-  }
-  if (kernel_info_list->empty()) {
-    MS_LOG(DEBUG) << "Tbe dose not has metadata of op[" << op_name << "].";
+    if (kernel_info_list->empty()) {
+      MS_LOG(DEBUG) << "Tbe dose not have op [" << op_name << "].";
+    }
   }
 }
 }  // namespace kernel

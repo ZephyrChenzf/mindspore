@@ -18,14 +18,15 @@
 #define MINDSPORE_CCSRC_PARALLEL_GRAPH_UTIL_GET_GRAPH_INFO_H_
 
 #include "pybind11/stl.h"
-
+#include "pybind11/pybind11.h"
 #include "ir/anf.h"
 
+namespace py = pybind11;
 namespace mindspore {
 namespace parallel {
-py::dict GetParameterLayout(const FuncGraphPtr& graph);
-py::dict GetCNodeStrategy(const FuncGraphPtr& graph);
-py::dict GetAllreduceFusion(const FuncGraphPtr& graph);
+py::dict GetParameterLayout(const FuncGraphPtr &graph);
+py::dict GetCNodeStrategy(const FuncGraphPtr &graph);
+py::dict GetAllreduceFusion(const FuncGraphPtr &graph);
 }  // namespace parallel
 }  // namespace mindspore
 

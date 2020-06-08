@@ -1,7 +1,7 @@
 /**
  * This is the C++ adaptation and derivative work of Myia (https://github.com/mila-iqia/myia/).
  *
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2020 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@
 #include "./common.h"
 #include "pipeline/resource.h"
 #include "pipeline/parse/resolve.h"
-#include "ir/meta_tensor.h"
+#include "ir/tensor.h"
 #include "utils/convert_utils.h"
 #include "pipeline/parse/data_converter.h"
 #include "pipeline/static_analysis/param_validator.h"
@@ -42,106 +42,112 @@
 
 namespace mindspore {
 namespace abstract {
-PrimitiveEvalImplMap PrimitiveToInferImplMap = {
-  // Statements
-  {prim::kPrimReturn, {InferImplReturn, true}},
-  {prim::kPrimTypeOf, {InferImplTypeof, false}},
-  {prim::kPrimHasType, {InferImplHasType, false}},
-  {prim::kPrimDot, {InferImplDot, true}},
-  {prim::kPrimSwitch, {InferImplSwitch, true}},
-  {prim::kPrimIs_, {InferImplIs_, true}},
-  {prim::kPrimIsNot, {InferImplIsNot, true}},
-  // Maths
-  {prim::kPrimMaximumGrad, {InferImplMinOrMaxGrad, true}},
-  {prim::kPrimMinimumGrad, {InferImplMinOrMaxGrad, true}},
-  // Array
-  {prim::kPrimScalarToArray, {InferImplScalarToArray, true}},
-  {prim::kPrimArrayToScalar, {InferImplArrayToScalar, true}},
-  {prim::kPrimBroadcastShape, {InferImplBroadCastShape, true}},
-  {prim::kPrimShape, {InferImplShape, true}},
-  {prim::kPrimPack, {InferImplPack, true}},
-  // Structure
-  {prim::kPrimMakeTuple, {InferImplMakeTuple, true}},
-  {prim::kPrimMakeList, {InferImplMakeList, true}},
-  {prim::kPrimMakeDict, {InferImplMakeDict, true}},
-  {prim::kPrimMakeSlice, {InferImplMakeSlice, true}},
-  {prim::kPrimMakeKeywordArg, {InferImplMakeKwarg, true}},
-  {prim::kPrimExtractKeywordArg, {InferImplExtractKwarg, true}},
-  {prim::kPrimMakeRecord, {InferImplMakeRecord, false}},
-  {prim::kPrimTupleGetItem, {InferImplTupleGetItem, true}},
-  {prim::kPrimListGetItem, {InferImplListGetItem, true}},
-  {prim::kPrimTupleSetItem, {InferImplTupleSetItem, true}},
-  {prim::kPrimListSetItem, {InferImplListSetItem, true}},
-  {prim::kPrimDictGetItem, {InferImplDictGetItem, true}},
-  {prim::kPrimDictSetItem, {InferImplDictSetItem, true}},
-  {prim::kPrimListAppend, {InferImplListAppend, true}},
-  {prim::kPrimTupleLen, {InferImplTupleLen, true}},
-  {prim::kPrimListLen, {InferImplListLen, true}},
-  {prim::kPrimArrayLen, {InferImplArrayLen, true}},
-  {prim::kPrimListMap, {InferImplListMap, false}},
-  {prim::kPrimListReduce, {InferImplListReduce, false}},
-  {prim::kPrimTupleReversed, {InferImplTupleReversed, false}},
-  {prim::kPrimReducedShape, {InferImplReduceShape, false}},
-  {prim::kPrimTupleDiv, {InferImplTupleDiv, false}},
-  {prim::kPrimTupleToArray, {InferImplTuple2Array, false}},
-  {prim::kPrimShapeMul, {InferImplShapeMul, false}},
-  {prim::kPrimTupleEqual, {InferImplTupleEqual, false}},
-  {prim::kPrimListEqual, {InferImplListEqual, false}},
-  {prim::kPrimMakeRange, {InferImplMakeRange, false}},
-  {prim::kPrimStopGradient, {InferImplStopGradient, false}},
-  {prim::kPrimStringEqual, {InferImplStringEqual, false}},
-  {prim::kPrimDictLen, {InferImplDictLen, false}},
-  // NN
-  {prim::kPrimPooling, {InferImplPooling, true}},
-  {prim::kPrimPoolingGrad, {InferImplPoolingGrad, true}},
-  {prim::kPrimFusedBatchNorm, {InferImplFusedBatchNorm, true}},
-  {prim::kPrimFusedBatchNormGrad, {InferImplFusedBatchNormGrad, true}},
-  {prim::kPrimReluGrad, {InferImplReluGrad, true}},
-  {prim::kPrimConv2DBackpropInput, {InferImplConv2DBackpropInput, true}},
-  {prim::kPrimConv2DBackpropFilter, {InferImplConv2DBackpropFilter, true}},
-  {prim::kPrimBiasAddGrad, {InferImplBiasAddGrad, true}},
-  {prim::kPrimRelu, {InferImplRelu, true}},
-  {prim::kPrimZerosLikeTensor, {InferImplZerosLikeTensor, true}},
-  {prim::kPrimFakeBprop, {InferImplFakeBprop, false}},
-  {prim::kPrimLayerNorm, {InferImplLayerNorm, true}},
-  {prim::kPrimLayerNormGrad, {InferImplLayerNormGrad, true}},
-  {prim::kPrimDropoutGenMask, {InferImplDropoutGenMask, true}},
-  // Others
-  {prim::kPrimIdentity, {InferImplIdentity, true}},
-  // Set impl to null as it will use PartialEvaluator;
-  {prim::kPrimPartial, {nullptr, true}},
-  {prim::kPrimJ, {InferImplJ, false}},
-  {prim::kPrimEnvGetItem, {InferImplEnvGetItem, true}},
-  {prim::kPrimEnvSetItem, {InferImplEnvSetItem, true}},
-  {prim::kPrimEnvAdd, {InferImplEnvAdd, true}},
-  {prim::kPrimMakeRefKey, {InferImplMakeRefKey, true}},
-  {prim::kPrimMakeRef, {InferImplMakeRef, true}},
-  {prim::kPrimGetRefKey, {InferImplGetRefKey, true}},
-  {prim::kPrimGetRefValue, {InferImplGetRefValue, true}},
-  {prim::kPrimGetRefOrigin, {InferImplGetRefOrigin, true}},
-  {prim::kPrimStateSetItem, {InferImplStateSetItem, true}},
-  {prim::kPrimDepend, {InferImplDepend, true}},
-  {prim::kPrimBroadcastGradientArgs, {InferImplBroadcastGradientArgs, false}},
-  {prim::kPrimControlDepend, {InferImplControlDepend, true}},
-  // Debug
-  {prim::kPrimScalarSummary, {InferImplScalarSummary, true}},
-  {prim::kPrimImageSummary, {InferImplTensorSummary, true}},
-  {prim::kPrimTensorSummary, {InferImplTensorSummary, true}},
-};
+PrimitiveEvalImplMap &GetPrimitiveToEvalImplMap() {
+  static PrimitiveEvalImplMap prim_eval_implement_map = {
+    // Statements
+    {prim::kPrimReturn, {InferImplReturn, true}},
+    {prim::kPrimTypeOf, {InferImplTypeof, false}},
+    {prim::kPrimHasType, {InferImplHasType, false}},
+    {prim::kPrimDot, {InferImplDot, true}},
+    {prim::kPrimSwitch, {InferImplSwitch, true}},
+    {prim::kPrimSwitchLayer, {InferImplSwitchLayer, true}},
+    {prim::kPrimIs_, {InferImplIs_, true}},
+    {prim::kPrimIsNot, {InferImplIsNot, true}},
+    {prim::kPrimInDict, {InferImplInDict, true}},
+    {prim::kPrimNotInDict, {InferImplNotInDict, true}},
+    {prim::kPrimIsConsant, {InferImplIsConstant, true}},
+    // Maths
+    {prim::kPrimMaximumGrad, {InferImplMinOrMaxGrad, true}},
+    {prim::kPrimMinimumGrad, {InferImplMinOrMaxGrad, true}},
+    // Array
+    {prim::kPrimScalarToArray, {InferImplScalarToArray, true}},
+    {prim::kPrimArrayToScalar, {InferImplArrayToScalar, true}},
+    {prim::kPrimBroadcastShape, {InferImplBroadCastShape, true}},
+    {prim::kPrimShape, {InferImplShape, true}},
+    {prim::kPrimPack, {InferImplPack, true}},
+    // Structure
+    {prim::kPrimMakeTuple, {InferImplMakeTuple, true}},
+    {prim::kPrimMakeList, {InferImplMakeList, true}},
+    {prim::kPrimMakeDict, {InferImplMakeDict, true}},
+    {prim::kPrimMakeSlice, {InferImplMakeSlice, true}},
+    {prim::kPrimMakeKeywordArg, {InferImplMakeKwarg, true}},
+    {prim::kPrimExtractKeywordArg, {InferImplExtractKwarg, true}},
+    {prim::kPrimMakeRecord, {InferImplMakeRecord, false}},
+    {prim::kPrimTupleGetItem, {InferImplTupleGetItem, true}},
+    {prim::kPrimListGetItem, {InferImplListGetItem, true}},
+    {prim::kPrimTupleSetItem, {InferImplTupleSetItem, true}},
+    {prim::kPrimListSetItem, {InferImplListSetItem, true}},
+    {prim::kPrimDictGetItem, {InferImplDictGetItem, true}},
+    {prim::kPrimDictSetItem, {InferImplDictSetItem, true}},
+    {prim::kPrimListAppend, {InferImplListAppend, true}},
+    {prim::kPrimTupleLen, {InferImplTupleLen, true}},
+    {prim::kPrimListLen, {InferImplListLen, true}},
+    {prim::kPrimArrayLen, {InferImplArrayLen, true}},
+    {prim::kPrimListMap, {InferImplListMap, false}},
+    {prim::kPrimListReduce, {InferImplListReduce, false}},
+    {prim::kPrimTupleReversed, {InferImplTupleReversed, false}},
+    {prim::kPrimReducedShape, {InferImplReduceShape, false}},
+    {prim::kPrimTupleDiv, {InferImplTupleDiv, false}},
+    {prim::kPrimTupleToArray, {InferImplTuple2Array, false}},
+    {prim::kPrimShapeMul, {InferImplShapeMul, false}},
+    {prim::kPrimTupleEqual, {InferImplTupleEqual, false}},
+    {prim::kPrimListEqual, {InferImplListEqual, false}},
+    {prim::kPrimMakeRange, {InferImplMakeRange, false}},
+    {prim::kPrimStopGradient, {InferImplStopGradient, false}},
+    {prim::kPrimStringEqual, {InferImplStringEqual, false}},
+    {prim::kPrimStringConcat, {InferImplStringConcat, false}},
+    {prim::kPrimDictLen, {InferImplDictLen, false}},
+    // NN
+    {prim::kPrimPooling, {InferImplPooling, true}},
+    {prim::kPrimPoolingGrad, {InferImplPoolingGrad, true}},
+    {prim::kPrimFusedBatchNorm, {InferImplFusedBatchNorm, true}},
+    {prim::kPrimFusedBatchNormGrad, {InferImplFusedBatchNormGrad, true}},
+    {prim::kPrimReluGrad, {InferImplReluGrad, true}},
+    {prim::kPrimConv2DBackpropInput, {InferImplConv2DBackpropInput, true}},
+    {prim::kPrimConv2DBackpropFilter, {InferImplConv2DBackpropFilter, true}},
+    {prim::kPrimBiasAddGrad, {InferImplBiasAddGrad, true}},
+    {prim::kPrimRelu, {InferImplRelu, true}},
+    {prim::kPrimFakeBprop, {InferImplFakeBprop, false}},
+    {prim::kPrimZerosLike, {InferImplZerosLike, true}},
+    {prim::kPrimBpropCut, {InferImplBpropCut, true}},
+    {prim::kPrimLayerNorm, {InferImplLayerNorm, true}},
+    {prim::kPrimLayerNormGrad, {InferImplLayerNormGrad, true}},
+    {prim::kPrimDropoutGenMask, {InferImplDropoutGenMask, true}},
+    // Others
+    {prim::kPrimIdentity, {InferImplIdentity, true}},
+    // Set impl to null as it will use PartialEvaluator;
+    {prim::kPrimPartial, {nullptr, true}},
+    {prim::kPrimJ, {InferImplJ, false}},
+    {prim::kPrimEnvGetItem, {InferImplEnvGetItem, true}},
+    {prim::kPrimEnvSetItem, {InferImplEnvSetItem, true}},
+    {prim::kPrimEnvAdd, {InferImplEnvAdd, true}},
+    {prim::kPrimMakeRefKey, {InferImplMakeRefKey, true}},
+    {prim::kPrimMakeRef, {InferImplMakeRef, true}},
+    {prim::kPrimGetRefKey, {InferImplGetRefKey, true}},
+    {prim::kPrimGetRefValue, {InferImplGetRefValue, true}},
+    {prim::kPrimGetRefOrigin, {InferImplGetRefOrigin, true}},
+    {prim::kPrimStateSetItem, {InferImplStateSetItem, true}},
+    {prim::kPrimDepend, {InferImplDepend, true}},
+    {prim::kPrimBroadcastGradientArgs, {InferImplBroadcastGradientArgs, false}},
+    {prim::kPrimControlDepend, {InferImplControlDepend, true}},
+  };
+  return prim_eval_implement_map;
+}
 
 using mindspore::parse::PyObjectWrapper;
 
-AbstractBasePtr StandardPrimEvaluator::EvalPrim(const AnalysisEnginePtr &engine, const AbstractBasePtrList &args) {
+EvalResultPtr StandardPrimEvaluator::EvalPrim(const AnalysisEnginePtr &engine, const AbstractBasePtrList &args) {
+  prim_->BeginRecordAddAttr();
   AbstractBasePtr abs_base = eval_impl_(engine, prim_, args);
-  return abs_base;
+  prim_->EndRecordAddAttr();
+  auto added_attrs = prim_->evaluate_added_attrs();
+  auto infer_result = std::make_shared<EvalResult>(abs_base, std::make_shared<AttrValueMap>(added_attrs));
+  return infer_result;
 }
 
-AbstractBasePtr DoSignatureEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
-                                          AnfNodeConfigPtr out_conf) {
+EvalResultPtr DoSignatureEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
+                                        AnfNodeConfigPtr out_conf) {
   AbstractBasePtrList args_spec_list;
-  if (!prim_->isa<prim::DoSignaturePrimitive>()) {
-    MS_LOG(EXCEPTION) << "Primitive should be DoSignature, but " << prim_->ToString();
-  }
   if (out_conf->node() == nullptr || !out_conf->node()->isa<CNode>()) {
     MS_LOG(EXCEPTION) << "Node of out_conf should be CNode";
   }
@@ -157,7 +163,7 @@ AbstractBasePtr DoSignatureEvaluator::Run(AnalysisEnginePtr engine, const Config
   AnfNodePtrList args_inputs{out_node_inputs.begin() + 1, out_node_inputs.end()};
 
   (void)std::transform(args_conf_list.begin(), args_conf_list.end(), std::back_inserter(args_spec_list),
-                       [](const ConfigPtr &ref) -> AbstractBasePtr { return ref->GetEvaluatedValue(); });
+                       [](const ConfigPtr &ref) -> AbstractBasePtr { return ref->GetEvaluatedValue()->abstract(); });
 
   ScopePtr scope = kDefaultScope;
   if (out_conf != nullptr) {
@@ -176,6 +182,140 @@ AbstractBasePtr DoSignatureEvaluator::Run(AnalysisEnginePtr engine, const Config
                                     args_inputs);
   }
   AnfNodeConfigPtr fn_conf = engine->MakeConfig(new_cnode, out_conf->context());
+
+  return engine->ForwardConfig(out_conf, fn_conf);
+}
+
+static AbstractBasePtrList GetUnpackGraphSpecArgsList(AbstractBasePtrList args_spec_list, bool need_unpack) {
+  // arg[0] is the func graph to unpack, ignore it
+  AbstractBasePtrList specialize_args_before_unpack(args_spec_list.begin() + 1, args_spec_list.end());
+  AbstractBasePtrList graph_specialize_args;
+  if (need_unpack) {
+    for (size_t index = 0; index < specialize_args_before_unpack.size(); index++) {
+      MS_EXCEPTION_IF_NULL(specialize_args_before_unpack[index]);
+      if (specialize_args_before_unpack[index]->isa<AbstractTuple>()) {
+        AbstractTuplePtr arg_tuple = specialize_args_before_unpack[index]->cast<AbstractTuplePtr>();
+        std::transform(arg_tuple->elements().begin(), arg_tuple->elements().end(),
+                       std::back_inserter(graph_specialize_args), [](AbstractBasePtr abs) { return abs; });
+      } else if (specialize_args_before_unpack[index]->isa<AbstractDictionary>()) {
+        AbstractDictionaryPtr arg_dict = specialize_args_before_unpack[index]->cast<AbstractDictionaryPtr>();
+        auto dict_elems = arg_dict->elements();
+        (void)std::transform(
+          dict_elems.begin(), dict_elems.end(), std::back_inserter(graph_specialize_args),
+          [](const AbstractAttribute &item) { return std::make_shared<AbstractKeywordArg>(item.first, item.second); });
+      } else {
+        MS_LOG(EXCEPTION) << "UnpackGraph require args should be tuple or dict, but got "
+                          << specialize_args_before_unpack[index]->ToString();
+      }
+    }
+  } else {
+    graph_specialize_args = specialize_args_before_unpack;
+  }
+  return graph_specialize_args;
+}
+
+EvalResultPtr UnpackGraphEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
+                                        AnfNodeConfigPtr out_conf) {
+  if (out_conf->node() == nullptr || !out_conf->node()->isa<CNode>()) {
+    MS_LOG(EXCEPTION) << "Node of out_conf should be CNode";
+  }
+
+  auto unpack_graph = prim_->cast<prim::UnpackGraphPrimitivePtr>();
+  auto out_node = out_conf->node()->cast<CNodePtr>();
+  const auto &out_node_inputs = out_node->inputs();
+  if (out_node->inputs().size() == 0 || (out_node_inputs.size() - 1) != args_conf_list.size()) {
+    MS_LOG(EXCEPTION) << "UnpackGraphPrimitive"
+                      << " args size should equal to inputs size minus 1, but args size " << args_conf_list.size()
+                      << ", inputs size " << out_node_inputs.size();
+  }
+  AnfNodePtrList args_inputs{out_node_inputs.begin() + 1, out_node_inputs.end()};
+  AbstractBasePtrList args_spec_list;
+  (void)std::transform(args_conf_list.begin(), args_conf_list.end(), std::back_inserter(args_spec_list),
+                       [](const ConfigPtr &ref) -> AbstractBasePtr { return ref->GetEvaluatedValue()->abstract(); });
+  // get the forward graph
+  MS_EXCEPTION_IF_NULL(args_spec_list[0]);
+  AbstractFunctionPtr fn = args_spec_list[0]->cast<AbstractFunctionPtr>();
+  if (fn == nullptr) {
+    MS_LOG(EXCEPTION) << "UnpackGraphPrimitive arg0 must be AbstractFunction, but " << args_spec_list[0]->ToString();
+  }
+  auto real_fn = fn->cast<FuncGraphAbstractClosurePtr>();
+  MS_EXCEPTION_IF_NULL(real_fn);
+  FuncGraphPtr forward_graph = real_fn->func_graph();
+  MS_EXCEPTION_IF_NULL(forward_graph);
+  AbstractBasePtrList graph_specialize_args =
+    GetUnpackGraphSpecArgsList(args_spec_list, unpack_graph->need_unpack_args());
+
+  AbstractBasePtrList graph_specialize_args_without_sens;
+  (void)std::transform(graph_specialize_args.begin(),
+                       graph_specialize_args.end() - (unpack_graph->with_sens_in_args() ? 1 : 0),
+                       std::back_inserter(graph_specialize_args_without_sens), [](AbstractBasePtr abs) { return abs; });
+  auto new_graph = forward_graph->GenerateGraph(graph_specialize_args_without_sens);
+  engine->func_graph_manager()->AddFuncGraph(new_graph);
+  ScopePtr scope = kDefaultScope;
+  if (out_conf != nullptr) {
+    scope = out_conf->node()->scope();
+  }
+  ScopeGuard scope_guard(scope);
+  AnfNodePtr new_vnode = NewValueNode(new_graph);
+  AnfNodeConfigPtr fn_conf = engine->MakeConfig(new_vnode, out_conf->context());
+
+  return engine->ForwardConfig(out_conf, fn_conf);
+}
+
+AnfNodePtr MixedPrecisionCastHelper(AnfNodePtr source_node, AbstractBasePtr node_type, AnfNodePtr target_type,
+                                    FuncGraphPtr func_graph) {
+  AnfNodePtr target_node = source_node;
+  if (node_type->isa<AbstractTensor>()) {
+    auto x = node_type->cast<AbstractTensorPtr>();
+    if (x->element()->BuildType()->isa<Float>()) {
+      auto cast = prim::GetPythonOps("cast", "mindspore.ops.functional");
+      MS_EXCEPTION_IF_NULL(cast);
+      target_node = func_graph->NewCNode({NewValueNode(cast), source_node, target_type});
+    }
+  } else if (node_type->isa<AbstractTuple>()) {
+    auto x = node_type->cast<AbstractTuplePtr>();
+    auto &items = x->elements();
+    std::vector<AnfNodePtr> nodes;
+    nodes.emplace_back(NewValueNode(prim::kPrimMakeTuple));
+    int idx = 0;
+    for (const auto &item : items) {
+      AnfNodePtr tuple_node =
+        func_graph->NewCNode({NewValueNode(prim::kPrimTupleGetItem), source_node, NewValueNode(idx)});
+      AnfNodePtr node = MixedPrecisionCastHelper(tuple_node, item, target_type, func_graph);
+      nodes.emplace_back(node);
+      ++idx;
+    }
+    target_node = func_graph->NewCNode(nodes);
+  }
+  return target_node;
+}
+
+EvalResultPtr MixedPrecisionCastEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
+                                               AnfNodeConfigPtr out_conf) {
+  AbstractBasePtrList args_spec_list;
+  if (out_conf->node() == nullptr || !out_conf->node()->isa<CNode>()) {
+    MS_LOG(EXCEPTION) << "Node of out_conf should be CNode";
+  }
+  auto out_node = out_conf->node()->cast<CNodePtr>();
+  const auto &out_node_inputs = out_node->inputs();
+  if (out_node->inputs().size() == 0 || (out_node_inputs.size() - 1) != args_conf_list.size()) {
+    MS_LOG(EXCEPTION) << "MixedPrecisionCast"
+                      << " args size should equal to inputs size minus 1, but args size " << args_conf_list.size()
+                      << ", inputs size " << out_node_inputs.size();
+  }
+  AnfNodePtrList args_inputs{out_node_inputs.begin() + 1, out_node_inputs.end()};
+  (void)std::transform(args_conf_list.begin(), args_conf_list.end(), std::back_inserter(args_spec_list),
+                       [](const ConfigPtr &ref) -> AbstractBasePtr { return ref->GetEvaluatedValue()->abstract(); });
+
+  ScopePtr scope = kDefaultScope;
+  if (out_conf != nullptr) {
+    scope = out_conf->node()->scope();
+  }
+  ScopeGuard scope_guard(scope);
+
+  FuncGraphPtr func_graph = out_conf->node()->func_graph();
+  AnfNodePtr new_node = MixedPrecisionCastHelper(out_node_inputs[2], args_spec_list[1], out_node_inputs[1], func_graph);
+  AnfNodeConfigPtr fn_conf = engine->MakeConfig(new_node, out_conf->context());
 
   return engine->ForwardConfig(out_conf, fn_conf);
 }
@@ -203,6 +343,21 @@ py::dict ConvertAbstractToPython(const AbstractBasePtr &abs_base) {
     dic["shape"] = shape;
     dic["dtype"] = abs_base->BuildType();
     dic["value"] = BuildValue(abs_base->BuildValue());
+  } else if (abs_base->isa<AbstractSlice>()) {
+    auto arg_slice = dyn_cast<AbstractSlice>(abs_base);
+    std::vector<int> shape;
+    dic["shape"] = shape;
+    dic["dtype"] = arg_slice->BuildType();
+    dic["value"] = BuildValue(arg_slice->BuildValue());
+  } else if (abs_base->isa<AbstractRef>()) {
+    auto value = abs_base->cast<AbstractRefPtr>()->ref();
+    dic = ConvertAbstractToPython(value);
+  } else if (abs_base->isa<AbstractEllipsis>()) {
+    auto arg_slice = dyn_cast<AbstractEllipsis>(abs_base);
+    std::vector<int> shape;
+    dic["shape"] = shape;
+    dic["dtype"] = arg_slice->BuildType();
+    dic["value"] = BuildValue(arg_slice->BuildValue());
   } else if (abs_base->isa<AbstractTuple>()) {
     auto arg_tuple = dyn_cast<AbstractTuple>(abs_base);
     size_t len = arg_tuple->size();
@@ -235,12 +390,16 @@ py::dict ConvertAbstractToPython(const AbstractBasePtr &abs_base) {
     dic["shape"] = py::none();
     dic["dtype"] = py::none();
     dic["value"] = py::none();
+  } else if (abs_base->isa<AbstractFunction>()) {
+    dic["shape"] = py::none();
+    dic["dtype"] = abs_base->BuildType();
+    dic["value"] = py::none();
   } else {
     auto value = abs_base->BuildValue();
     if ((*value == *kAnyValue)) {
       auto value_desc = abs_base->value_desc();
       MS_EXCEPTION(TypeError) << "Unsupported parameter " << (value_desc.empty() ? "type" : value_desc)
-                              << " for python primitive.";
+                              << " for python primitive." << abs_base->ToString();
     }
     MS_EXCEPTION(TypeError) << "Unsupported parameter type for python primitive, the parameter value is "
                             << value->ToString();
@@ -309,9 +468,13 @@ AbstractBasePtr PyInferRes2Abstract(const PrimitivePyPtr &prim_py, const py::dic
 }
 }  // end anonymous namespace
 
-AbstractBasePtr PythonPrimEvaluator::EvalPrim(const AnalysisEnginePtr &, const AbstractBasePtrList &args) {
+EvalResultPtr PythonPrimEvaluator::EvalPrim(const AnalysisEnginePtr &, const AbstractBasePtrList &args) {
   MS_LOG(DEBUG) << "Eval for:" << prim_py_->ToString();
 
+  const auto &iter = cache_->find(args);
+  if (iter != cache_->end()) {
+    return iter->second;
+  }
   auto py_args = PreparePyInputs(prim_py_, args);
 
   auto pyobj = prim_py_->GetPyObj();
@@ -319,16 +482,20 @@ AbstractBasePtr PythonPrimEvaluator::EvalPrim(const AnalysisEnginePtr &, const A
     MS_LOG(EXCEPTION) << "[" << prim_py_->ToString() << "]: pyobj is empty";
   }
   auto infer_fuc = pyobj.attr("__infer__");
-
+  prim_py_->BeginRecordAddAttr();
   py::dict output = infer_fuc(*py_args);
+  prim_py_->EndRecordAddAttr();
+  auto added_attrs = prim_py_->evaluate_added_attrs();
   MS_LOG(DEBUG) << "Output type is " << (std::string)py::str(output);
   auto res_spec = PyInferRes2Abstract(prim_py_, output);
 
   MS_LOG(DEBUG) << "Python InferTensor result spec: " << res_spec->ToString() << ".";
-  return res_spec;
+  auto infer_result = std::make_shared<EvalResult>(res_spec, std::make_shared<AttrValueMap>(added_attrs));
+  (*cache_)[args] = infer_result;
+  return infer_result;
 }
 
-AbstractBasePtr UniformPrimEvaluator::EvalPrim(const AnalysisEnginePtr &, const AbstractBasePtrList &args) {
+EvalResultPtr UniformPrimEvaluator::EvalPrim(const AnalysisEnginePtr &, const AbstractBasePtrList &args) {
   // if func_desc_.retval type is super class of parameter type, then make the retval type as parameter type.
   if (nargs_ != args.size()) {
     MS_LOG(ERROR) << "UniformPrimEvaluator expect " << nargs_ << " args, but got " << args.size() << " inputs";
@@ -359,14 +526,17 @@ AbstractBasePtr UniformPrimEvaluator::EvalPrim(const AnalysisEnginePtr &, const 
     }
   }
 
-  ValuePtr inferred_value = RunImpl(value_list);
+  ValuePtr evaluated_value = RunImpl(value_list);
+  if (!(*evaluated_value == *kAnyValue)) {
+    ret_value_type = evaluated_value->type();
+  }
   // for comparison primitives , return type shall have be specified to be bool.
   if (specify_out_type_ != nullptr) {
     ret_value_type = specify_out_type_;
   }
 
-  AbstractScalarPtr abs_base = std::make_shared<AbstractScalar>(inferred_value, ret_value_type);
-  return abs_base;
+  AbstractScalarPtr abs_base = std::make_shared<AbstractScalar>(evaluated_value, ret_value_type);
+  return std::make_shared<EvalResult>(abs_base, std::make_shared<AttrValueMap>());
 }
 
 ValuePtr UniformPrimEvaluator::RunImpl(const ValuePtrList &args) const {
@@ -443,8 +613,8 @@ inline void AddToManager(const AnalysisEnginePtr &engine, const FuncGraphPtr fun
   manager->AddFuncGraph(func_graph);
 }
 
-AbstractBasePtr StaticGetterInferred(const ValuePtr &value, const ConfigPtr &data_conf,
-                                     const AnfNodeConfigPtr &old_conf) {
+EvalResultPtr StaticGetterInferred(const ValuePtr &value, const ConfigPtr &data_conf,
+                                   const AnfNodeConfigPtr &old_conf) {
   MS_EXCEPTION_IF_NULL(old_conf);
 
   AbstractBasePtr abs_ptr = ToAbstract(value, AnalysisContext::DummyContext(), old_conf);
@@ -475,27 +645,9 @@ AbstractBasePtr StaticGetterInferred(const ValuePtr &value, const ConfigPtr &dat
   return eng->ForwardConfig(old_conf, fn_conf);
 }
 
-AbstractBasePtr GenerateResolveAbstract(const AnfNodeConfigPtr &out_conf, const py::object &obj,
-                                        const ValuePtr &converted_ret) {
-  if (py::hasattr(obj, PYTHON_DATACLASS_FIELDS)) {
-    TypePtr cls_ptr = parse::ParseDataClass(converted_ret->cast<std::shared_ptr<parse::PyObjectWrapper>>()->obj());
-
-    std::vector<AnfNodePtr> input = {NewValueNode(prim::kPrimPartial), NewValueNode(prim::kPrimMakeRecord),
-                                     NewValueNode(cls_ptr)};
-    MS_EXCEPTION_IF_NULL(out_conf);
-    FuncGraphPtr func_graph = out_conf->node()->func_graph();
-    CNodePtr new_cnode = func_graph->NewCNode(input);
-    AnalysisEnginePtr eng = out_conf->engine();
-    AnfNodeConfigPtr fn_conf = eng->MakeConfig(new_cnode, out_conf->context());
-    return eng->ForwardConfig(out_conf, fn_conf);
-  } else {
-    return ToAbstract(converted_ret, AnalysisContext::DummyContext(), out_conf);
-  }
-}
-
-AbstractBasePtr GetEvaluatedValueForNameSpaceString(const AnalysisEnginePtr &engine,
-                                                    const AbstractBasePtrList &args_spec_list,
-                                                    const AnfNodeConfigPtr &out_conf) {
+EvalResultPtr GetEvaluatedValueForNameSpaceString(const AnalysisEnginePtr &engine,
+                                                  const AbstractBasePtrList &args_spec_list,
+                                                  const AnfNodeConfigPtr &out_conf) {
   // args_spec_list: same as StaticGetter
   if (args_spec_list.size() < 2) {
     MS_LOG(EXCEPTION) << "Size of args_spec_list is less than 2";
@@ -523,28 +675,21 @@ AbstractBasePtr GetEvaluatedValueForNameSpaceString(const AnalysisEnginePtr &eng
   // item_name to func addr from obj_map
   parse::SymbolPtr symbol = item_v->cast<parse::SymbolPtr>();
   parse::NameSpacePtr name_space = data_v->cast<parse::NameSpacePtr>();
+  FuncGraphPtr func_graph = out_conf->node()->func_graph();
 
-  parse::SymbolResolverPtr symbol_resolver =
-    std::make_shared<parse::SymbolResolver>(name_space, symbol, out_conf->node());
-  if (!symbol_resolver->Resolve()) {
+  auto new_node = parse::ResolveSymbol(func_graph->manager(), name_space, symbol, out_conf->node());
+  if (new_node == nullptr) {
     MS_LOG(EXCEPTION) << "Resolve node failed";
   }
 
-  py::object obj = symbol_resolver->result();
-  ValuePtr converted_ret = nullptr;
-  bool converted = parse::ConvertData(obj, &converted_ret, true);
-  if (!converted) {
-    MS_LOG(EXCEPTION) << "Convert data failed";
-  }
-  if (converted_ret->isa<FuncGraph>()) {
-    AddToManager(engine, converted_ret->cast<FuncGraphPtr>());
-  }
-  return GenerateResolveAbstract(out_conf, obj, converted_ret);
+  AnalysisEnginePtr eng = out_conf->engine();
+  AnfNodeConfigPtr fn_conf = eng->MakeConfig(new_node, out_conf->context());
+  return eng->ForwardConfig(out_conf, fn_conf);
 }
 
-AbstractBasePtr GetEvaluatedValueForClassAttrOrMethod(const AnalysisEnginePtr &engine,
-                                                      const AbstractBasePtrList &args_spec_list, const ValuePtr &item_v,
-                                                      const ConfigPtr &data_conf, const AnfNodeConfigPtr &out_conf) {
+EvalResultPtr GetEvaluatedValueForClassAttrOrMethod(const AnalysisEnginePtr &engine,
+                                                    const AbstractBasePtrList &args_spec_list, const ValuePtr &item_v,
+                                                    const ConfigPtr &data_conf, const AnfNodeConfigPtr &out_conf) {
   if (args_spec_list.empty()) {
     MS_LOG(EXCEPTION) << "args_spec_list is empty";
   }
@@ -556,12 +701,12 @@ AbstractBasePtr GetEvaluatedValueForClassAttrOrMethod(const AnalysisEnginePtr &e
     MS_LOG(EXCEPTION) << "Attribute type error";
   }
   std::string item_name = item_v->cast<StringImmPtr>()->value();
-  MS_LOG(DEBUG) << "Resovle name: " << cls->tag().name();
-  MS_LOG(DEBUG) << "Resovle item: " << item_name;
+  MS_LOG(DEBUG) << "Resolve name: " << cls->tag().name();
+  MS_LOG(DEBUG) << "Resolve item: " << item_name;
 
   AbstractBasePtr attr = cls->GetAttribute(item_name);
   if (attr != nullptr) {
-    return attr;
+    return std::make_shared<EvalResult>(attr, nullptr);
   }
 
   ValuePtr method = cls->GetMethod(item_name);
@@ -575,9 +720,9 @@ AbstractBasePtr GetEvaluatedValueForClassAttrOrMethod(const AnalysisEnginePtr &e
   return StaticGetterInferred(converted_v, data_conf, out_conf);
 }
 
-AbstractBasePtr GetEvaluatedValueForBuiltinTypeMethod(const AnalysisEnginePtr &engine, const ValuePtr &item_v,
-                                                      const TypePtr &data_type, const ConfigPtr &data_conf,
-                                                      const AnfNodeConfigPtr &out_conf) {
+EvalResultPtr GetEvaluatedValueForBuiltinTypeMethod(const AnalysisEnginePtr &engine, const ValuePtr &item_v,
+                                                    const TypePtr &data_type, const ConfigPtr &data_conf,
+                                                    const AnfNodeConfigPtr &out_conf) {
   MS_EXCEPTION_IF_NULL(item_v);
   MS_EXCEPTION_IF_NULL(data_type);
   // The method maybe a Primitive or Composite
@@ -604,8 +749,8 @@ AbstractBasePtr GetEvaluatedValueForBuiltinTypeMethod(const AnalysisEnginePtr &e
   return StaticGetterInferred(converted_v, data_conf, out_conf);
 }
 
-AbstractBasePtr StaticGetter(const AnalysisEnginePtr &engine, const AbstractBasePtrList &args_spec_list,
-                             const ConfigPtr &data_conf, const AnfNodeConfigPtr &out_conf) {
+EvalResultPtr StaticGetter(const AnalysisEnginePtr &engine, const AbstractBasePtrList &args_spec_list,
+                           const ConfigPtr &data_conf, const AnfNodeConfigPtr &out_conf) {
   // Inputs: namespace and its static function; or class and its member function
   CheckArgsSize("StaticGetter", args_spec_list, 2);
 
@@ -640,19 +785,19 @@ class EmbedEvaluator : public SymbolicPrimEvaluator {
   EmbedEvaluator() : SymbolicPrimEvaluator("EmbedEvaluator") {}
   ~EmbedEvaluator() override = default;
   MS_DECLARE_PARENT(EmbedEvaluator, SymbolicPrimEvaluator);
-  AbstractBasePtr EvalPrim(const ConfigPtrList &args_conf_list) override {
-    // arg: free variable to be embeded
+  EvalResultPtr EvalPrim(const ConfigPtrList &args_conf_list) override {
+    // arg: free variable to be embedded
     if (args_conf_list.size() != 1) {
       MS_LOG(EXCEPTION) << "EmbedEvaluator requires 1 parameter, but got " << args_conf_list.size();
     }
     AnfNodeConfigPtr node_conf = dyn_cast<AnfNodeConfig>(args_conf_list[0]);
     MS_EXCEPTION_IF_NULL(node_conf);
 
-    AbstractBasePtr x = node_conf->GetEvaluatedValue();
+    AbstractBasePtr x = node_conf->GetEvaluatedValue()->abstract();
     x = SensitivityTransform(x);
     SymbolicKeyInstancePtr key = std::make_shared<SymbolicKeyInstance>(node_conf->node(), x);
     AbstractScalarPtr abs_scalar = std::make_shared<AbstractScalar>(key, std::make_shared<SymbolicKeyType>());
-    return abs_scalar;
+    return std::make_shared<EvalResult>(abs_scalar, std::make_shared<AttrValueMap>());
   }
 };
 
@@ -677,7 +822,7 @@ class RefToEmbedEvaluator : public SymbolicPrimEvaluator {
   RefToEmbedEvaluator() : SymbolicPrimEvaluator("RefToEmbedEvaluator") {}
   ~RefToEmbedEvaluator() override = default;
   MS_DECLARE_PARENT(RefToEmbedEvaluator, SymbolicPrimEvaluator);
-  AbstractBasePtr EvalPrim(const ConfigPtrList &args_conf_list) override {
+  EvalResultPtr EvalPrim(const ConfigPtrList &args_conf_list) override {
     if (args_conf_list.size() != 1) {
       MS_LOG(ERROR) << "Requires 1 parameter, but has: " << args_conf_list.size();
       return nullptr;
@@ -688,10 +833,10 @@ class RefToEmbedEvaluator : public SymbolicPrimEvaluator {
       MS_LOG(ERROR) << "Conf should be AnfNodeConfig";
       return nullptr;
     }
-    AbstractBasePtr abs = node_conf->GetEvaluatedValue();
+    AbstractBasePtr abs = node_conf->GetEvaluatedValue()->abstract();
     AbstractRefPtr ref_abs = abs->cast<AbstractRefPtr>();
     if (ref_abs == nullptr) {
-      MS_LOG(ERROR) << "The first parameter of RefToEmbed should be Ref.";
+      MS_LOG(ERROR) << "The first parameter of RefToEmbed should be Ref, but " << abs->ToString();
       return nullptr;
     }
     auto key_abs = ref_abs->ref_key();
@@ -706,7 +851,7 @@ class RefToEmbedEvaluator : public SymbolicPrimEvaluator {
     }
     auto refkey = key_value->cast<RefKeyPtr>();
     if (refkey == nullptr) {
-      return std::make_shared<AbstractScalar>(type);
+      return std::make_shared<EvalResult>(std::make_shared<AbstractScalar>(type), std::make_shared<AttrValueMap>());
     }
 
     std::string name = refkey->tag();
@@ -720,7 +865,7 @@ class RefToEmbedEvaluator : public SymbolicPrimEvaluator {
     x = SensitivityTransform(x);
     std::shared_ptr<SymbolicKeyInstance> key = std::make_shared<SymbolicKeyInstance>(node, x);
     std::shared_ptr<AbstractScalar> abs_scalar = std::make_shared<AbstractScalar>(key, type);
-    return abs_scalar;
+    return std::make_shared<EvalResult>(abs_scalar, std::make_shared<AttrValueMap>());
   }
 };
 
@@ -729,13 +874,13 @@ class GetAttrEvaluator : public TransitionPrimEvaluator {
   GetAttrEvaluator() : TransitionPrimEvaluator("GetAttrEvaluator") {}
   ~GetAttrEvaluator() override = default;
   MS_DECLARE_PARENT(GetAttrEvaluator, TransitionPrimEvaluator);
-  AbstractBasePtr EvalPrim(const AnalysisEnginePtr &engine, const AbstractBasePtrList &args_spec_list,
-                           const ConfigPtr &in_conf0, const AnfNodeConfigPtr &out_conf) override {
+  EvalResultPtr EvalPrim(const AnalysisEnginePtr &engine, const AbstractBasePtrList &args_spec_list,
+                         const ConfigPtr &in_conf0, const AnfNodeConfigPtr &out_conf) override {
     // Inputs: data, item
     if (args_spec_list.size() != 2) {
       MS_LOG(EXCEPTION) << "Expected args_spec_list size = 2, but has size:" << args_spec_list.size();
     }
-    AbstractBasePtr ret = nullptr;
+    EvalResultPtr ret = nullptr;
     if (bound_node() != nullptr) {
       TraceManager::DebugTrace(std::make_shared<TraceResolve>(bound_node()->debug_info()));
       ret = StaticGetter(engine, args_spec_list, in_conf0, out_conf);
@@ -755,13 +900,13 @@ class ResolveEvaluator : public TransitionPrimEvaluator {
   ResolveEvaluator() : TransitionPrimEvaluator("ResolveEvaluator") {}
   ~ResolveEvaluator() override = default;
   MS_DECLARE_PARENT(ResolveEvaluator, TransitionPrimEvaluator);
-  AbstractBasePtr EvalPrim(const AnalysisEnginePtr &engine, const AbstractBasePtrList &args_spec_list,
-                           const ConfigPtr &in_conf0, const AnfNodeConfigPtr &out_conf) override {
+  EvalResultPtr EvalPrim(const AnalysisEnginePtr &engine, const AbstractBasePtrList &args_spec_list,
+                         const ConfigPtr &in_conf0, const AnfNodeConfigPtr &out_conf) override {
     // Inputs: namespace, symbol
     if (args_spec_list.size() != 2) {
       MS_LOG(EXCEPTION) << "Expected args_spec_list size = 2, but has size:" << args_spec_list.size();
     }
-    AbstractBasePtr ret = nullptr;
+    EvalResultPtr ret = nullptr;
     if (bound_node() != nullptr) {
       TraceManager::DebugTrace(std::make_shared<TraceResolve>(bound_node()->debug_info()));
       ret = StaticGetter(engine, args_spec_list, in_conf0, out_conf);
@@ -778,8 +923,8 @@ class CreateInstanceEvaluator : public TransitionPrimEvaluator {
   CreateInstanceEvaluator() : TransitionPrimEvaluator("CreateInstanceEvaluator") {}
   ~CreateInstanceEvaluator() override = default;
   MS_DECLARE_PARENT(CreateInstanceEvaluator, TransitionPrimEvaluator);
-  AbstractBasePtr EvalPrim(const AnalysisEnginePtr &engine, const AbstractBasePtrList &args_spec_list,
-                           const ConfigPtr &, const AnfNodeConfigPtr &out_conf) override {
+  EvalResultPtr EvalPrim(const AnalysisEnginePtr &engine, const AbstractBasePtrList &args_spec_list, const ConfigPtr &,
+                         const AnfNodeConfigPtr &out_conf) override {
     if (args_spec_list.empty()) {
       MS_LOG(EXCEPTION) << "'args_spec_list' should not be empty";
     }
@@ -830,8 +975,9 @@ class CreateInstanceEvaluator : public TransitionPrimEvaluator {
     }
 
     AbstractBasePtr ret = ToAbstract(converted_ret, AnalysisContext::DummyContext(), out_conf);
-    (*cache_)[args_spec_list] = ret;
-    return ret;
+    auto infer_result = std::make_shared<EvalResult>(ret, nullptr);
+    (*cache_)[args_spec_list] = infer_result;
+    return infer_result;
   }
 
   pybind11::tuple GetParameters(const AbstractBasePtrList &args_spec_list) const {
@@ -857,13 +1003,25 @@ class PartialEvaluator : public Evaluator {
  public:
   PartialEvaluator() : Evaluator("PartialEvaluator") {}
   ~PartialEvaluator() override = default;
-  AbstractBasePtr Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
-                      AnfNodeConfigPtr out_conf = nullptr) override {
+  EvalResultPtr Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
+                    AnfNodeConfigPtr out_conf = nullptr) override {
     if (args_conf_list.size() == 0) {
-      MS_LOG(EXCEPTION) << "args size should be greater than 0";
+      MS_LOG(EXCEPTION) << "Args size should be greater than 0";
     }
-    auto arg0_value = args_conf_list[0]->GetEvaluatedValue();
+
+    MS_EXCEPTION_IF_NULL(out_conf);
+    MS_EXCEPTION_IF_NULL(out_conf->node());
+    auto arg0_value = args_conf_list[0]->GetEvaluatedValue()->abstract();
     AbstractBasePtrList args_spec_list{arg0_value};
+    // Func in hypermap(partial(Func, arg0), arg1, arg2) may become Poly Node.
+    if (arg0_value->isa<AbstractError>()) {
+      auto ret = std::make_shared<AbstractError>(arg0_value->GetValueTrack()->cast<StringImmPtr>(), out_conf->node());
+      MS_LOG(DEBUG) << "AbstractError for node: " << out_conf->node()->DebugString()
+                    << " as func is: " << arg0_value->ToString();
+      auto eval_result = std::make_shared<EvalResult>(ret, std::make_shared<AttrValueMap>());
+      (*cache_)[args_spec_list] = eval_result;
+      return eval_result;
+    }
     auto func = CheckArg<AbstractFunction>("partial", args_spec_list, 0);
     // Sometimes, node[0] in out_conf becomes phi0;
     if (func->isa<PrimitiveAbstractClosure>()) {
@@ -873,29 +1031,38 @@ class PartialEvaluator : public Evaluator {
         return HandleDoSignature(engine, do_signature_prim->function(), out_conf);
       }
     }
-    (void)std::transform(args_conf_list.begin() + 1, args_conf_list.end(), std::back_inserter(args_spec_list),
-                         [](const ConfigPtr &ref) -> AbstractBasePtr { return ref->GetEvaluatedValue(); });
 
+    (void)std::transform(
+      args_conf_list.begin() + 1, args_conf_list.end(), std::back_inserter(args_spec_list),
+      [](const ConfigPtr &config) -> AbstractBasePtr { return config->GetEvaluatedValue()->abstract(); });
     AbstractBasePtrList args(args_spec_list.begin() + 1, args_spec_list.end());
 
-    AbstractFuncAtomPtrList partialPtrList;
-    auto build_partial = [args, &partialPtrList](const AbstractFuncAtomPtr &atom_func) {
-      auto new_func = std::make_shared<PartialAbstractClosure>(atom_func, args);
-      partialPtrList.push_back(new_func);
+    auto cnode = out_conf->node()->cast<CNodePtr>();
+    MS_EXCEPTION_IF_NULL(cnode);
+    if (cnode->size() != (args_conf_list.size() + 1)) {
+      MS_LOG(EXCEPTION) << "Out_conf node: " << cnode->DebugString()
+                        << ", args_conf_list: " << mindspore::ToString(args_conf_list);
+    }
+
+    AbstractFuncAtomPtrList partial_funcs_list;
+    auto build_partial = [args, cnode, &partial_funcs_list](const AbstractFuncAtomPtr &atom_func) {
+      auto new_func = std::make_shared<PartialAbstractClosure>(atom_func, args, cnode);
+      partial_funcs_list.push_back(new_func);
     };
     func->Visit(build_partial);
 
-    auto ret = AbstractFunction::MakeAbstractFunction(partialPtrList);
-    (*cache_)[args_spec_list] = ret;
-    return ret;
+    auto ret = AbstractFunction::MakeAbstractFunction(partial_funcs_list);
+    auto infer_result = std::make_shared<EvalResult>(ret, std::make_shared<AttrValueMap>());
+    (*cache_)[args_spec_list] = infer_result;
+    return infer_result;
   }
 
-  AbstractBasePtr Infer(AnalysisEnginePtr, const AbstractBasePtrList &) override {
-    MS_LOG(EXCEPTION) << "Infer() should not be called, Run() method should be called";
+  EvalResultPtr Eval(AnalysisEnginePtr, const AbstractBasePtrList &) override {
+    MS_LOG(EXCEPTION) << "Eval() should not be called, Run() method should be called";
   }
 
-  AbstractBasePtr HandleDoSignature(const AnalysisEnginePtr &engine, const ValuePtr &signature_value,
-                                    const AnfNodeConfigPtr &out_conf = nullptr) const {
+  EvalResultPtr HandleDoSignature(const AnalysisEnginePtr &engine, const ValuePtr &signature_value,
+                                  const AnfNodeConfigPtr &out_conf = nullptr) const {
     MS_EXCEPTION_IF_NULL(out_conf);
     MS_EXCEPTION_IF_NULL(out_conf->node());
     auto cnode = out_conf->node()->cast<CNodePtr>();
@@ -907,10 +1074,7 @@ class PartialEvaluator : public Evaluator {
     new_nodes_inputs[1] = NewValueNode(new_signature_value);
     FuncGraphPtr func_graph = cnode->func_graph();
 
-    ScopePtr scope = kDefaultScope;
-    if (out_conf != nullptr) {
-      scope = out_conf->node()->scope();
-    }
+    ScopePtr scope = out_conf->node()->scope();
     ScopeGuard scope_guard(scope);
 
     CNodePtr new_cnode = func_graph->NewCNode(new_nodes_inputs);
@@ -927,39 +1091,43 @@ struct PrimitiveImplInferValue {
 };
 
 using PrimitiveToImplMap = std::unordered_map<PrimitivePtr, PrimitiveImplInferValue, PrimitiveHasher, PrimitiveEqual>;
-
-PrimitiveToImplMap UniformPrimitiveToImplMapValue = {
-  {prim::kPrimScalarAdd, {prim::ScalarAdd, true, nullptr, true}},
-  {prim::kPrimScalarSub, {prim::ScalarSub, true, nullptr, true}},
-  {prim::kPrimScalarMul, {prim::ScalarMul, true, nullptr, true}},
-  {prim::kPrimScalarDiv, {prim::ScalarDiv, true, nullptr, true}},
-  {prim::kPrimScalarMod, {prim::ScalarMod, true, nullptr, true}},
-  {prim::kPrimScalarUadd, {prim::ScalarUAdd, true, nullptr, true}},
-  {prim::kPrimScalarUsub, {prim::ScalarUSub, true, nullptr, true}},
-  {prim::kPrimScalarLog, {prim::ScalarLog, true, nullptr, true}},
-  {prim::kPrimScalarEq, {prim::ScalarEq, true, std::make_shared<Bool>(), true}},
-  {prim::kPrimScalarLt, {prim::ScalarLt, true, std::make_shared<Bool>(), true}},
-  {prim::kPrimScalarGt, {prim::ScalarGt, true, std::make_shared<Bool>(), true}},
-  {prim::kPrimScalarNe, {prim::ScalarNe, true, std::make_shared<Bool>(), true}},
-  {prim::kPrimScalarLe, {prim::ScalarLe, true, std::make_shared<Bool>(), true}},
-  {prim::kPrimScalarGe, {prim::ScalarGe, true, std::make_shared<Bool>(), true}},
-  {prim::kPrimBoolNot, {prim::BoolNot, true, std::make_shared<Bool>(), true}},
-  {prim::kPrimBoolAnd, {prim::BoolAnd, true, std::make_shared<Bool>(), true}},
-  {prim::kPrimBoolEq, {prim::BoolEq, true, std::make_shared<Bool>(), true}},
-  {prim::kPrimBoolOr, {prim::BoolOr, true, std::make_shared<Bool>(), true}},
-};
+PrimitiveToImplMap &GetUniformPrimitiveToImplMap() {
+  static PrimitiveToImplMap uniform_prim_implement_map = {
+    {prim::kPrimScalarAdd, {prim::ScalarAdd, true, nullptr, true}},
+    {prim::kPrimScalarSub, {prim::ScalarSub, true, nullptr, true}},
+    {prim::kPrimScalarMul, {prim::ScalarMul, true, nullptr, true}},
+    {prim::kPrimScalarDiv, {prim::ScalarDiv, true, nullptr, true}},
+    {prim::kPrimScalarMod, {prim::ScalarMod, true, nullptr, true}},
+    {prim::kPrimScalarPow, {prim::ScalarPow, true, nullptr, true}},
+    {prim::kPrimScalarFloordiv, {prim::ScalarFloordiv, true, nullptr, true}},
+    {prim::kPrimScalarUadd, {prim::ScalarUAdd, true, nullptr, true}},
+    {prim::kPrimScalarUsub, {prim::ScalarUSub, true, nullptr, true}},
+    {prim::kPrimScalarLog, {prim::ScalarLog, true, nullptr, true}},
+    {prim::kPrimScalarEq, {prim::ScalarEq, true, std::make_shared<Bool>(), true}},
+    {prim::kPrimScalarLt, {prim::ScalarLt, true, std::make_shared<Bool>(), true}},
+    {prim::kPrimScalarGt, {prim::ScalarGt, true, std::make_shared<Bool>(), true}},
+    {prim::kPrimScalarNe, {prim::ScalarNe, true, std::make_shared<Bool>(), true}},
+    {prim::kPrimScalarLe, {prim::ScalarLe, true, std::make_shared<Bool>(), true}},
+    {prim::kPrimScalarGe, {prim::ScalarGe, true, std::make_shared<Bool>(), true}},
+    {prim::kPrimBoolNot, {prim::BoolNot, true, std::make_shared<Bool>(), true}},
+    {prim::kPrimBoolAnd, {prim::BoolAnd, true, std::make_shared<Bool>(), true}},
+    {prim::kPrimBoolEq, {prim::BoolEq, true, std::make_shared<Bool>(), true}},
+    {prim::kPrimBoolOr, {prim::BoolOr, true, std::make_shared<Bool>(), true}},
+  };
+  return uniform_prim_implement_map;
+}
 
 PrimEvaluatorMap PrimEvaluatorConstructors = PrimEvaluatorMap();
 std::mutex PrimEvaluatorConstructorMutex;
 
-void InitPrimEvaluatorConstructors(const PrimitiveEvalImplMap &prim_eval_impl_map) {
+void InitPrimEvaluatorConstructors() {
   PrimEvaluatorMap &constructor = PrimEvaluatorConstructors;
 
-  for (const auto &iter : prim_eval_impl_map) {
+  for (const auto &iter : GetPrimitiveToEvalImplMap()) {
     constructor[iter.first] = InitStandardPrimEvaluator(iter.first, iter.second.impl_);
   }
 
-  for (const auto &iter : UniformPrimitiveToImplMapValue) {
+  for (const auto &iter : GetUniformPrimitiveToImplMap()) {
     constructor[iter.first] =
       InitUniformPrimEvaluator(iter.first, iter.second.impl_, iter.second.eval_value_, iter.second.specify_out_type_);
   }
@@ -974,20 +1142,20 @@ void InitPrimEvaluatorConstructors(const PrimitiveEvalImplMap &prim_eval_impl_ma
 
 void ClearPrimEvaluatorMap() {
   PrimEvaluatorConstructors.clear();
-  PrimitiveToInferImplMap.clear();
-  UniformPrimitiveToImplMapValue.clear();
+  GetPrimitiveToEvalImplMap().clear();
+  GetUniformPrimitiveToImplMap().clear();
 }
 
 bool IsInWhiteList(const PrimitivePtr primitive) {
   MS_EXCEPTION_IF_NULL(primitive);
 
-  auto iter = PrimitiveToInferImplMap.find(primitive);
-  if (iter != PrimitiveToInferImplMap.end()) {
+  auto iter = GetPrimitiveToEvalImplMap().find(primitive);
+  if (iter != GetPrimitiveToEvalImplMap().end()) {
     return iter->second.in_white_list_;
   }
 
-  auto uni_iter = UniformPrimitiveToImplMapValue.find(primitive);
-  if (uni_iter != UniformPrimitiveToImplMapValue.end()) {
+  auto uni_iter = GetUniformPrimitiveToImplMap().find(primitive);
+  if (uni_iter != GetUniformPrimitiveToImplMap().end()) {
     return uni_iter->second.in_white_list_;
   }
 
@@ -996,8 +1164,8 @@ bool IsInWhiteList(const PrimitivePtr primitive) {
 
 StandardPrimitiveEvalImpl GetPrimitiveInferImpl(const PrimitivePtr &primitive) {
   MS_EXCEPTION_IF_NULL(primitive);
-  auto iter = PrimitiveToInferImplMap.find(primitive);
-  if (iter == PrimitiveToInferImplMap.end()) {
+  auto iter = GetPrimitiveToEvalImplMap().find(primitive);
+  if (iter == GetPrimitiveToEvalImplMap().end()) {
     return nullptr;
   }
   return iter->second.impl_;
@@ -1010,7 +1178,7 @@ PrimEvaluatorMap &GetPrimEvaluatorConstructors() {
   }
   std::lock_guard<std::mutex> initLock(PrimEvaluatorConstructorMutex);
   if (constructor.empty()) {
-    InitPrimEvaluatorConstructors(PrimitiveToInferImplMap);
+    InitPrimEvaluatorConstructors();
   }
 
   return constructor;

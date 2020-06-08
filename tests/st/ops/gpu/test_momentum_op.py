@@ -13,18 +13,21 @@
 # limitations under the License.
 # ============================================================================
 
-import pytest
 import numpy as np
+import pytest
+
+import mindspore.context as context
 import mindspore.nn as nn
-from mindspore.nn.optim import Momentum
-from mindspore.ops import operations as P
-from mindspore.nn import TrainOneStepCell, WithLossCell
-from mindspore.nn import Dense
 from mindspore import Tensor
 from mindspore.common.initializer import initializer
-import mindspore.context as context
+from mindspore.nn import Dense
+from mindspore.nn import TrainOneStepCell, WithLossCell
+from mindspore.nn.optim import Momentum
+from mindspore.ops import operations as P
 
 context.set_context(mode=context.GRAPH_MODE, device_target="GPU")
+
+
 class NetMomentum(nn.Cell):
     def __init__(self):
         super(NetMomentum, self).__init__()
@@ -37,6 +40,7 @@ class NetMomentum(nn.Cell):
         output = self.reshape(input_x, (self.batch_size, -1))
         output = self.fc1(output)
         return output
+
 
 @pytest.mark.level0
 @pytest.mark.platform_x86_gpu_training
@@ -53,17 +57,12 @@ def test_momentum():
     train_network = TrainOneStepCell(net_with_criterion, optimizer)  # optimizer
     train_network.set_train()
     losses = []
-    for i in range(epoch):
+    for _ in range(epoch):
         data = Tensor(np.arange(0, 16).reshape(1, 1, 4, 4).astype(np.float32) * 0.01)
         label = Tensor(np.array([0]).astype(np.int32))
         loss = train_network(data, label)
         losses.append(loss)
 
-    """
-    expect output:
-    [[0.04132498 0.00874167 0.00874167 0.00874167 0.00874167
-      0.00874167 0.00874167 0.00874167 0.00874167 0.00874167]]
-    """
-    error = np.ones(shape=[1, 10]) * 1.0e-6
+    _ = np.ones(shape=[1, 10]) * 1.0e-6
 
     return losses

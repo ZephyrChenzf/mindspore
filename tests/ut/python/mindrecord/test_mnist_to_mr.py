@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """test mnist to mindrecord tool"""
-import os
 import gzip
-import cv2
+import os
+import pytest
 import numpy as np
+import cv2
 
-from mindspore.mindrecord import MnistToMR
-from mindspore.mindrecord import FileReader
 from mindspore import log as logger
+from mindspore.mindrecord import FileReader
+from mindspore.mindrecord import MnistToMR
 
 MNIST_DIR = "../data/mindrecord/testMnistData"
 FILE_NAME = "mnist"
@@ -27,6 +28,34 @@ PARTITION_NUM = 4
 IMAGE_SIZE = 28
 NUM_CHANNELS = 1
 
+@pytest.fixture
+def fixture_file():
+    """add/remove file"""
+    def remove_one_file(x):
+        if os.path.exists(x):
+            os.remove(x)
+    def remove_file():
+        x = "mnist_train.mindrecord"
+        remove_one_file(x)
+        x = "mnist_train.mindrecord.db"
+        remove_one_file(x)
+        x = "mnist_test.mindrecord"
+        remove_one_file(x)
+        x = "mnist_test.mindrecord.db"
+        remove_one_file(x)
+        for i in range(PARTITION_NUM):
+            x = "mnist_train.mindrecord" + str(i)
+            remove_one_file(x)
+            x = "mnist_train.mindrecord" + str(i) + ".db"
+            remove_one_file(x)
+            x = "mnist_test.mindrecord" + str(i)
+            remove_one_file(x)
+            x = "mnist_test.mindrecord" + str(i) + ".db"
+            remove_one_file(x)
+
+    remove_file()
+    yield "yield_fixture_data"
+    remove_file()
 
 def read(train_name, test_name):
     """test file reader"""
@@ -37,7 +66,7 @@ def read(train_name, test_name):
         count = count + 1
         if count == 1:
             logger.info("data: {}".format(x))
-    assert count == 60000
+    assert count == 20
     reader.close()
 
     count = 0
@@ -47,11 +76,11 @@ def read(train_name, test_name):
         count = count + 1
         if count == 1:
             logger.info("data: {}".format(x))
-    assert count == 10000
+    assert count == 10
     reader.close()
 
 
-def test_mnist_to_mindrecord():
+def test_mnist_to_mindrecord(fixture_file):
     """test transform mnist dataset to mindrecord."""
     mnist_transformer = MnistToMR(MNIST_DIR, FILE_NAME)
     mnist_transformer.transform()
@@ -60,13 +89,7 @@ def test_mnist_to_mindrecord():
 
     read("mnist_train.mindrecord", "mnist_test.mindrecord")
 
-    os.remove("{}".format("mnist_train.mindrecord"))
-    os.remove("{}.db".format("mnist_train.mindrecord"))
-    os.remove("{}".format("mnist_test.mindrecord"))
-    os.remove("{}.db".format("mnist_test.mindrecord"))
-
-
-def test_mnist_to_mindrecord_compare_data():
+def test_mnist_to_mindrecord_compare_data(fixture_file):
     """test transform mnist dataset to mindrecord and compare data."""
     mnist_transformer = MnistToMR(MNIST_DIR, FILE_NAME)
     mnist_transformer.transform()
@@ -102,10 +125,10 @@ def test_mnist_to_mindrecord_compare_data():
                                        't10k-images-idx3-ubyte.gz')
     test_labels_filename_ = os.path.join(MNIST_DIR,
                                          't10k-labels-idx1-ubyte.gz')
-    train_data = _extract_images(train_data_filename_, 60000)
-    train_labels = _extract_labels(train_labels_filename_, 60000)
-    test_data = _extract_images(test_data_filename_, 10000)
-    test_labels = _extract_labels(test_labels_filename_, 10000)
+    train_data = _extract_images(train_data_filename_, 20)
+    train_labels = _extract_labels(train_labels_filename_, 20)
+    test_data = _extract_images(test_data_filename_, 10)
+    test_labels = _extract_labels(test_labels_filename_, 10)
 
     reader = FileReader(train_name)
     for x, data, label in zip(reader.get_next(), train_data, train_labels):
@@ -121,21 +144,10 @@ def test_mnist_to_mindrecord_compare_data():
         assert np.array(x['label']) == label
     reader.close()
 
-    os.remove("{}".format("mnist_train.mindrecord"))
-    os.remove("{}.db".format("mnist_train.mindrecord"))
-    os.remove("{}".format("mnist_test.mindrecord"))
-    os.remove("{}.db".format("mnist_test.mindrecord"))
 
-
-def test_mnist_to_mindrecord_multi_partition():
+def test_mnist_to_mindrecord_multi_partition(fixture_file):
     """test transform mnist dataset to multiple mindrecord files."""
     mnist_transformer = MnistToMR(MNIST_DIR, FILE_NAME, PARTITION_NUM)
     mnist_transformer.transform()
 
     read("mnist_train.mindrecord0", "mnist_test.mindrecord0")
-
-    for i in range(PARTITION_NUM):
-        os.remove("{}".format("mnist_train.mindrecord" + str(i)))
-        os.remove("{}.db".format("mnist_train.mindrecord" + str(i)))
-        os.remove("{}".format("mnist_test.mindrecord" + str(i)))
-        os.remove("{}.db".format("mnist_test.mindrecord" + str(i)))

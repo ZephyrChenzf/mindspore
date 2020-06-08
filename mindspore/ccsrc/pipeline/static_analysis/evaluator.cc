@@ -17,6 +17,7 @@
 #include "pipeline/static_analysis/evaluator.h"
 
 #include <algorithm>
+#include <unordered_set>
 
 #include "ir/func_graph_cloner.h"
 #include "pipeline/static_analysis/utils.h"
@@ -25,19 +26,20 @@
 namespace mindspore {
 namespace abstract {
 namespace {
-void InferEntryLogging(const EvaluatorPtr &evaluator, const AbstractBasePtrList &arg_spec_list,
-                       const AnfNodeConfigPtr &out_conf) {
+string EvalEntryLogging(const EvaluatorPtr &evaluator, const AbstractBasePtrList &arg_spec_list,
+                        const AnfNodeConfigPtr &out_conf) {
   MS_EXCEPTION_IF_NULL(evaluator);
+  std::stringstream ss;
   if (out_conf != nullptr) {
-    MS_LOG(DEBUG) << "Evaluator " << evaluator->ToString() << " run for " << out_conf->node()->scope()->name();
+    ss << "Evaluator " << evaluator->ToString() << " run for " << out_conf->node()->scope()->name();
   }
   for (size_t i = 0; i < arg_spec_list.size(); i++) {
-    MS_LOG(DEBUG) << "" << evaluator->ToString() << " input[" << i
-                  << "] abstract value: " << arg_spec_list[i]->ToString();
+    ss << evaluator->ToString() << " input[" << i << "] abstract value: " << arg_spec_list[i]->ToString();
   }
+  return ss.str();
 }
 
-void InferFailLogging(const EvaluatorPtr &evaluator, const AbstractBasePtrList &, const AnfNodeConfigPtr &out_conf) {
+void EvalFailLogging(const EvaluatorPtr &evaluator, const AbstractBasePtrList &, const AnfNodeConfigPtr &out_conf) {
   MS_EXCEPTION_IF_NULL(evaluator);
   if (out_conf != nullptr) {
     auto node = out_conf->node();
@@ -55,22 +57,48 @@ void InferFailLogging(const EvaluatorPtr &evaluator, const AbstractBasePtrList &
 AnalysisContextPtr BaseFuncGraphEvaluator::MakeContext(const AnalysisEnginePtr &engine,
                                                        const AbstractBasePtrList &args_spec_list) {
   AbstractBasePtrList normalized_args_spec_list = NormalizeArgs(args_spec_list);
+  normalized_args_spec_list = BroadenUndeterminedArgs(normalized_args_spec_list);
   FuncGraphPtr fg = GetFuncGraph(engine, normalized_args_spec_list);
   MS_EXCEPTION_IF_NULL(parent_context_);
   AnalysisContextPtr context = parent_context_->NewFuncGraphContext(fg, normalized_args_spec_list);
   return context;
 }
 
-AbstractBasePtr BaseFuncGraphEvaluator::Infer(AnalysisEnginePtr engine, const AbstractBasePtrList &args_spec_list) {
+static std::vector<AnfNodePtr> FastShadowSort(const AnfNodePtr &ret_node) {
+  auto current_func_graph = ret_node->func_graph();
+  MS_EXCEPTION_IF_NULL(current_func_graph);
+
+  std::vector<AnfNodePtr> sorted_nodes;
+  auto seen = NewSeenGeneration();
+  std::size_t index = 0;
+  sorted_nodes.emplace_back(ret_node);
+  while (index < sorted_nodes.size()) {
+    auto current = sorted_nodes[index];
+    index++;
+    MS_EXCEPTION_IF_NULL(current);
+    if (current->isa<CNode>()) {
+      auto &inputs = current->cast<CNodePtr>()->inputs();
+      for (auto it = inputs.begin(); it != inputs.end(); it++) {
+        AnfNodePtr input = *it;
+        if (input != nullptr && input->isa<CNode>() && input->seen_ != seen &&
+            input->func_graph() == current_func_graph) {
+          sorted_nodes.emplace_back(input);
+          input->seen_ = seen;
+        }
+      }
+    }
+  }
+  return sorted_nodes;
+}
+
+EvalResultPtr BaseFuncGraphEvaluator::Eval(AnalysisEnginePtr engine, const AbstractBasePtrList &args_spec_list) {
   FuncGraphPtr fg = GetFuncGraph(engine, args_spec_list);
   MS_EXCEPTION_IF_NULL(fg);
   std::size_t nargs = fg->parameters().size();
   if (args_spec_list.size() != nargs) {
-    MS_LOG(EXCEPTION) << "Function " << fg->ToString() << ", The number of parameters of this function is "
-                      << fg->parameters().size()
-                      << ","
-                         " but the number of provided arguments is "
-                      << args_spec_list.size() << ". NodeInfo: " << trace::GetDebugInfo(fg->debug_info());
+    MS_EXCEPTION(TypeError) << "Function " << fg->ToString() << ", The number of parameters of this function is "
+                            << fg->parameters().size() << ", but the number of provided arguments is "
+                            << args_spec_list.size() << ". NodeInfo: " << trace::GetDebugInfo(fg->debug_info());
   }
   MS_EXCEPTION_IF_NULL(parent_context_);
   MS_EXCEPTION_IF_NULL(engine);
@@ -80,26 +108,26 @@ AbstractBasePtr BaseFuncGraphEvaluator::Infer(AnalysisEnginePtr engine, const Ab
     const auto &arg = args_spec_list[i];
     const auto &node = parameters[i];
     AnfNodeConfigPtr conf = engine->MakeConfig(node, graph_context_);
-    engine->cache().set_value(conf, arg);
+    engine->cache().set_value(conf, std::make_shared<EvalResult>(arg, nullptr));
   }
   const AnfNodePtr &func_node = fg->get_return();
 
   MS_LOG(DEBUG) << "Analysis FuncGraph begin, func graph: " << fg->ToString()
                 << ", context: " << graph_context_->ToString() << ", return node: " << func_node->DebugString();
-  const std::vector<AnfNodePtr> &all_nodes = TopoSort(func_node);
-  for (const auto &node : all_nodes) {
+  AbstractBasePtr ret_base = nullptr;
+  std::vector<AnfNodePtr> nodes = FastShadowSort(func_node);
+  for (auto it = nodes.crbegin(); it != nodes.crend(); it++) {
+    const auto &node = *it;
     AnfNodeConfigPtr node_conf = engine->MakeConfig(node, graph_context_);
     MS_LOG(DEBUG) << "Analysis node begin, func graph: " << fg->ToString() << ", node_conf: " << node_conf->ToString();
-    AbstractBasePtr base = engine->GetEvaluatedValue(node_conf);
+    ret_base = engine->GetEvaluatedValue(node_conf)->abstract();
     MS_LOG(DEBUG) << "Analysis node end, func graph: " << fg->ToString() << ", node_conf: " << node_conf->ToString()
-                  << ", abstract: " << base->ToString();
+                  << ", abstract: " << ret_base->ToString();
   }
 
-  AnfNodeConfigPtr ret_conf = engine->MakeConfig(func_node, graph_context_);
-  AbstractBasePtr base = engine->GetEvaluatedValue(ret_conf);
-  MS_EXCEPTION_IF_NULL(base);
-  MS_LOG(DEBUG) << "BaseFuncGraph " << fg->ToString() << " infer end, inferred abstract: " << base->ToString();
-  return base;
+  MS_EXCEPTION_IF_NULL(ret_base);
+  MS_LOG(DEBUG) << "BaseFuncGraph " << fg->ToString() << " eval end, evaluated abstract: " << ret_base->ToString();
+  return std::make_shared<EvalResult>(ret_base, nullptr);
 }
 
 AbstractBasePtrList FuncGraphEvaluator::NormalizeArgs(const AbstractBasePtrList &args_spec_list) const {
@@ -111,18 +139,25 @@ AbstractBasePtrList FuncGraphEvaluator::NormalizeArgs(const AbstractBasePtrList 
                            MS_EXCEPTION_IF_NULL(arg);
                            return arg->Broaden();
                          });
-    MS_LOG(DEBUG) << "" << func_graph_->ToString() << " original: " << mindspore::ToString(args_spec_list)
+    MS_LOG(DEBUG) << func_graph_->ToString() << " original: " << mindspore::ToString(args_spec_list)
                   << ", broaded: " << mindspore::ToString(broaded_list);
     return broaded_list;
   }
+  return args_spec_list;
+}
 
-  if (func_graph_->has_flag(kFuncGraphFlagUndetermin)) {
+AbstractBasePtrList FuncGraphEvaluator::BroadenUndeterminedArgs(const AbstractBasePtrList &args_spec_list) {
+  MS_EXCEPTION_IF_NULL(func_graph_);
+  if (func_graph_->has_flag(FUNC_GRAPH_FLAG_IGNORE_VALUES)) {
+    return args_spec_list;
+  }
+  if (func_graph_->has_flag(kFuncGraphFlagUndetermined)) {
     if (parent_context_) {
       MS_LOG(DEBUG) << "Undeterminate FuncGraphEvaluator " << ToString()
                     << ", context: " << parent_context_->ToString();
       auto last_context = parent_context_->Filter(func_graph_);
       if (last_context && last_context->func_graph() == func_graph_) {
-        MS_LOG(DEBUG) << "Find last infer context: " << last_context->ToString();
+        MS_LOG(DEBUG) << "Find last eval context: " << last_context->ToString();
         MS_LOG(DEBUG) << "Current eval args: " << ::mindspore::ToString(args_spec_list);
         MS_LOG(DEBUG) << "Last eval args: " << ::mindspore::ToString(last_context->args_spec_list());
         // Join the last eval arguments and current arguments to check if there are loop variant.
@@ -134,6 +169,21 @@ AbstractBasePtrList FuncGraphEvaluator::NormalizeArgs(const AbstractBasePtrList 
         }
         return joined_args_spec_list;
       }
+    }
+    if (trace_.size() != 0) {
+      MS_LOG(DEBUG) << "Current eval args: " << ::mindspore::ToString(args_spec_list);
+      MS_LOG(DEBUG) << "Last eval args: " << ::mindspore::ToString(trace_.back());
+      // Join the last eval arguments and current arguments to check if there are loop variant.
+      auto joined_args_spec_list = AbstractJoin(args_spec_list, trace_.back());
+      // If there is loop variant, all arguments need to be broaden to avoid wrong constant propagation.
+      if (!(joined_args_spec_list == args_spec_list)) {
+        trace_.push_back(joined_args_spec_list);
+        func_graph_->set_flags(FUNC_GRAPH_FLAG_IGNORE_VALUES, true);
+      }
+      MS_LOG(DEBUG) << "Joined eval args: " << ::mindspore::ToString(joined_args_spec_list);
+      return joined_args_spec_list;
+    } else {
+      trace_.push_back(args_spec_list);
     }
   }
   return args_spec_list;
@@ -188,97 +238,96 @@ FuncGraphPtr MetaFuncGraphEvaluator::GetFuncGraph(AnalysisEnginePtr engine, cons
   return cloned_func_graph;
 }
 
-AbstractBasePtr Evaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
-                               AnfNodeConfigPtr out_conf) {
+EvalResultPtr Evaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list, AnfNodeConfigPtr out_conf) {
   const std::string &evaluator_name = ToString();
 
   AbstractBasePtrList args_spec_list;
   (void)std::transform(args_conf_list.begin(), args_conf_list.end(), std::back_inserter(args_spec_list),
                        [](const ConfigPtr &conf) -> AbstractBasePtr {
                          MS_EXCEPTION_IF_NULL(conf);
-                         return conf->GetEvaluatedValue();
+                         return conf->GetEvaluatedValue()->abstract();
                        });
   args_spec_list = NormalizeArgs(args_spec_list);
-  trace::TraceGraphInferEnter(shared_from_base<Evaluator>(), out_conf);
-  InferEntryLogging(shared_from_base<Evaluator>(), args_spec_list, out_conf);
+  args_spec_list = BroadenUndeterminedArgs(args_spec_list);
+  trace::TraceGraphEvalEnter(shared_from_base<Evaluator>(), out_conf);
+  MS_LOG(DEBUG) << EvalEntryLogging(shared_from_base<Evaluator>(), args_spec_list, out_conf);
   MS_EXCEPTION_IF_NULL(cache_);
   auto iter = cache_->find(args_spec_list);
   if (iter == cache_->end()) {
-    MS_LOG(DEBUG) << "" << evaluator_name << " cache miss, call Infer().";
-    AbstractBasePtr ret = Infer(engine, args_spec_list);
-    if (ret == nullptr) {
-      InferFailLogging(shared_from_base<Evaluator>(), args_spec_list, out_conf);
+    MS_LOG(DEBUG) << evaluator_name << " cache miss, call Eval().";
+    EvalResultPtr ret = Eval(engine, args_spec_list);
+    if (ret->abstract() == nullptr) {
+      EvalFailLogging(shared_from_base<Evaluator>(), args_spec_list, out_conf);
       MS_LOG(EXCEPTION) << "Evaluator " << evaluator_name << " result is nullptr.";
     }
-    MS_EXCEPTION_IF_NULL(ret);
-    MS_LOG(DEBUG) << "" << evaluator_name << " set cache. return: " << ret->ToString() << ".";
+    MS_LOG(DEBUG) << evaluator_name << " set cache. return: " << ret->abstract()->ToString() << ".";
     (*cache_)[args_spec_list] = ret;
-    trace::TraceGraphInferLeave(shared_from_base<Evaluator>());
+    trace::TraceGraphEvalLeave(shared_from_base<Evaluator>());
     return ret;
   } else {
     MS_EXCEPTION_IF_NULL(iter->second);
-    MS_LOG(DEBUG) << "" << evaluator_name << " cache hit. return: " << iter->second->ToString() << ".";
-    trace::TraceGraphInferLeave(shared_from_base<Evaluator>());
+    MS_EXCEPTION_IF_NULL(iter->second->abstract());
+    MS_LOG(DEBUG) << evaluator_name << " cache hit. return: " << iter->second->abstract()->ToString() << ".";
+    trace::TraceGraphEvalLeave(shared_from_base<Evaluator>());
     return iter->second;
   }
 }
 
-AbstractBasePtr TrivialPrimEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
-                                          AnfNodeConfigPtr) {
+EvalResultPtr TrivialPrimEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
+                                        AnfNodeConfigPtr) {
   AbstractBasePtrList args_spec_list;
   (void)std::transform(args_conf_list.begin(), args_conf_list.end(), std::back_inserter(args_spec_list),
                        [](const ConfigPtr &conf) -> AbstractBasePtr {
                          MS_EXCEPTION_IF_NULL(conf);
-                         return conf->GetEvaluatedValue();
+                         return conf->GetEvaluatedValue()->abstract();
                        });
-  AbstractBasePtr ret = EvalPrim(engine, args_spec_list);
-  (*cache_)[args_spec_list] = ret;
+  EvalResultPtr ret = EvalPrim(engine, args_spec_list);
   return ret;
 }
 
-AbstractBasePtr TransitionPrimEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
-                                             AnfNodeConfigPtr out_conf) {
+EvalResultPtr TransitionPrimEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
+                                           AnfNodeConfigPtr out_conf) {
   AbstractBasePtrList args_spec_list;
   (void)std::transform(args_conf_list.begin(), args_conf_list.end(), std::back_inserter(args_spec_list),
                        [](const ConfigPtr &conf) -> AbstractBasePtr {
                          MS_EXCEPTION_IF_NULL(conf);
-                         return conf->GetEvaluatedValue();
+                         return conf->GetEvaluatedValue()->abstract();
                        });
   if (args_conf_list.size() == 0) {
     MS_LOG(EXCEPTION) << "Size should greater than 0";
   }
-  AbstractBasePtr ret = EvalPrim(engine, args_spec_list, args_conf_list[0], out_conf);
+  EvalResultPtr ret = EvalPrim(engine, args_spec_list, args_conf_list[0], out_conf);
   // No need to cache.
   return ret;
 }
 
-AbstractBasePtr SymbolicPrimEvaluator::Run(AnalysisEnginePtr, const ConfigPtrList &args_conf_list, AnfNodeConfigPtr) {
-  AbstractBasePtr ret = EvalPrim(args_conf_list);
+EvalResultPtr SymbolicPrimEvaluator::Run(AnalysisEnginePtr, const ConfigPtrList &args_conf_list, AnfNodeConfigPtr) {
+  EvalResultPtr ret = EvalPrim(args_conf_list);
   return ret;
 }
 
-AbstractBasePtr TrackedEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
-                                      AnfNodeConfigPtr out_conf) {
+EvalResultPtr TrackedEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
+                                    AnfNodeConfigPtr out_conf) {
   AbstractBasePtrList args_spec_list;
   (void)std::transform(args_conf_list.begin(), args_conf_list.end(), std::back_inserter(args_spec_list),
                        [](const ConfigPtr &conf) -> AbstractBasePtr {
                          MS_EXCEPTION_IF_NULL(conf);
-                         return conf->GetEvaluatedValue();
+                         return conf->GetEvaluatedValue()->abstract();
                        });
-  AbstractBasePtr ret = sub_evaluator_->Run(engine, args_conf_list, out_conf);
+  EvalResultPtr ret = sub_evaluator_->Run(engine, args_conf_list, out_conf);
   // Don't lookup from cache, as different out_conf with same node but different context
   // may add different entry to anfnode_config_map_, like getattr primitive.
   (*cache_)[args_spec_list] = ret;
   return ret;
 }
 
-AbstractBasePtr PartialAppEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
-                                         AnfNodeConfigPtr out_conf) {
+EvalResultPtr PartialAppEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list,
+                                       AnfNodeConfigPtr out_conf) {
   AbstractBasePtrList args_spec_list;
   (void)std::transform(args_conf_list.begin(), args_conf_list.end(), std::back_inserter(args_spec_list),
                        [](const ConfigPtr &conf) -> AbstractBasePtr {
                          MS_EXCEPTION_IF_NULL(conf);
-                         return conf->GetEvaluatedValue();
+                         return conf->GetEvaluatedValue()->abstract();
                        });
   MS_EXCEPTION_IF_NULL(cache_);
   auto iter = cache_->find(args_spec_list);
@@ -293,17 +342,18 @@ AbstractBasePtr PartialAppEvaluator::Run(AnalysisEnginePtr engine, const ConfigP
 
   (void)std::transform(args_spec_list.begin(), args_spec_list.end(), std::back_inserter(partial_args_conf_list),
                        [](const AbstractBasePtr &arg) -> ConfigPtr { return std::make_shared<VirtualConfig>(arg); });
-  AbstractBasePtr ret = evaluator_->Run(engine, partial_args_conf_list, out_conf);
+  EvalResultPtr ret = evaluator_->Run(engine, partial_args_conf_list, out_conf);
+
   (*cache_)[args_spec_list] = ret;
   return ret;
 }
 
-AbstractBasePtr JEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list, AnfNodeConfigPtr) {
+EvalResultPtr JEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &args_conf_list, AnfNodeConfigPtr) {
   AbstractBasePtrList args_spec_list;
   (void)std::transform(args_conf_list.begin(), args_conf_list.end(), std::back_inserter(args_spec_list),
                        [](const ConfigPtr &conf) -> AbstractBasePtr {
                          MS_EXCEPTION_IF_NULL(conf);
-                         return conf->GetEvaluatedValue();
+                         return conf->GetEvaluatedValue()->abstract();
                        });
   MS_EXCEPTION_IF_NULL(cache_);
   auto iter = cache_->find(args_spec_list);
@@ -312,7 +362,7 @@ AbstractBasePtr JEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &a
   }
 
   // Call the original evaluator, get the result: y = f(x)
-  AbstractBasePtr result = evaluator_->Run(engine, args_conf_list, nullptr);
+  EvalResultPtr result = evaluator_->Run(engine, args_conf_list, nullptr);
   // Build a virtual function: bprop_f which use sense of y as input, return sense of function free variable and input
   // parameters. (sense_f, sense_x, ...)(*bpro_f) (sense_y)
   AbstractBasePtrList bparams;
@@ -321,16 +371,18 @@ AbstractBasePtr JEvaluator::Run(AnalysisEnginePtr engine, const ConfigPtrList &a
     args_spec_list.begin(), args_spec_list.end(), std::back_inserter(bparams),
     [](const AbstractBasePtr &arg_spec) -> AbstractBasePtr { return SensitivityTransform(arg_spec); });
   AbstractBasePtr bparams_final = std::make_shared<AbstractTuple>(bparams);
-  AbstractFunctionPtr bprop = std::make_shared<VirtualAbstractClosure>(SensitivityTransform(result), bparams_final);
+  AbstractFunctionPtr bprop =
+    std::make_shared<VirtualAbstractClosure>(SensitivityTransform(result->abstract()), bparams_final);
 
   // J(f)(J(x)) return a tuple (y, bprop_f)
-  AbstractBasePtrList jargs = {result, bprop};
+  AbstractBasePtrList jargs = {result->abstract(), bprop};
   AbstractBasePtr jtuple = std::make_shared<AbstractTuple>(jargs);
-  (*cache_)[args_spec_list] = jtuple;
-  return jtuple;
+  auto infer_reuslt = std::make_shared<EvalResult>(jtuple, std::make_shared<AttrValueMap>());
+  (*cache_)[args_spec_list] = infer_reuslt;
+  return infer_reuslt;
 }
 
-AbstractBasePtr VirtualEvaluator::Infer(AnalysisEnginePtr, const AbstractBasePtrList &args_spec_list) {
+EvalResultPtr VirtualEvaluator::Eval(AnalysisEnginePtr, const AbstractBasePtrList &args_spec_list) {
   if (args_spec_list.size() != args_spec_list_.size()) {
     MS_LOG(EXCEPTION) << "Arguments mismatch, parameters no: " << args_spec_list_.size()
                       << ", arguments no: " << args_spec_list.size();
@@ -340,7 +392,7 @@ AbstractBasePtr VirtualEvaluator::Infer(AnalysisEnginePtr, const AbstractBasePtr
     MS_EXCEPTION_IF_NULL(args_spec_list[i]);
     (void)args_spec_list[i]->Join(args_spec_list_[i]);
   }
-  return output_;
+  return std::make_shared<EvalResult>(output_, std::make_shared<AttrValueMap>());
 }
 }  // namespace abstract
 }  // namespace mindspore

@@ -18,6 +18,7 @@
 from . import keyword
 from .config_util import get_function_config
 
+
 def get_block_config():
     """
     Get Empty function config.
@@ -27,6 +28,7 @@ def get_block_config():
     ret[keyword.inputs] = []
     ret[keyword.expect] = []
     return ret
+
 
 def fill_block_config(ret, block_config, tid, group, desc_inputs, desc_bprop, expect,
                       desc_const, const_first, add_fake_input, fake_input_type):
@@ -54,11 +56,12 @@ def fill_block_config(ret, block_config, tid, group, desc_inputs, desc_bprop, ex
 
     block = block_config
     delta, max_error, input_selector, output_selector, \
-    sampling_times, reduce_output, init_param_with, split_outputs, exception = get_function_config({})
+    sampling_times, reduce_output, init_param_with, split_outputs, exception, error_keywords = get_function_config({})
     if isinstance(block_config, tuple) and isinstance(block_config[-1], dict):
         block = block_config[0]
         delta, max_error, input_selector, output_selector, \
-        sampling_times, reduce_output, init_param_with, split_outputs, exception = get_function_config(block_config[-1])
+        sampling_times, reduce_output, init_param_with, \
+        split_outputs, exception, error_keywords = get_function_config(block_config[-1])
 
     if block:
         func_list.append({
@@ -78,7 +81,8 @@ def fill_block_config(ret, block_config, tid, group, desc_inputs, desc_bprop, ex
             keyword.const_first: const_first,
             keyword.add_fake_input: add_fake_input,
             keyword.split_outputs: split_outputs,
-            keyword.exception: exception
+            keyword.exception: exception,
+            keyword.error_keywords: error_keywords
         })
 
     if desc_inputs or desc_const:
@@ -93,7 +97,7 @@ def fill_block_config(ret, block_config, tid, group, desc_inputs, desc_bprop, ex
 
     if expect:
         expect_list.append({
-            keyword.id: tid+'-'+tid,
-            keyword.group: group+'-'+group,
+            keyword.id: tid + '-' + tid,
+            keyword.group: group + '-' + group,
             keyword.desc_expect: expect
         })

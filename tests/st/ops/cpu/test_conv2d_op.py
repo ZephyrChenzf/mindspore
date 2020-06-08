@@ -13,19 +13,21 @@
 # limitations under the License.
 # ============================================================================
 
-import pytest
-from mindspore import Tensor
-from mindspore.ops import operations as P
-import mindspore.nn as nn
 import numpy as np
+import pytest
+
 import mindspore.context as context
+import mindspore.nn as nn
+from mindspore import Tensor
 from mindspore.common.initializer import initializer
 from mindspore.common.parameter import Parameter
+from mindspore.ops import operations as P
 
 context.set_context(mode=context.GRAPH_MODE, device_target='CPU')
 
+
 class NetConv2d(nn.Cell):
-    def __init__( self):
+    def __init__(self):
         super(NetConv2d, self).__init__()
         out_channel = 2
         kernel_size = 1
@@ -42,7 +44,6 @@ class NetConv2d(nn.Cell):
         self.x = Parameter(initializer(
             Tensor(np.arange(1 * 3 * 3 * 3).reshape(1, 3, 3, 3).astype(np.float32)), [1, 3, 3, 3]), name='x')
 
-
     def construct(self):
         return self.conv(self.x, self.w)
 
@@ -54,19 +55,16 @@ def test_conv2d():
     conv2d = NetConv2d()
     output = conv2d()
     print("================================")
-    """
-    expect output:
-    [[[[ 45.  48.  51.]
-       [ 54.  57.  60.]
-       [ 63.  66.  69.]]
-
-      [[126. 138. 150.]
-       [162. 174. 186.]
-       [198. 210. 222.]]]]
-    """
-    expect = np.array([[[[ 45, 48, 51],
-                         [ 54, 57, 60],
-                         [ 63, 66, 69]],
+#   expect output:
+#   [[[[ 45.  48.  51.]
+#      [ 54.  57.  60.]
+#      [ 63.  66.  69.]]
+#     [[126. 138. 150.]
+#      [162. 174. 186.]
+#      [198. 210. 222.]]]]
+    expect = np.array([[[[45, 48, 51],
+                         [54, 57, 60],
+                         [63, 66, 69]],
                         [[126, 138, 150],
                          [162, 174, 186],
                          [198, 210, 222]]]]).astype(np.float32)

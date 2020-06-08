@@ -188,6 +188,11 @@ class TFReaderOp : public ParallelOp {
   // Default destructor
   ~TFReaderOp() = default;
 
+  // A print method typically used for debugging
+  // @param out - The output stream to write output to
+  // @param show_all - A bool to control if you want to show all info or just a summary
+  void Print(std::ostream &out, bool show_all) const override;
+
   // Instantiates the internal queues and connectors.
   // @return Status - the error code returned.
   Status Init();
@@ -216,6 +221,12 @@ class TFReaderOp : public ParallelOp {
   // @return Status - the error code returned.
   static Status CountTotalRows(int64_t *out_total_rows, const std::vector<std::string> &filenames, int64_t threads = 1,
                                bool estimate = false);
+
+  // Base-class override for NodePass visitor acceptor.
+  // @param p - Pointer to the NodePass to be accepted.
+  // @param modified - Whether this node visit modified the pipeline.
+  // @return - Status of the node visit.
+  Status Accept(NodePass *p, bool *modified) override;
 
  private:
   // The entry point for when workers are launched.
@@ -324,7 +335,7 @@ class TFReaderOp : public ParallelOp {
 
   // Reads one row of data from a tf file and creates a schema based on that row
   // @return Status - the error code returned.
-  Status CreateSchema(const std::string tf_file, const std::vector<std::string> &columns_to_load);
+  Status CreateSchema(const std::string tf_file, std::vector<std::string> columns_to_load);
 
   // Meant to be called async. Will read files in the range [begin, end) and return the total rows
   // @param filenames - a list of tf data filenames.
@@ -369,6 +380,7 @@ class TFReaderOp : public ParallelOp {
   std::unique_ptr<DataSchema> data_schema_;
   std::unique_ptr<StringIndex> filename_index_;
   bool load_io_block_queue_;
+  bool load_jagged_connector_;
 
   std::unique_ptr<JaggedConnector> jagged_buffer_connector_;
   QueueList<std::unique_ptr<FilenameBlock>> io_block_queues_;

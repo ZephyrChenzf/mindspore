@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iomanip>
 #include <utility>
 
 #include "common/utils.h"
@@ -34,7 +35,7 @@ constexpr uint32_t kCifarImageChannel = 3;
 constexpr uint32_t kCifarBlockImageNum = 5;
 constexpr uint32_t kCifarImageSize = kCifarImageHeight * kCifarImageWidth * kCifarImageChannel;
 
-CifarOp::Builder::Builder() : num_samples_(0), sampler_(nullptr) {
+CifarOp::Builder::Builder() : sampler_(nullptr) {
   std::shared_ptr<ConfigManager> cfg = GlobalContext::config_manager();
   num_workers_ = cfg->num_parallel_workers();
   rows_per_buffer_ = cfg->rows_per_buffer();
@@ -45,9 +46,11 @@ CifarOp::Builder::Builder() : num_samples_(0), sampler_(nullptr) {
 Status CifarOp::Builder::Build(std::shared_ptr<CifarOp> *ptr) {
   RETURN_IF_NOT_OK(SanityCheck());
   if (sampler_ == nullptr) {
-    sampler_ = std::make_shared<SequentialSampler>();
+    int64_t num_samples = 0;
+    int64_t start_index = 0;
+    sampler_ = std::make_shared<SequentialSampler>(start_index, num_samples);
   }
-  schema_ = make_unique<DataSchema>();
+  schema_ = std::make_unique<DataSchema>();
   TensorShape scalar = TensorShape::CreateScalar();
   RETURN_IF_NOT_OK(schema_->AddColumn(ColDescriptor("image", DataType(DataType::DE_UINT8), TensorImpl::kFlexible, 1)));
   if (cifar_type_ == kCifar10) {
@@ -61,7 +64,7 @@ Status CifarOp::Builder::Build(std::shared_ptr<CifarOp> *ptr) {
       ColDescriptor("fine_label", DataType(DataType::DE_UINT32), TensorImpl::kFlexible, 0, &another_scalar)));
   }
 
-  *ptr = std::make_shared<CifarOp>(cifar_type_, num_workers_, rows_per_buffer_, dir_, op_connect_size_, num_samples_,
+  *ptr = std::make_shared<CifarOp>(cifar_type_, num_workers_, rows_per_buffer_, dir_, op_connect_size_,
                                    std::move(schema_), std::move(sampler_));
   return Status::OK();
 }
@@ -75,23 +78,21 @@ Status CifarOp::Builder::SanityCheck() {
 }
 
 CifarOp::CifarOp(CifarType type, int32_t num_works, int32_t rows_per_buf, const std::string &file_dir,
-                 int32_t queue_size, int64_t num_samples, std::unique_ptr<DataSchema> data_schema,
-                 std::shared_ptr<Sampler> sampler)
+                 int32_t queue_size, std::unique_ptr<DataSchema> data_schema, std::shared_ptr<Sampler> sampler)
     : ParallelOp(num_works, queue_size),
       cifar_type_(type),
       rows_per_buffer_(rows_per_buf),
       folder_path_(file_dir),
-      num_samples_(num_samples),
       data_schema_(std::move(data_schema)),
       sampler_(std::move(sampler)),
-      num_rows_(0),
       row_cnt_(0),
       buf_cnt_(0) {
+  // set the column name map (base class field)
   for (uint32_t i = 0; i < data_schema_->NumColumns(); ++i) {
-    col_name_map_[data_schema_->column(i).name()] = i;
+    column_name_id_map_[data_schema_->column(i).name()] = i;
   }
   constexpr uint64_t kUtilQueueSize = 512;
-  cifar_raw_data_block_ = make_unique<Queue<std::vector<unsigned char>>>(kUtilQueueSize);
+  cifar_raw_data_block_ = std::make_unique<Queue<std::vector<unsigned char>>>(kUtilQueueSize);
   io_block_queues_.Init(num_workers_, queue_size);
 }
 
@@ -110,11 +111,10 @@ Status CifarOp::operator()() {
       for (auto itr = sample_ids->begin<int64_t>(); itr != sample_ids->end<int64_t>(); itr++) {
         keys.push_back(*itr);
         row_cnt_++;
-        if ((*itr) >= num_rows_) continue;    // index out of bound, skipping
-        if (row_cnt_ >= num_samples_) break;  // enough row read, break for loop
+        if ((*itr) >= num_rows_) continue;  // index out of bound, skipping
         if (row_cnt_ % rows_per_buffer_ == 0) {
           RETURN_IF_NOT_OK(io_block_queues_[buf_cnt_++ % num_workers_]->Add(
-            make_unique<IOBlock>(IOBlock(keys, IOBlock::kDeIoBlockNone))));
+            std::make_unique<IOBlock>(IOBlock(keys, IOBlock::kDeIoBlockNone))));
           keys.clear();
         }
       }
@@ -122,21 +122,21 @@ Status CifarOp::operator()() {
     }
     if (keys.empty() == false) {
       RETURN_IF_NOT_OK(io_block_queues_[(buf_cnt_++) % num_workers_]->Add(
-        make_unique<IOBlock>(IOBlock(keys, IOBlock::kDeIoBlockNone))));
+        std::make_unique<IOBlock>(IOBlock(keys, IOBlock::kDeIoBlockNone))));
     }
     if (!BitTest(op_ctrl_flags_, kDeOpRepeated) || BitTest(op_ctrl_flags_, kDeOpLastRepeat)) {
       RETURN_IF_NOT_OK(
-        io_block_queues_[(buf_cnt_++) % num_workers_]->Add(make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEoe)));
+        io_block_queues_[(buf_cnt_++) % num_workers_]->Add(std::make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEoe)));
       RETURN_IF_NOT_OK(
-        io_block_queues_[(buf_cnt_++) % num_workers_]->Add(make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEof)));
+        io_block_queues_[(buf_cnt_++) % num_workers_]->Add(std::make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEof)));
       for (int32_t i = 0; i < num_workers_; i++) {
         RETURN_IF_NOT_OK(
-          io_block_queues_[i]->Add(make_unique<IOBlock>(std::vector<int64_t>(), IOBlock::kDeIoBlockNone)));
+          io_block_queues_[i]->Add(std::make_unique<IOBlock>(std::vector<int64_t>(), IOBlock::kDeIoBlockNone)));
       }
       return Status::OK();
     } else {  // not the last repeat. Acquire lock, sleeps master thread, wait for the wake-up from reset
       RETURN_IF_NOT_OK(
-        io_block_queues_[(buf_cnt_++) % num_workers_]->Add(make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEoe)));
+        io_block_queues_[(buf_cnt_++) % num_workers_]->Add(std::make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEoe)));
       RETURN_IF_NOT_OK(wp_.Wait());  // Master thread goes to sleep after it has made all the IOBlocks
       wp_.Clear();
       RETURN_IF_NOT_OK(sampler_->GetNextBuffer(&sampler_buffer));
@@ -149,7 +149,7 @@ Status CifarOp::LaunchThreadsAndInitOp() {
     RETURN_STATUS_UNEXPECTED("tree_ not set");
   }
   RETURN_IF_NOT_OK(io_block_queues_.Register(tree_->AllTasks()));
-  wp_.Register(tree_->AllTasks());
+  RETURN_IF_NOT_OK(wp_.Register(tree_->AllTasks()));
   RETURN_IF_NOT_OK(
     tree_->AllTasks()->CreateAsyncTask("Get cifar data block", std::bind(&CifarOp::ReadCifarBlockDataAsync, this)));
   RETURN_IF_NOT_OK(tree_->LaunchWorkers(num_workers_, std::bind(&CifarOp::WorkerEntry, this, std::placeholders::_1)));
@@ -169,17 +169,17 @@ Status CifarOp::WorkerEntry(int32_t worker_id) {
   RETURN_IF_NOT_OK(io_block_queues_[worker_id]->PopFront(&io_block));
   while (io_block != nullptr) {
     if (io_block->eoe() == true) {
-      RETURN_IF_NOT_OK(out_connector_->Add(worker_id, make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOE)));
+      RETURN_IF_NOT_OK(out_connector_->Add(worker_id, std::make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOE)));
       buffer_id = worker_id;
     } else if (io_block->eof() == true) {
-      RETURN_IF_NOT_OK(out_connector_->Add(worker_id, make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOF)));
+      RETURN_IF_NOT_OK(out_connector_->Add(worker_id, std::make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOF)));
     } else {
       std::vector<int64_t> keys;
       RETURN_IF_NOT_OK(io_block->GetKeys(&keys));
       if (keys.empty() == true) {
         return Status::OK();  // empty key is a quit signal for workers
       }
-      std::unique_ptr<DataBuffer> db = make_unique<DataBuffer>(buffer_id, DataBuffer::kDeBFlagNone);
+      std::unique_ptr<DataBuffer> db = std::make_unique<DataBuffer>(buffer_id, DataBuffer::kDeBFlagNone);
       RETURN_IF_NOT_OK(LoadBuffer(keys, &db));
       RETURN_IF_NOT_OK(out_connector_->Add(worker_id, std::move(db)));
       buffer_id += num_workers_;
@@ -195,7 +195,7 @@ Status CifarOp::LoadTensorRow(uint64_t index, TensorRow *trow) {
   std::shared_ptr<Tensor> fine_label;
   std::shared_ptr<Tensor> ori_image = cifar_image_label_pairs_[index].first;
   std::shared_ptr<Tensor> copy_image =
-    std::make_shared<Tensor>(ori_image->shape(), ori_image->type(), ori_image->StartAddr());
+    std::make_shared<Tensor>(ori_image->shape(), ori_image->type(), ori_image->GetMutableBuffer());
   RETURN_IF_NOT_OK(Tensor::CreateTensor(&label, data_schema_->column(1).tensorImpl(), data_schema_->column(1).shape(),
                                         data_schema_->column(1).type(),
                                         reinterpret_cast<unsigned char *>(&cifar_image_label_pairs_[index].second[0])));
@@ -213,21 +213,30 @@ Status CifarOp::LoadTensorRow(uint64_t index, TensorRow *trow) {
 
 // Looping over LoadTensorRow to make 1 DataBuffer. 1 function call produces 1 buffer
 Status CifarOp::LoadBuffer(const std::vector<int64_t> &keys, std::unique_ptr<DataBuffer> *db) {
-  std::unique_ptr<TensorQTable> deq = make_unique<TensorQTable>();
+  std::unique_ptr<TensorQTable> deq = std::make_unique<TensorQTable>();
   for (const int64_t &key : keys) {
     TensorRow trow;
     RETURN_IF_NOT_OK(LoadTensorRow(key, &trow));
     deq->push_back(std::move(trow));
   }
   (*db)->set_tensor_table(std::move(deq));
-  (*db)->set_column_name_map(col_name_map_);
   return Status::OK();
 }
 
 void CifarOp::Print(std::ostream &out, bool show_all) const {
-  DatasetOp::Print(out, show_all);
-  out << "\nnumber of parallel workers:" << num_workers_ << "\nNumber of rows:" << num_rows_
-      << "\nCifar Directory: " << folder_path_ << "\n-------------------------\n";
+  // Always show the id and name as first line regardless if this summary or detailed print
+  out << "(" << std::setw(2) << operator_id_ << ") <CifarOp>:";
+  if (!show_all) {
+    // Call the super class for displaying any common 1-liner info
+    ParallelOp::Print(out, show_all);
+    // Then show any custom derived-internal 1-liner info for this op
+    out << "\n";
+  } else {
+    // Call the super class for displaying any common detailed info
+    ParallelOp::Print(out, show_all);
+    // Then show any custom derived-internal stuff
+    out << "\nNumber of rows:" << num_rows_ << "\nCifar directory: " << folder_path_ << "\n\n";
+  }
 }
 
 // Reset Sampler and wakeup Master thread (functor)
@@ -240,25 +249,7 @@ Status CifarOp::Reset() {
 
 // hand shake with Sampler, allow Sampler to call RandomAccessOp's functions to get NumRows
 Status CifarOp::InitSampler() {
-  RETURN_IF_NOT_OK(sampler_->Init(this));
-  return Status::OK();
-}
-
-// Derived from RandomAccessOp
-Status CifarOp::GetNumSamples(int64_t *num) const {
-  if (num == nullptr || num_rows_ == 0) {
-    RETURN_STATUS_UNEXPECTED("NumRow not set");
-  }
-  (*num) = num_samples_;
-  return Status::OK();
-}
-
-// Derived from RandomAccessOp
-Status CifarOp::GetNumRowsInDataset(int64_t *num) const {
-  if (num == nullptr || num_rows_ == 0) {
-    RETURN_STATUS_UNEXPECTED("NumRow not set");
-  }
-  (*num) = num_rows_;
+  RETURN_IF_NOT_OK(sampler_->HandshakeRandomAccessOp(this));
   return Status::OK();
 }
 
@@ -377,7 +368,7 @@ Status CifarOp::ParseCifarData() {
                                             data_schema_->column(0).type()));
       for (int ch = 0; ch < kCifarImageChannel; ++ch) {
         for (int pix = 0; pix < kCifarImageHeight * kCifarImageWidth; ++pix) {
-          (image_tensor->StartAddr())[pix * kCifarImageChannel + ch] = block[cur_block_index++];
+          (image_tensor->GetMutableBuffer())[pix * kCifarImageChannel + ch] = block[cur_block_index++];
         }
       }
       cifar_image_label_pairs_.emplace_back(std::make_pair(image_tensor, labels));
@@ -387,9 +378,11 @@ Status CifarOp::ParseCifarData() {
   }
   cifar_image_label_pairs_.shrink_to_fit();
   num_rows_ = cifar_image_label_pairs_.size();
-  num_samples_ = (num_samples_ == 0 || num_samples_ > num_rows_) ? num_rows_ : num_samples_;
   if (num_rows_ == 0) {
-    RETURN_STATUS_UNEXPECTED("Init Cifar failed, not a single row read from dataset!");
+    std::string api = cifar_type_ == kCifar10 ? "Cifar10Dataset" : "Cifar100Dataset";
+    std::string err_msg = "There is no valid data matching the dataset API " + api +
+                          ".Please check file path or dataset API validation first.";
+    RETURN_STATUS_UNEXPECTED(err_msg);
   }
   cifar_raw_data_block_->Reset();
   return Status::OK();
@@ -412,11 +405,11 @@ Status CifarOp::GetClassIds(std::map<int32_t, std::vector<int64_t>> *cls_ids) co
   return Status::OK();
 }
 
-Status CifarOp::CountTotalRows(const std::string &dir, int64_t numSamples, bool isCIFAR10, int64_t *count) {
+Status CifarOp::CountTotalRows(const std::string &dir, bool isCIFAR10, int64_t *count) {
   // the logic of counting the number of samples is copied from ReadCifar100Block() and ReadCifar10Block()
   std::shared_ptr<CifarOp> op;
   *count = 0;
-  RETURN_IF_NOT_OK(Builder().SetCifarDir(dir).SetNumSamples(numSamples).SetCifarType(isCIFAR10).Build(&op));
+  RETURN_IF_NOT_OK(Builder().SetCifarDir(dir).SetCifarType(isCIFAR10).Build(&op));
   RETURN_IF_NOT_OK(op->GetCifarFiles());
   if (op->cifar_type_ == kCifar10) {
     constexpr int64_t num_cifar10_records = 10000;
@@ -428,7 +421,6 @@ Status CifarOp::CountTotalRows(const std::string &dir, int64_t numSamples, bool 
       }
       *count = *count + num_cifar10_records;
     }
-    *count = *count < numSamples || numSamples == 0 ? *count : numSamples;
     return Status::OK();
   } else {
     int64_t num_cifar100_records = 0;
@@ -450,7 +442,7 @@ Status CifarOp::CountTotalRows(const std::string &dir, int64_t numSamples, bool 
         RETURN_STATUS_UNEXPECTED(err_msg);
       }
     }
-    *count = num_cifar100_records < numSamples || numSamples == 0 ? num_cifar100_records : numSamples;
+    *count = num_cifar100_records;
     return Status::OK();
   }
 }

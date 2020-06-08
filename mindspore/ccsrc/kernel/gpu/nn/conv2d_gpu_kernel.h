@@ -46,8 +46,6 @@ class Conv2dGpuFwdKernel : public GpuKernel {
         pad_left_(0),
         n_(0),
         c_(0),
-        stride_(1),
-        dilation_(0),
         group_(1),
         is_null_input_(false),
         input_size_(0),
@@ -62,7 +60,7 @@ class Conv2dGpuFwdKernel : public GpuKernel {
   const std::vector<size_t> &GetWorkspaceSizeList() const override { return workspace_size_list_; }
 
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
-              const std::vector<AddressPtr> &outputs, uintptr_t stream_ptr) override {
+              const std::vector<AddressPtr> &outputs, void *stream_ptr) override {
     if (is_null_input_) {
       return true;
     }
@@ -113,9 +111,8 @@ class Conv2dGpuFwdKernel : public GpuKernel {
     CHECK_CUDNN_RET_WITH_EXCEPT(cudnnSetConvolutionGroupCount(conv_desc_, group_), "cudnnSetConvGroupCount failed");
     pad_height_ = GetAttr<int>(kernel_node, "pad");
     pad_width_ = pad_height_;
-    stride_ = GetAttr<int>(kernel_node, "stride");
-    dilation_ = GetAttr<int>(kernel_node, "dilation");
     pad_mode_ = GetAttr<std::string>(kernel_node, "pad_mode");
+    SetStrideAndDilation(kernel_node);
     cudnnTensorDescriptor_t input_descriptor_real = nullptr;
     if (pad_mode_ == kSamePadModeUpperCase || pad_mode_ == kSamePadModeLowerCase) {
       SetPad(in_shape, kernel_node);
@@ -126,10 +123,14 @@ class Conv2dGpuFwdKernel : public GpuKernel {
         pad_width_ = 0;
       }
       CHECK_CUDNN_RET_WITH_EXCEPT(
-        cudnnSetConvolution2dDescriptor(conv_desc_, pad_height_, pad_width_, stride_, stride_, dilation_, dilation_,
-                                        CUDNN_CROSS_CORRELATION, cudnn_data_type_),
+        cudnnSetConvolution2dDescriptor(conv_desc_, pad_height_, pad_width_, stride_[2], stride_[3], dilation_[2],
+                                        dilation_[3], CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT),
         "cudnnSetConvolution2dDescriptor failed");
       input_descriptor_real = input_desc_;
+    }
+    if (cudnn_data_type_ == CUDNN_DATA_HALF) {
+      CHECK_CUDNN_RET_WITH_EXCEPT(cudnnSetConvolutionMathType(conv_desc_, CUDNN_TENSOR_OP_MATH),
+                                  "cudnnSetConvolutionMathType failed.")
     }
     SelectAlgorithm(input_descriptor_real);
     InitSizeLists();
@@ -223,10 +224,10 @@ class Conv2dGpuFwdKernel : public GpuKernel {
     CHECK_CUDNN_RET_WITH_EXCEPT(cudnnSetTensor4dDescriptor(padded_desc_, CUDNN_TENSOR_NCHW, cudnn_data_type_, n_, c_,
                                                            old_height_ + pad_height_, old_width_ + pad_width_),
                                 "cudnnSetTensor4dDescriptor failed");
-    CHECK_CUDNN_RET_WITH_EXCEPT(
-      cudnnSetConvolution2dDescriptor(conv_desc_, use_pad_ ? 0 : pad_top_, use_pad_ ? 0 : pad_left_, stride_, stride_,
-                                      dilation_, dilation_, CUDNN_CROSS_CORRELATION, cudnn_data_type_),
-      "cudnnSetConvolution2dDescriptor failed");
+    CHECK_CUDNN_RET_WITH_EXCEPT(cudnnSetConvolution2dDescriptor(
+                                  conv_desc_, use_pad_ ? 0 : pad_top_, use_pad_ ? 0 : pad_left_, stride_[2], stride_[3],
+                                  dilation_[2], dilation_[3], CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT),
+                                "cudnnSetConvolution2dDescriptor failed");
   }
 
   void Set4DDesc(const std::vector<size_t> &in_shape, const std::vector<size_t> &filter_shape,
@@ -261,6 +262,25 @@ class Conv2dGpuFwdKernel : public GpuKernel {
         "cudnnGetConvolutionForwardAlgorithm_v7 failed");
       conv_algorithm_ = perf_results.algo;
     }
+    if (cudnn_data_type_ == CUDNN_DATA_HALF) {
+      conv_algorithm_ = CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_PRECOMP_GEMM;
+    }
+  }
+  void SetStrideAndDilation(const CNodePtr &kernel_node) {
+    stride_ = AnfAlgo::GetNodeAttr<std::vector<int>>(kernel_node, "stride");
+    dilation_ = AnfAlgo::GetNodeAttr<std::vector<int>>(kernel_node, "dilation");
+    if (stride_.size() != 4) {
+      MS_LOG(EXCEPTION) << "Conv2d's' stride must be 4d!";
+    }
+    if (stride_[0] != 1 || stride_[1] != 1) {
+      MS_LOG(EXCEPTION) << "Conv2d stride only support 1 in N axis and C axis!";
+    }
+    if (dilation_.size() != 4) {
+      MS_LOG(EXCEPTION) << "Conv2d's dilation must be 4d!";
+    }
+    if (dilation_[0] != 1 || dilation_[1] != 1) {
+      MS_LOG(EXCEPTION) << "Conv2d dilation only support 1 in N axis and C axis!";
+    }
   }
   cudnnHandle_t cudnn_handle_;
   cudnnTensorDescriptor_t input_desc_;
@@ -283,8 +303,8 @@ class Conv2dGpuFwdKernel : public GpuKernel {
   int pad_left_;
   int n_;
   int c_;
-  int stride_;
-  int dilation_;
+  std::vector<int> stride_;
+  std::vector<int> dilation_;
   int group_;
   bool is_null_input_;
   size_t input_size_;

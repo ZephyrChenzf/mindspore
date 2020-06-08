@@ -17,6 +17,7 @@
 #ifndef MINDSPORE_CCSRC_OPTIMIZER_IRPASS_SPECIAL_OP_ELIMINATE_H_
 #define MINDSPORE_CCSRC_OPTIMIZER_IRPASS_SPECIAL_OP_ELIMINATE_H_
 
+#include <securec.h>
 #include <vector>
 #include <memory>
 #include <algorithm>
@@ -34,11 +35,13 @@ class SpecialOpEliminater {
  public:
   SpecialOpEliminater()
       : insert_gradient_of_(prim::kPrimInsertGradientOf),
+        hook_backward_(prim::kPrimHookBackward),
         print_shape_type_(prim::kPrimPrintShapeType),
         get_ref_value_(prim::kPrimGetRefValue),
         mirror_(prim::kPrimMirror),
         virtual_div_(prim::kPrimVirtualDiv) {
     eliminaters_.emplace_back(insert_gradient_of_);
+    eliminaters_.emplace_back(hook_backward_);
     eliminaters_.emplace_back(print_shape_type_);
     eliminaters_.emplace_back(get_ref_value_);
     eliminaters_.emplace_back(mirror_);
@@ -58,7 +61,7 @@ class SpecialOpEliminater {
   }
 
  private:
-  PrimEliminater insert_gradient_of_, print_shape_type_, get_ref_value_, mirror_, virtual_div_;
+  PrimEliminater insert_gradient_of_, hook_backward_, print_shape_type_, get_ref_value_, mirror_, virtual_div_;
   std::vector<TransformFuncType> eliminaters_{};
 };
 
@@ -109,6 +112,25 @@ class SameEliminater : public AnfVisitor {
   AnfNodePtr x_{nullptr};
 };
 
+// {prim::kPrimCheckBprop, X, Y} -> X
+class CheckBpropEliminater : public AnfVisitor {
+ public:
+  AnfNodePtr operator()(const OptimizerPtr &, const AnfNodePtr &node) override {
+    x_ = nullptr;
+    AnfVisitor::Match(prim::kPrimCheckBprop, {IsNode, IsNode})(node);
+    return x_;
+  }
+
+  void Visit(const AnfNodePtr &node) override {
+    if (x_ == nullptr) {
+      x_ = node;
+    }
+  }
+
+ private:
+  AnfNodePtr x_{nullptr};
+};
+
 // Reset defer_inline flag
 class ResetDeferInline : public AnfVisitor {
  public:
@@ -121,7 +143,7 @@ class ResetDeferInline : public AnfVisitor {
   }
 };
 
-// {PrimZerosLikeTensor, Y} ->
+// {PrimZerosLike, Y} ->
 // {PrimFill, {PrimDType, Y}, {PrimShape, Y}, 0}
 class ZeroLikeFillZero : public AnfVisitor {
  public:
@@ -133,16 +155,31 @@ class ZeroLikeFillZero : public AnfVisitor {
 
   AnfNodePtr operator()(const OptimizerPtr &, const AnfNodePtr &node) override {
     y_ = nullptr;
-    AnfVisitor::Match(prim::kPrimZerosLikeTensor, {IsNode})(node);
+    AnfVisitor::Match(prim::kPrimZerosLike, {IsNode})(node);
     if (y_ == nullptr || node->func_graph() == nullptr) {
       return nullptr;
     }
+    if ((y_->abstract() == nullptr) || !y_->abstract()->isa<abstract::AbstractTensor>()) {
+      auto fg = node->func_graph();
+      auto dtype = fg->NewCNode({NewValueNode(PrimDType_), y_});
+      auto shape = fg->NewCNode({NewValueNode(PrimShape_), y_});
+      return fg->NewCNode({NewValueNode(PrimFill_), dtype, shape, NewValueNode(MakeValue(0))});
+    }
 
-    auto fg = node->func_graph();
-    auto dtype = fg->NewCNode({NewValueNode(PrimDType_), y_});
-    auto shape = fg->NewCNode({NewValueNode(PrimShape_), y_});
+    abstract::AbstractTensorPtr tensor_abstract = y_->abstract()->cast<abstract::AbstractTensorPtr>();
 
-    return fg->NewCNode({NewValueNode(PrimFill_), dtype, shape, NewValueNode(MakeValue(0))});
+    TypePtr tensor_type_ptr = tensor_abstract->element()->BuildType();
+    std::vector<int> tensor_shape = tensor_abstract->shape()->shape();
+
+    tensor::TensorPtr new_tensor_ptr = std::make_shared<tensor::Tensor>(tensor_type_ptr->type_id(), tensor_shape);
+    size_t mem_size = GetTypeByte(tensor_type_ptr) * IntToSize(new_tensor_ptr->ElementsNum());
+    char *data = reinterpret_cast<char *>(new_tensor_ptr->data_c(true));
+    (void)memset_s(data, mem_size, 0, mem_size);
+
+    auto new_cnode = NewValueNode(new_tensor_ptr);
+    new_cnode->set_abstract(new_tensor_ptr->ToAbstract());
+
+    return new_cnode;
   }
 
   void Visit(const AnfNodePtr &node) override { y_ = node; }

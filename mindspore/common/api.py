@@ -20,9 +20,8 @@ from collections import OrderedDict
 from functools import wraps
 from mindspore import context
 from mindspore import log as logger
-from mindspore.parallel._utils import _get_parallel_mode
-from .._c_expression import generate_key, Executor_, Tensor, MetaTensor
-from .._c_expression import verify_inputs_signature, init_exec_dataset, export_graph, _set_dataset_mode_config, init_ge
+from .._c_expression import generate_key, Executor_, Tensor, MetaTensor, PynativeExecutor_
+from .._c_expression import verify_inputs_signature, init_exec_dataset, _set_dataset_mode_config, init_backend
 from .tensor import Tensor as MsTensor
 
 # store ms_function class compiled pipeline cache
@@ -70,12 +69,11 @@ def _wrap_func(fn):
         def _convert_data(data):
             if isinstance(data, Tensor) and not isinstance(data, MsTensor):
                 return MsTensor(data)
+            if isinstance(data, tuple):
+                return tuple(_convert_data(x) for x in data)
+            if isinstance(data, list):
+                return list(_convert_data(x) for x in data)
             return data
-
-        if isinstance(results, tuple):
-            return tuple(_convert_data(x) for x in results)
-        if isinstance(results, list):
-            return list(_convert_data(x) for x in results)
         return _convert_data(results)
 
     return wrapper
@@ -84,14 +82,15 @@ def _wrap_func(fn):
 def _exec_init_graph(obj, init_phase):
     """Execute the parameter initializer graph."""
     inst_executor = Executor_.get_instance()
-    exec_init_graph = False
-    for param in obj.get_parameters():
+    param_dict = OrderedDict()
+    for name, param in obj.parameters_dict().items():
         if not param.is_init:
+            param_dict[name] = param
             param.is_init = True
-            exec_init_graph = True
+            param.data.init_flag = True
 
-    if exec_init_graph:
-        inst_executor.run_init_graph(obj.parameters_dict(), init_phase)
+    if param_dict:
+        inst_executor.run_init_graph(param_dict, init_phase)
 
 
 class _MindSporeFunction:
@@ -184,7 +183,7 @@ class _MindSporeFunction:
 
     @_wrap_func
     def __call__(self, *args):
-        init_ge()
+        init_backend()
         converted, arguments_dict, parse_method = _convert_function_arguments(self.fn, *args)
         if not converted:
             raise RuntimeError('Process function parameter is failure')
@@ -230,8 +229,8 @@ def ms_function(fn=None, obj=None, input_signature=None):
         >>>     z = F.tensor_add(x, y)
         >>>     return z
         >>>
-        >>> @ms_function(input_signature=(MetaTensor(mstype.float32, (1, 1, 3, 3)),
-        >>>                               MetaTensor(mstype.float32, (1, 1, 3, 3))))
+        >>> @ms_function(input_signature=(MetaTensor(mindspore.float32, (1, 1, 3, 3)),
+        >>>                               MetaTensor(mindspore.float32, (1, 1, 3, 3))))
         >>> def tensor_add_with_sig(x, y):
         >>>     z = F.tensor_add(x, y)
         >>>     return z
@@ -274,6 +273,34 @@ def _generate_pip_args(obj, *args, method="construct"):
     obj.__parse_method__ = parse_method
     return args_names, args_list
 
+class _PynativeExecutor:
+    """
+    An pynative executor used to compile/manage/run graph.
+
+    Returns:
+        Graph, return the result of pipeline running.
+    """
+
+    def __init__(self):
+        self._executor = PynativeExecutor_.get_instance()
+
+    def new_graph(self, obj, *args):
+        self._executor.new_graph(obj, *args)
+
+    def end_graph(self, obj, output, *args):
+        self._executor.end_graph(obj, output, *args)
+
+    def grad(self, grad, obj, weights, *args):
+        self._executor.grad_net(grad, obj, weights, *args)
+
+    def clear(self):
+        self._executor.clear()
+
+    def set_grad_flag(self, flag):
+        self._executor.set_grad_flag(flag)
+
+    def __call__(self, *args):
+        return self._executor(args, "")
 
 class _Executor:
     """
@@ -328,7 +355,30 @@ class _Executor:
             raise TypeError('Parameters need OrderedDict type, but got {}'.
                             format(type(params)))
 
-    def compile(self, obj, *args, phase='predict', params=None):
+    def _params_init_data(self, obj, params, auto_parallel_mode=False):
+        """Init parameters' data."""
+        if params is not None:
+            for key, param in params.items():
+                if not auto_parallel_mode:
+                    param.init_data()
+                elif key not in obj.parameter_layout_dict:
+                    logger.info("Layout dict does not contain the key %s.", key)
+                    param.init_data(set_sliced=True)
+                else:
+                    layout = obj.parameter_layout_dict[key]
+                    param.init_data(layout, set_sliced=True)
+        obj.init_parameters_data(auto_parallel_mode=auto_parallel_mode)
+
+    def _set_dataset_mode(self, args_list):
+        """set dataset mode."""
+        # decide whether to sink based on whether the inputs is virtual or args_list is ()
+        if (args_list and isinstance(args_list[0], Tensor) and args_list[0].virtual_flag) or \
+                (args_list is not None and args_list == ()):
+            _set_dataset_mode_config('sink')
+        else:
+            _set_dataset_mode_config('normal')
+
+    def compile(self, obj, *args, phase='predict', params=None, do_convert=True, auto_parallel_mode=False):
         """
         Compiles graph.
 
@@ -337,6 +387,8 @@ class _Executor:
             args (tuple): Function or cell input arguments.
             phase (str): The name of compile phase. Default: 'predict'.
             params (OrderedDict): The parameters dictionary used for init data graph. Default: None.
+            do_convert (bool): When set to True, convert ME graph to GE graph after compiling graph.
+            auto_parallel_mode: When set to True, use auto parallel mode to compile graph.
 
         Return:
             Str, the full phase of the cell.
@@ -356,6 +408,8 @@ class _Executor:
 
         use_vm = not enable_ge or (enable_debug_runtime and context.get_context("mode") == context.PYNATIVE_MODE)
 
+        self._set_dataset_mode(args_list)
+
         if phase in self.compile_cache.keys():
             logger.debug("%r graph has existed.", phase)
             return phase, False
@@ -368,23 +422,22 @@ class _Executor:
 
         if graph is None:
             logger.error("%r graph compile failed.", phase)
+        if not do_convert:
+            return phase, True
 
+        if auto_parallel_mode:
+            obj.parameter_layout_dict = self._executor.get_parameter_layout(phase)
+        self._params_init_data(obj, params, auto_parallel_mode)
         if not enable_debug_runtime or enable_ge:
-            if _get_parallel_mode() in ["auto_parallel", "semi_auto_parallel"]:
-                obj.parameter_layout_dict = self._executor.get_parameter_layout(phase)
+            if auto_parallel_mode:
                 obj.load_parameter_slice(params)
 
-            if _get_parallel_mode() in ["hybrid_parallel"]:
-                obj.parameter_layout_dict = self._build_parameter_layout(obj)
+        # set parallel inputs in sink mode
+        if auto_parallel_mode and (args and isinstance(args[0], Tensor) and args[0].virtual_flag):
+            obj.set_parallel_input_with_inputs(*args)
 
         # the following GE init process is not needed when use vm or ms backend
         if enable_ge:
-            # decide whether to sink based on whether the inputs is virtual or not
-            if args_list and isinstance(args_list[0], Tensor) and args_list[0].virtual_flag:
-                _set_dataset_mode_config('graph')
-            else:
-                _set_dataset_mode_config('feed')
-
             self._build_data_graph(obj, params, phase)
 
             if "export" not in phase:
@@ -449,38 +502,6 @@ class _Executor:
             return self._exec_pip(obj, *args, phase=phase_real)
         raise KeyError('{} graph is not exist.'.format(phase_real))
 
-    def _build_parameter_layout(self, obj):
-        """
-        Build parameter layout, for layerwise_parallel parameter.
-
-        Args:
-            obj (Function or Cell): The function or cell instance need to be compiled.
-
-        Returns:
-            Dictionary, parameter layout info.
-        """
-        parameter_layout_dict = {}
-        layerwise_parallel_parameters = []
-        for key in obj.parameters_dict():
-            if obj.parameters_dict()[key].layerwise_parallel is True:
-                layerwise_parallel_parameters.append(key)
-
-        if not layerwise_parallel_parameters:
-            return parameter_layout_dict
-
-        from ..communication.management import get_group_size
-        group_size = [get_group_size()]
-        for key in layerwise_parallel_parameters:
-            tensor_map = [0]
-            shape = obj.parameters_dict()[key].data.shape()
-            for x in range(len(shape)):  # dim 0 set 0, others set -1
-                if x:
-                    tensor_map.append(-1)
-            layout = [group_size, tensor_map]
-            parameter_layout_dict[key] = layout
-
-        return parameter_layout_dict
-
     def del_net_res(self, net_id):
         self._executor.del_net_res(net_id)
 
@@ -501,10 +522,12 @@ class _Executor:
             file_name (str): File name of model to export
             file_format (str): MindSpore currently support 'GEIR' and 'ONNX' format for exported model
         """
+        from .._c_expression import export_graph
         phase = 'export' + '.' + str(net.create_time)
         export_graph(file_name, file_format, phase)
 
 
 _executor = _Executor()
+_pynative_exec = _PynativeExecutor()
 
 __all__ = ['ms_function']

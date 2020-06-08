@@ -16,15 +16,18 @@
 # ============================================================================
 
 """Basic composite operations."""
+from functools import partial
 
+from mindspore import context
 from ..._c_expression import EnvInstance_, GradOperation_, HyperMap_, MultitypeFuncGraph_, Tail_, TensorSlice_, \
-                             TupleAdd_, TupleSlice_, UnpackCall_, ZipOperation_, ListAppend_
+                             TupleAdd_, TupleSlice_, UnpackCall_, ZipOperation_, ListAppend_, TupleGetItemTensor_
 from ...common import dtype as mstype
-from ...common.api import ms_function
+from ...common.api import ms_function, _pynative_exec
 from .. import functional as F
-from .. import operations as P
+from ...common.parameter import Parameter
 
-__all__ = [EnvInstance_, TensorSlice_, TupleAdd_, TupleSlice_, UnpackCall_]
+
+__all__ = [EnvInstance_, TensorSlice_, TupleAdd_, TupleSlice_, UnpackCall_, TupleGetItemTensor_]
 
 
 def add_flags(fn, **flags):
@@ -103,14 +106,34 @@ class GradOperation(GradOperation_):
         GradOperation_.__init__(self, name, get_all, get_by_list, sens_param)
         self.grad_fn = None
         self.fn = None
+        self.need_forward = False
 
     def __call__(self, fn, weights=None):
         grad_ = GradOperation('grad', self.get_all, self.get_by_list, self.sens_param)
         if self.grad_fn is None or self.fn != fn:
             if self.get_by_list:
-                @ms_function(obj=fn)
-                def after_grad(*args):
-                    return grad_(fn, weights)(*args)
+                if context.get_context("mode") == context.GRAPH_MODE or fn.bprop_debug:
+                    @ms_function(obj=fn)
+                    def after_grad(*args):
+                        return grad_(fn, weights)(*args)
+                else:
+                    def after_grad(*args):
+                        if fn.is_run and not fn.requires_grad:
+                            raise ValueError("obj must set_grad.")
+                        if not fn.is_run:
+                            self.need_forward = True
+                            print("already has forward run before grad by user")
+                        if self.need_forward:
+                            fn.set_grad()
+                            if self.sens_param:
+                                f_args = args[:-1]
+                                fn(*f_args)
+                            else:
+                                fn(*args)
+                        _pynative_exec.grad(grad_, fn, weights, *args)
+                        out = _pynative_exec(*args)
+                        _pynative_exec.clear()
+                        return out
             else:
                 @ms_function(obj=fn)
                 def after_grad(*args):
@@ -144,7 +167,6 @@ class MultitypeFuncGraph(MultitypeFuncGraph_):
         >>> # `add` is a metagraph object which will add two objects according to
         >>> # input type using ".register" decorator.
         >>> add = MultitypeFuncGraph('add')
-
     """
 
     def __init__(self, name):
@@ -152,8 +174,15 @@ class MultitypeFuncGraph(MultitypeFuncGraph_):
         self.entries = list()
 
     def __call__(self, *args):
-        for sig, fn in self.entries:
-            if len(sig) != len(args):
+        def unwrap(arg):
+            if isinstance(arg, Parameter):
+                return arg.data
+            return arg
+        types = tuple(map(lambda arg: mstype.get_py_obj_dtype(unwrap(arg)), args))
+        for sigs, fn in self.entries:
+            if len(sigs) != len(types):
+                continue
+            if any(not mstype.issubclass_(type_, sig) for sig, type_ in zip(sigs, types)):
                 continue
             output = fn(*args)
             return output
@@ -162,8 +191,9 @@ class MultitypeFuncGraph(MultitypeFuncGraph_):
     def register(self, *type_names):
         """Register a function for the given type string."""
         def deco(fn):
+            types = tuple(map(mstype.typing.str_to_type, type_names))
             self.register_fn(type_names, fn)
-            self.entries.append((type_names, fn))
+            self.entries.append((types, fn))
             return fn
         return deco
 
@@ -198,38 +228,17 @@ class HyperMap(HyperMap_):
             HyperMap_.__init__(self)
 
     def __call__(self, *args):
-        func = args[0]
-        count = 0
-        count_max = 1
-        args_list = args[1:]
-        if self.ops is not None:
-            func = self.ops
-            args_list = args
-        for item in args_list:
-            if isinstance(item, (tuple, list)):
-                count_max = len(item)
-                break
-
-        def get_item(x):
-            nonlocal count
-            if isinstance(x, (tuple, list)):
-                return x[count]
-            return x
-
-        for i in range(count_max):
-            true_args = tuple(map(get_item, args_list))
-            func(*true_args)
-            count = i + 1
-        return True
-
-    def register(self, *type_names):
-        """Register a function for the given type string."""
-
-        def deco(fn):
-            self.register_fn(type_names, fn)
-            return fn
-        return deco
-
+        func = self.ops
+        args_list = args
+        hypermap = self
+        if self.ops is None:
+            func = args[0]
+            args_list = args[1:]
+            hypermap = partial(self, func)
+        # is leaf
+        if not isinstance(args_list[0], (tuple, list)):
+            return func(*args_list)
+        return tuple(map(hypermap, *args_list))
 
 class _ListAppend(ListAppend_):
     """
@@ -286,24 +295,4 @@ env_get = MultitypeFuncGraph("env_get")
 @env_get.register("EnvType", "Tensor")
 def _tensor_env_get(env, parameter):
     """Used to get env."""
-    return F.env_getitem(env, F.ref_to_embed(parameter), F.zeros_like_tensor(parameter))
-
-
-_mp_cast_helper = MultitypeFuncGraph('mixed_precision_cast_helper')
-
-
-@_mp_cast_helper.register("TypeType", "Number")
-@core
-def _mixed_precision_cast_helper_1(type_, x):
-    """if x is float cast to type."""
-    # type_ is place holder
-    return x
-
-
-@_mp_cast_helper.register("TypeType", "Tensor")
-@core
-def _mixed_precision_cast_helper_2(type_, x):
-    """if x is float cast to type."""
-    if F.issubclass_(F.dtype(x), mstype.float_):
-        return P.Cast()(x, type_)
-    return x
+    return F.env_getitem(env, F.ref_to_embed(parameter), F.zeros_like(parameter))

@@ -1,7 +1,7 @@
 /**
  * This is the C++ adaptation and derivative work of Myia (https://github.com/mila-iqia/myia/).
  *
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2020 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@
 #include "ir/base.h"
 #include "ir/dtype.h"
 #include "ir/value.h"
-#include "ir/meta_tensor.h"
+#include "ir/tensor.h"
 #include "pipeline/static_analysis/dshape.h"
 
 namespace mindspore {
@@ -38,7 +38,7 @@ namespace abstract {
 class AbstractBase;
 using AbstractBasePtrList = std::vector<AbstractBasePtr>;
 
-// The base class for abstract value. The abstract value is used in inferring
+// The base class for abstract value. The abstract value is used in evaluating
 // to express the type, shape, and value of the real value.
 class AbstractBase : public Base {
  public:
@@ -77,7 +77,7 @@ class AbstractBase : public Base {
   }
 
  protected:
-  // default implementation, it can be overrided by subclass;
+  // default implementation, it can be overwritten by subclass;
   virtual ValuePtr RealBuildValue() const { return kAnyValue; }
 
  private:
@@ -495,10 +495,10 @@ class AbstractNone : public AbstractBase {
 };
 using AbstractNonePtr = std::shared_ptr<AbstractNone>;
 
-// the un assgined state value for variable, which means the variable is not assigned
+// the un assigned state value for variable, which means the variable is not assigned
 class AbstractNull : public AbstractBase {
  public:
-  AbstractNull() : AbstractBase(kNullObj) { set_type(std::make_shared<TypeNull>()); }
+  AbstractNull() : AbstractBase(kNull) { set_type(std::make_shared<TypeNull>()); }
   ~AbstractNull() override = default;
   MS_DECLARE_PARENT(AbstractNull, AbstractBase)
 
@@ -509,6 +509,20 @@ class AbstractNull : public AbstractBase {
   std::string ToString() const override;
 };
 using AbstractNullPtr = std::shared_ptr<AbstractNull>;
+
+class AbstractEllipsis : public AbstractBase {
+ public:
+  AbstractEllipsis() : AbstractBase(kEllipsis) { set_type(std::make_shared<Ellipsis>()); }
+  ~AbstractEllipsis() override = default;
+  MS_DECLARE_PARENT(AbstractEllipsis, AbstractBase)
+
+  TypePtr BuildType() const override { return std::make_shared<Ellipsis>(); }
+  bool operator==(const AbstractEllipsis &other) const;
+  bool operator==(const AbstractBase &other) const override;
+  AbstractBasePtr Clone() const override { return std::make_shared<AbstractEllipsis>(); }
+  std::string ToString() const override;
+};
+using AbstractEllipsisPtr = std::shared_ptr<AbstractEllipsis>;
 
 class AbstractRefKey : public AbstractBase {
  public:

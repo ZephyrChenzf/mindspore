@@ -13,18 +13,17 @@
 # limitations under the License.
 # ============================================================================
 from __future__ import absolute_import
-from te import tvm
-from topi import generic
-import te.lang.cce
-from topi.cce import util
-from te.platform.fusion_manager import fusion_manager
-from mindspore.ops.op_info_register import op_info_register
 
-# shape size limit for aicore is 2**31
-SHAPE_SIZE_LIMIT = 200000000
+import te.lang.cce
+from te import tvm
+from te.platform.fusion_manager import fusion_manager
+from topi import generic
+from topi.cce import util
+
+from mindspore.ops.op_info_register import op_info_register, TBERegOp, DataType
 
 @fusion_manager.register("square")
-def square_compute(input_x, output_y, kernel_name="square"):
+def square_compute(input_x, output_y):
     """
     algorithm: square
     calculating data's square,y= x*x
@@ -46,50 +45,23 @@ def square_compute(input_x, output_y, kernel_name="square"):
     res = te.lang.cce.vmul(input_x, input_x)
     return res
 
-@op_info_register("""{
-    "op_name": "CusSquare",
-    "imply_type": "TBE",
-    "fusion_type": "OPAQUE",
-    "async_flag": false,
-    "binfile_name": "square.so",
-    "compute_cost": 10,
-    "kernel_name": "CusSquare",
-    "partial_flag": true,
-    "attr": [
-        
-    ],
-    "inputs": [
-        {
-            "index": 0,
-            "dtype": [
-                "float32"
-            ],
-            "format": [
-                "DefaultFormat"
-            ],
-            "name": "x",
-            "need_compile": false,
-            "param_type": "required",
-            "shape": "all"
-        }
-    ],
-    "outputs": [
-        {
-            "index": 0,
-            "dtype": [
-                "float32"
-            ],
-            "format": [
-                "DefaultFormat"
-            ],
-            "name": "y",
-            "need_compile": false,
-            "param_type": "required",
-            "shape": "all"
-        }
-    ]
-}""")
-def CusSquare(input_x, output_y, kernel_name="square"):
+
+cus_square_op_info = TBERegOp("CusSquare") \
+    .fusion_type("OPAQUE") \
+    .async_flag(False) \
+    .binfile_name("square.so") \
+    .compute_cost(10) \
+    .kernel_name("CusSquareImpl") \
+    .partial_flag(True) \
+    .input(0, "x", False, "required", "all") \
+    .output(0, "y", False, "required", "all") \
+    .dtype_format(DataType.F32_Default, DataType.F32_Default) \
+    .dtype_format(DataType.F16_Default, DataType.F16_Default) \
+    .get_op_info()
+
+
+@op_info_register(cus_square_op_info)
+def CusSquareImpl(input_x, output_y, kernel_name="CusSquareImpl"):
     """
     algorithm: square
     calculating data's square,y= x*x
@@ -114,7 +86,7 @@ def CusSquare(input_x, output_y, kernel_name="square"):
     data = tvm.placeholder(shape, name="data", dtype=dtype.lower())
 
     with tvm.target.cce():
-        res = square_compute(data, output_y, kernel_name)
+        res = square_compute(data, output_y)
         sch = generic.auto_schedule(res)
 
     config = {"print_ir": False,

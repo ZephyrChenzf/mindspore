@@ -20,6 +20,7 @@
 #include <cstring>
 #include <string>
 #include <memory>
+#include "utils/context/ms_context.h"
 using std::map;
 using std::string;
 
@@ -29,10 +30,6 @@ namespace ascend {
 // PROFILING_CUSTOM_LOGID_START 3
 const uint64_t kProfilingFpStartLogId = 1;
 const uint64_t kProfilingBpEndLogId = 2;
-const uint64_t kProfilingAllReduce1Start = 3;
-const uint64_t kProfilingAllReduce1End = 4;
-const uint64_t kProfilingAllReduce2Start = 5;
-const uint64_t kProfilingAllReduce2End = 6;
 const uint64_t kProfilingIterEndLogId = 255;
 
 class ProfilingEngineImpl;
@@ -45,8 +42,9 @@ class ProfilingManager {
   bool StopProfiling() const;
 
   inline bool IsProfiling() const {
-    const char *is_profiling = std::getenv("PROFILING_MODE");
-    return (is_profiling != nullptr && (strcmp("true", is_profiling) == 0));
+    auto context = MsContext::GetInstance();
+    MS_EXCEPTION_IF_NULL(context);
+    return context->enable_profiling();
   }
 
  protected:

@@ -40,7 +40,7 @@ struct KernelBuildTaskInfo {
 class ParallelBuildManager {
  public:
   ParallelBuildManager();
-  ~ParallelBuildManager() = default;
+  ~ParallelBuildManager();
   int32_t StartCompileOp(const nlohmann::json &kernel_json) const;
   void SaveTaskInfo(int32_t task_id, const AnfNodePtr &anf_node, const std::string &json_name,
                     const std::vector<size_t> &input_size_list, const std::vector<size_t> &output_size_list,
@@ -55,8 +55,10 @@ class ParallelBuildManager {
   bool WaitOne(int *task_id, char **task_result) const;
   bool IsAllTaskFinish() const;
   std::pair<int32_t, KernelModPtr> TaskFinishProcess(int32_t task_id, bool set_kernel_mod = true);
-  KernelModPtr GenKernelMod(const string &json_name, const string &processor, const vector<size_t> &input_size_list,
-                            const vector<size_t> &output_size_list, const KernelPackPtr &kernel_pack) const;
+  KernelModPtr GenKernelMod(const string &json_name, const string &processor,
+                            const std::vector<size_t> &input_size_list, const std::vector<size_t> &output_size_list,
+                            const KernelPackPtr &kernel_pack) const;
+  void ResetTaskInfo();
 
  private:
   PyObject *tbe_parallel_compiler_;

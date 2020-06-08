@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
+import numpy as np
+
 import mindspore.dataset as ds
 from mindspore import log as logger
-import numpy as np
 
 
 def test_batch_corner_cases():
@@ -58,7 +59,7 @@ def test_batch_corner_cases():
 # to a pyfunc which makes a deep copy of the row
 def test_variable_size_batch():
     def check_res(arr1, arr2):
-        for ind in range(len(arr1)):
+        for ind, _ in enumerate(arr1):
             if not np.array_equal(arr1[ind], np.array(arr2[ind])):
                 return False
         return len(arr1) == len(arr2)
@@ -74,10 +75,12 @@ def test_variable_size_batch():
         return batchInfo.get_epoch_num() + 1
 
     def simple_copy(colList, batchInfo):
+        _ = batchInfo
         return ([np.copy(arr) for arr in colList],)
 
     def test_repeat_batch(gen_num, r, drop, func, res):
-        data1 = ds.GeneratorDataset((lambda: gen(gen_num)), ["num"]).repeat(r).batch(batch_size=func, drop_remainder=drop)
+        data1 = ds.GeneratorDataset((lambda: gen(gen_num)), ["num"]).repeat(r).batch(batch_size=func,
+                                                                                     drop_remainder=drop)
         for item in data1.create_dict_iterator():
             res.append(item["num"])
 
@@ -91,7 +94,8 @@ def test_variable_size_batch():
         return res
 
     def test_batch_repeat(gen_num, r, drop, func, res):
-        data1 = ds.GeneratorDataset((lambda: gen(gen_num)), ["num"]).batch(batch_size=func, drop_remainder=drop).repeat(r)
+        data1 = ds.GeneratorDataset((lambda: gen(gen_num)), ["num"]).batch(batch_size=func, drop_remainder=drop).repeat(
+            r)
         for item in data1.create_dict_iterator():
             res.append(item["num"])
 
@@ -140,7 +144,7 @@ def test_variable_size_batch():
 
 def test_basic_batch_map():
     def check_res(arr1, arr2):
-        for ind in range(len(arr1)):
+        for ind, _ in enumerate(arr1):
             if not np.array_equal(arr1[ind], np.array(arr2[ind])):
                 return False
         return len(arr1) == len(arr2)
@@ -173,7 +177,7 @@ def test_basic_batch_map():
 
 def test_batch_multi_col_map():
     def check_res(arr1, arr2):
-        for ind in range(len(arr1)):
+        for ind, _ in enumerate(arr1):
             if not np.array_equal(arr1[ind], np.array(arr2[ind])):
                 return False
         return len(arr1) == len(arr2)
@@ -183,6 +187,7 @@ def test_batch_multi_col_map():
             yield (np.array([i]), np.array([i ** 2]))
 
     def col1_col2_add_num(col1, col2, batchInfo):
+        _ = batchInfo
         return ([[np.copy(arr + 100) for arr in col1],
                  [np.copy(arr + 300) for arr in col2]])
 
@@ -221,7 +226,7 @@ def test_batch_multi_col_map():
 
 def test_var_batch_multi_col_map():
     def check_res(arr1, arr2):
-        for ind in range(len(arr1)):
+        for ind, _ in enumerate(arr1):
             if not np.array_equal(arr1[ind], np.array(arr2[ind])):
                 return False
         return len(arr1) == len(arr2)
@@ -266,7 +271,7 @@ def test_var_batch_var_resize():
         return ([np.copy(c[0:s, 0:s, :]) for c in col],)
 
     def add_one(batchInfo):
-        return (batchInfo.get_batch_num() + 1)
+        return batchInfo.get_batch_num() + 1
 
     data1 = ds.ImageFolderDatasetV2("../data/dataset/testPK/data/", num_parallel_workers=4, decode=True)
     data1 = data1.batch(batch_size=add_one, drop_remainder=True, input_columns=["image"], per_batch_map=np_psedo_resize)
@@ -284,11 +289,11 @@ def test_exception():
 
     def bad_batch_size(batchInfo):
         raise StopIteration
-        return batchInfo.get_batch_num()
+        #return batchInfo.get_batch_num()
 
     def bad_map_func(col, batchInfo):
         raise StopIteration
-        return (col,)
+        #return (col,)
 
     data1 = ds.GeneratorDataset((lambda: gen(100)), ["num"]).batch(bad_batch_size)
     try:
@@ -300,7 +305,7 @@ def test_exception():
 
     data2 = ds.GeneratorDataset((lambda: gen(100)), ["num"]).batch(4, input_columns=["num"], per_batch_map=bad_map_func)
     try:
-        for item in data2.create_dict_iterator():
+        for _ in data2.create_dict_iterator():
             pass
         assert False
     except RuntimeError:

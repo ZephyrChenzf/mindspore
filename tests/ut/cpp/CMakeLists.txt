@@ -26,7 +26,6 @@ MESSAGE("check  ut_test ${CMAKE_BINARY_DIR}")
 link_directories(${MS_CCSRC_BUILD_PATH})
 
 if(ENABLE_MINDDATA)
-    add_definitions(-D ENABLE_MINDRECORD)
     add_definitions(-D ENABLE_MINDDATA)
     link_directories(${MS_CCSRC_BUILD_PATH}/dataset)
     link_directories(${MS_CCSRC_BUILD_PATH}/mindrecord)
@@ -62,6 +61,7 @@ file(GLOB_RECURSE MINDSPORE_SRC_LIST RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         "../../../mindspore/ccsrc/transform/*.cc"
         "../../../mindspore/ccsrc/session/anf_runtime_algorithm.cc"
         "../../../mindspore/ccsrc/session/ascend_session.cc"
+        "../../../mindspore/ccsrc/session/ascend_control_parser.cc"
         "../../../mindspore/ccsrc/session/kernel_graph.cc"
         "../../../mindspore/ccsrc/session/session_basic.cc"
         "../../../mindspore/ccsrc/session/session_factory.cc"
@@ -71,7 +71,7 @@ file(GLOB_RECURSE MINDSPORE_SRC_LIST RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         "../../../mindspore/ccsrc/kernel/akg/*.cc"
         "../../../mindspore/ccsrc/kernel/kash/*.cc"
         "../../../mindspore/ccsrc/kernel/cce/*.cc"
-        "../../../mindspore/ccsrc/kernel/mng/*.cc"
+        "../../../mindspore/ccsrc/kernel/rts/*.cc"
         "../../../mindspore/ccsrc/kernel/hccl/*.cc"
         "../../../mindspore/ccsrc/kernel/kernel_query.cc"
         "../../../mindspore/ccsrc/kernel/kernel_build_info.cc"
@@ -81,11 +81,12 @@ file(GLOB_RECURSE MINDSPORE_SRC_LIST RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         "../../../mindspore/ccsrc/pre_activate/mem_reuse/*.cc"
         "../../../mindspore/ccsrc/pre_activate/pass/*.cc"
         "../../../mindspore/ccsrc/kernel/aicpu/aicpu_kernel_metadata.cc"
-        "../../../mindspore/ccsrc/kernel/mng/rt_kernel_info.cc"
+        "../../../mindspore/ccsrc/kernel/rts/rt_kernel_info.cc"
         "../../../mindspore/ccsrc/kernel/common_utils.cc"
         "../../../mindspore/ccsrc/kernel/oplib/*.cc"
         "../../../mindspore/ccsrc/kernel/tbe/*.cc"
         "../../../mindspore/ccsrc/device/kernel_runtime.cc"
+        "../../../mindspore/ccsrc/device/memory_manager.cc"
         "../../../mindspore/ccsrc/device/kernel_runtime_manager.cc"
         "../../../mindspore/ccsrc/device/kernel_info.cc"
         "../../../mindspore/ccsrc/device/ascend/profiling/*.cc"
@@ -93,8 +94,9 @@ file(GLOB_RECURSE MINDSPORE_SRC_LIST RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         "../../../mindspore/ccsrc/device/convert_tensor_utils.cc"
         "../../../mindspore/ccsrc/device/ascend/kernel_build_ascend.cc"
         "../../../mindspore/ccsrc/device/ascend/ascend_kernel_runtime.cc"
+        "../../../mindspore/ccsrc/device/ascend/ascend_memory_manager.cc"
         "../../../mindspore/ccsrc/device/ascend/ascend_device_address.cc"
-        "../../../mindspore/ccsrc/device/ascend/ascend_memory_allocator.cc"
+        "../../../mindspore/ccsrc/device/ascend/ascend_memory_pool.cc"
         "../../../mindspore/ccsrc/predict/generator/utils/ir_model_util.cc"
         "../../../mindspore/ccsrc/predict/predict.cc"
         "../../../mindspore/ccsrc/predict/converter/*.cc"

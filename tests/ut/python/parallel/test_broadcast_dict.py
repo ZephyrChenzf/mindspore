@@ -13,11 +13,12 @@
 # limitations under the License.
 
 import numpy as np
-import mindspore.nn as nn
+
 import mindspore.context as context
+import mindspore.nn as nn
 from mindspore import Tensor, Parameter
-from mindspore.ops import operations as P
 from mindspore.communication.management import init
+from mindspore.ops import operations as P
 
 
 class DataParallelNet(nn.Cell):
@@ -53,7 +54,7 @@ def test_param_broadcast():
     network.set_train()
 
     predict = Tensor(np.ones([64, 512]).astype(np.float32) * 0.01)
-    out = network(predict)
+    _ = network(predict)
     context.reset_auto_parallel_context()
 
 
@@ -66,5 +67,5 @@ def test_param_not_broadcast():
     network.set_train()
 
     predict = Tensor(np.ones([64, 512]).astype(np.float32) * 0.01)
-    out = network(predict)
+    _ = network(predict)
     context.reset_auto_parallel_context()

@@ -13,16 +13,17 @@
 # limitations under the License.
 # ============================================================================
 """Generate the summary event which conform to proto format."""
-import time
 import socket
-from enum import Enum, unique
+import time
+
 import numpy as np
 from PIL import Image
 
 from mindspore import log as logger
-from ..summary_pb2 import Event
-from ..anf_ir_pb2 import ModelProto, DataType
+
 from ..._checkparam import _check_str_by_regular
+from ..anf_ir_pb2 import DataType, ModelProto
+from ..summary_pb2 import Event
 
 # define the MindSpore image format
 MS_IMAGE_TENSOR_FORMAT = 'NCHW'
@@ -31,53 +32,8 @@ EVENT_FILE_NAME_MARK = ".out.events.summary."
 # Set the init event of version and mark
 EVENT_FILE_INIT_VERSION_MARK = "Mindspore.Event:"
 EVENT_FILE_INIT_VERSION = 1
-# cache the summary data dict
-# {id: SummaryData}
-#           |---[{"name": tag_name, "data": numpy}, {"name": tag_name, "data": numpy},...]
-g_summary_data_dict = {}
 
-def save_summary_data(data_id, data):
-    """Save the global summary cache."""
-    global g_summary_data_dict
-    g_summary_data_dict[data_id] = data
-
-
-def del_summary_data(data_id):
-    """Save the global summary cache."""
-    global g_summary_data_dict
-    if data_id in g_summary_data_dict:
-        del g_summary_data_dict[data_id]
-    else:
-        logger.warning("Can't del the data because data_id(%r) "
-                       "does not have data in g_summary_data_dict", data_id)
-
-def get_summary_data(data_id):
-    """Save the global summary cache."""
-    ret = None
-    global g_summary_data_dict
-    if data_id in g_summary_data_dict:
-        ret = g_summary_data_dict.get(data_id)
-    else:
-        logger.warning("The data_id(%r) does not have data in g_summary_data_dict", data_id)
-    return ret
-
-@unique
-class SummaryType(Enum):
-    """
-    Summary type.
-
-    Args:
-        SCALAR (Number): Summary Scalar enum.
-        TENSOR (Number): Summary TENSOR enum.
-        IMAGE (Number): Summary image enum.
-        GRAPH (Number): Summary graph enum.
-        INVALID (Number): Unknow type.
-    """
-    SCALAR = 1      # Scalar summary
-    TENSOR = 2      # Tensor summary
-    IMAGE = 3       # Image summary
-    GRAPH = 4       # graph
-    INVALID = 0xFF  # unknow type
+F32_MIN, F32_MAX = np.finfo(np.float32).min, np.finfo(np.float32).max
 
 
 def get_event_file_name(prefix, suffix):
@@ -135,7 +91,7 @@ def package_graph_event(data):
     return graph_event
 
 
-def package_summary_event(data_id, step):
+def package_summary_event(data_list, step):
     """
     Package the summary to event protobuffer.
 
@@ -146,44 +102,37 @@ def package_summary_event(data_id, step):
     Returns:
         Summary, the summary event.
     """
-    data_list = get_summary_data(data_id)
-    if data_list is None:
-        logger.error("The step(%r) does not have record data.", self.step)
-    del_summary_data(data_id)
     # create the event of summary
     summary_event = Event()
     summary = summary_event.summary
-
-    for value in data_list:
-        tag = value["name"]
-        data = value["data"]
-        summary_type = value["type"]
-
-        # get the summary type and parse the tag
-        if summary_type is SummaryType.SCALAR:
-            logger.debug("Now process Scalar summary, tag = %r", tag)
-            summary_value = summary.value.add()
-            summary_value.tag = tag
-            summary_value.scalar_value = _get_scalar_summary(tag, data)
-        elif summary_type is SummaryType.TENSOR:
-            logger.debug("Now process Tensor summary, tag = %r", tag)
-            summary_value = summary.value.add()
-            summary_value.tag = tag
-            summary_tensor = summary_value.tensor
-            _get_tensor_summary(tag, data, summary_tensor)
-        elif summary_type is SummaryType.IMAGE:
-            logger.debug("Now process Image summary, tag = %r", tag)
-            summary_value = summary.value.add()
-            summary_value.tag = tag
-            summary_image = summary_value.image
-            _get_image_summary(tag, data, summary_image, MS_IMAGE_TENSOR_FORMAT)
-        else:
-            # The data is invalid ,jump the data
-            logger.error("Summary type is error, tag = %r", tag)
-            continue
-
     summary_event.wall_time = time.time()
     summary_event.step = int(step)
+
+    for value in data_list:
+        summary_type = value["_type"]
+        data = value["data"]
+        tag = value["name"]
+
+        logger.debug("Now process %r summary, tag = %r", summary_type, tag)
+
+        summary_value = summary.value.add()
+        summary_value.tag = tag
+        # get the summary type and parse the tag
+        if summary_type == 'Scalar':
+            if not _fill_scalar_summary(tag, data, summary_value):
+                del summary.value[-1]
+        elif summary_type == 'Tensor':
+            _fill_tensor_summary(tag, data, summary_value.tensor)
+        elif summary_type == 'Image':
+            if not _fill_image_summary(tag, data, summary_value.image, MS_IMAGE_TENSOR_FORMAT):
+                del summary.value[-1]
+        elif summary_type == 'Histogram':
+            _fill_histogram_summary(tag, data, summary_value.histogram)
+        else:
+            # The data is invalid ,jump the data
+            logger.error("Summary type(%r) is error, tag = %r", summary_type, tag)
+            del summary.value[-1]
+
     return summary_event
 
 
@@ -226,7 +175,7 @@ def _nptype_to_prototype(np_value):
     return proto
 
 
-def _get_scalar_summary(tag: str, np_value):
+def _fill_scalar_summary(tag: str, np_value, summary):
     """
     Package the scalar summary.
 
@@ -238,25 +187,20 @@ def _get_scalar_summary(tag: str, np_value):
         Summary, return scalar summary content.
     """
     logger.debug("Set(%r) the scalar summary value", tag)
-    if np_value.ndim == 0:
+    if np_value.size == 1:
         # is scalar
-        scalar_value = np_value.item()
-    elif np_value.ndim == 1:
-        # Because now GE can't providesumm the real shape info to convert the Tensor
-        # So consider the dim = 1, shape = (1,) tensor is scalar
-        scalar_value = np_value[0]
-        if np_value.shape != (1,):
-            logger.error("The tensor is not Scalar, tag = %r, Value = %r", tag, np_value)
-    else:
-        np_list = np_value.reshape(-1).tolist()
-        scalar_value = np_list[0]
-        logger.error("The value is not Scalar, tag = %r, Value = %r", tag, np_value)
-
-    logger.debug("The tag(%r) value is: %r", tag, scalar_value)
-    return scalar_value
+        summary.scalar_value = np_value.item()
+        return True
+    if np_value.size > 1:
+        logger.warning("The tensor is not a single scalar, tag = %r, ndim = %r, shape = %r", tag, np_value.ndim,
+                       np_value.shape)
+        summary.scalar_value = next(np_value.flat).item()
+        return True
+    logger.error("There no values inside tensor, tag = %r, size = %r", tag, np_value.size)
+    return False
 
 
-def _get_tensor_summary(tag: str, np_value, summary_tensor):
+def _fill_tensor_summary(tag: str, np_value, summary_tensor):
     """
     Package the tensor summary.
 
@@ -284,7 +228,93 @@ def _get_tensor_summary(tag: str, np_value, summary_tensor):
     return summary_tensor
 
 
-def _get_image_summary(tag: str, np_value, summary_image, input_format='NCHW'):
+def _calc_histogram_bins(count):
+    """
+    Calculates experience-based optimal bins number for histogram.
+
+    There should be enough number in each bin. So we calc bin numbers according to count. For very small count(1 -
+    10), we assign carefully chosen number. For large count, we tried to make sure there are 9-10 numbers in each
+    bucket on average. Too many bins will slow down performance, so we set max number of bins to 90.
+
+    Args:
+        count (int): Valid number count for the tensor.
+
+    Returns:
+        int, number of histogram bins.
+    """
+    max_bins, max_per_bin = 90, 10
+
+    if not count:
+        return 1
+    if count <= 5:
+        return 2
+    if count <= 10:
+        return 3
+    if count <= 880:
+        # note that math.ceil(881/10) + 1 equals 90
+        return count // max_per_bin + 1
+
+    return max_bins
+
+
+def _fill_histogram_summary(tag: str, np_value: np.ndarray, summary) -> None:
+    """
+    Package the histogram summary.
+
+    Args:
+        tag (str): Summary tag describe.
+        np_value (np.ndarray): Summary data.
+        summary (summary_pb2.Summary.Histogram): Summary histogram data.
+    """
+    logger.debug("Set(%r) the histogram summary value", tag)
+    # Default bucket for tensor with no valid data.
+    ma_value = np.ma.masked_invalid(np_value)
+    total, valid = np_value.size, ma_value.count()
+    invalids = []
+    for isfn in np.isnan, np.isposinf, np.isneginf:
+        if total - valid > sum(invalids):
+            count = np.count_nonzero(isfn(np_value))
+            invalids.append(count)
+        else:
+            invalids.append(0)
+
+    summary.count = total
+    summary.nan_count, summary.pos_inf_count, summary.neg_inf_count = invalids
+    if not valid:
+        logger.warning('There are no valid values in the ndarray(size=%d, shape=%d)', total, np_value.shape)
+        # summary.{min, max, sum} are 0s by default, no need to explicitly set
+    else:
+        # BUG: max of a masked array with dtype np.float16 returns inf
+        # See numpy issue#15077
+        if issubclass(np_value.dtype.type, np.floating):
+            summary.min = ma_value.min(fill_value=np.PINF)
+            summary.max = ma_value.max(fill_value=np.NINF)
+            if summary.min < F32_MIN or summary.max > F32_MAX:
+                logger.warning(
+                    'Values(%r, %r) are too large, '
+                    'you may encounter some undefined behaviours hereafter.', summary.min, summary.max)
+        else:
+            summary.min = ma_value.min()
+            summary.max = ma_value.max()
+        summary.sum = ma_value.sum(dtype=np.float64)
+        bins = _calc_histogram_bins(valid)
+        first_edge, last_edge = summary.min, summary.max
+
+        if not first_edge < last_edge:
+            first_edge -= 0.5
+            last_edge += 0.5
+
+        bins = np.linspace(first_edge, last_edge, bins + 1, dtype=np_value.dtype)
+        hists, edges = np.histogram(np_value, bins=bins)
+
+        for hist, edge1, edge2 in zip(hists, edges, edges[1:]):
+            bucket = summary.buckets.add()
+            bucket.width = edge2 - edge1
+            bucket.count = hist
+            bucket.left = edge1
+
+
+def _fill_image_summary(tag: str, np_value, summary_image, input_format='NCHW'):
     """
     Package the image summary.
 
@@ -298,8 +328,14 @@ def _get_image_summary(tag: str, np_value, summary_image, input_format='NCHW'):
         Summary, return image summary content.
     """
     logger.debug("Set(%r) the image summary value", tag)
-    if np_value.ndim != 4:
-        logger.error("The value is not Image, tag = %r, Value = %r", tag, np_value)
+    if np_value.ndim != 4 or np_value.shape[1] not in (1, 3):
+        logger.error("The value is not Image, tag = %r, ndim = %r, shape=%r", tag, np_value.ndim, np_value.shape)
+        return False
+
+    if np_value.ndim != len(input_format):
+        logger.error("The tensor with dim(%r) can't convert the format(%r) because dim not same", np_value.ndim,
+                     input_format)
+        return False
 
     # convert the tensor format
     tensor = _convert_image_format(np_value, input_format)
@@ -320,7 +356,7 @@ def _get_image_summary(tag: str, np_value, summary_image, input_format='NCHW'):
     summary_image.width = width
     summary_image.colorspace = channel
     summary_image.encoded_image = image_string
-    return summary_image
+    return True
 
 
 def _make_image(tensor, rescale=1):
@@ -359,30 +395,21 @@ def _convert_image_format(np_tensor, input_format, out_format='HWC'):
     Returns:
         Tensor, return format image.
     """
-    out_tensor = None
-    if np_tensor.ndim != len(input_format):
-        logger.error("The tensor(%r) can't convert the format(%r) because dim not same",
-                     np_tensor, input_format)
-        return out_tensor
-
     input_format = input_format.upper()
 
-    if len(input_format) == 4:
-        # convert the NCHW
-        if input_format != 'NCHW':
-            index = [input_format.find(c) for c in 'NCHW']
-            tensor_nchw = np_tensor.transpose(index)
-        else:
-            tensor_nchw = np_tensor
-
-        # make grid to expand N
-        tensor_chw = _make_canvas_for_imgs(tensor_nchw)
-
-        # convert to out format
-        out_index = ['CHW'.find(c) for c in out_format]
-        out_tensor = tensor_chw.transpose(out_index)
+    # convert the NCHW
+    if input_format != 'NCHW':
+        index = [input_format.find(c) for c in 'NCHW']
+        tensor_nchw = np_tensor.transpose(index)
     else:
-        logger.error("Don't support the format(%r) convert", input_format)
+        tensor_nchw = np_tensor
+
+    # make grid to expand N
+    tensor_chw = _make_canvas_for_imgs(tensor_nchw)
+
+    # convert to out format
+    out_index = ['CHW'.find(c) for c in out_format]
+    out_tensor = tensor_chw.transpose(out_index)
     return out_tensor
 
 
@@ -398,14 +425,8 @@ def _make_canvas_for_imgs(tensor, col_imgs=8):
         Tensor, retrun canvas of image.
     """
     # expand the N1HW to N3HW
-    out_canvas = None
     if tensor.shape[1] == 1:
         tensor = np.concatenate([tensor, tensor, tensor], 1)
-
-    # check the tensor format
-    if tensor.ndim != 4 or tensor.shape[1] != 3:
-        logger.error("The image tensor(%r) is not 'NCHW' format", tensor)
-        return out_canvas
 
     # expand the N
     n = tensor.shape[0]

@@ -19,6 +19,7 @@
 
 #include "common/common_test.h"
 #include "ir/value.h"
+#include "ir/primitive.h"
 #include "operator/ops.h"
 #include "./common.h"
 
@@ -390,7 +391,7 @@ TEST_F(TestOps, Conv2dAttrTest) {
 }
 
 TEST_F(TestOps, CustomOpAttrTest) {
-  Primitive prim("CustomOp", kPrimTypePyInferShape);
+  Primitive prim("CustomOp", true, kPrimTypePyInferShape);
   prim.SetAttrs({
     {"attr1", MakeValue(3)},
     {"attr2", MakeValue(1)},

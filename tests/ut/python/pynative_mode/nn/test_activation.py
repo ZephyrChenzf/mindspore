@@ -14,7 +14,6 @@
 # ============================================================================
 """ test Activations """
 import numpy as np
-import pytest
 
 import mindspore.nn as nn
 from mindspore import Tensor
@@ -49,11 +48,6 @@ def test_activation_param():
 
 def test_activation_empty():
     assert nn.get_activation('') is None
-
-
-def test_activation_invalid():
-    with pytest.raises(KeyError):
-        nn.get_activation('relu6')
 
 
 # test softmax

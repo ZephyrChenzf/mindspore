@@ -13,10 +13,10 @@
 # limitations under the License.
 # ==============================================================================
 
-import mindspore.dataset.transforms.vision.c_transforms as vision
 import numpy as np
 
 import mindspore.dataset as ds
+import mindspore.dataset.transforms.vision.c_transforms as vision
 from mindspore import log as logger
 
 DATA_DIR = ["../data/dataset/test_tf_file_3_images/train-0000-of-0001.data"]
@@ -35,6 +35,7 @@ def normalize_np(image):
     return image
 
 
+# pylint: disable=inconsistent-return-statements
 def get_normalized(image_id):
     """
     Reads the image using DE ops and then normalizes using Numpy
@@ -48,6 +49,7 @@ def get_normalized(image_id):
         if num_iter == image_id:
             return normalize_np(image)
         num_iter += 1
+    return None
 
 
 def test_normalize_op():
@@ -107,13 +109,13 @@ def test_decode_op():
     data1 = data1.map(input_columns=["image"], operations=decode_op)
 
     num_iter = 0
-    image = None
     for item in data1.create_dict_iterator():
         logger.info("Looping inside iterator {}".format(num_iter))
-        image = item["image"]
+        _ = item["image"]
         # plt.subplot(131)
         # plt.imshow(image)
         # plt.title("DE image")
+        # plt.show()
         num_iter += 1
 
 
@@ -131,15 +133,14 @@ def test_decode_normalize_op():
     data1 = data1.map(input_columns=["image"], operations=[decode_op, normalize_op])
 
     num_iter = 0
-    image = None
     for item in data1.create_dict_iterator():
         logger.info("Looping inside iterator {}".format(num_iter))
-        image = item["image"]
+        _ = item["image"]
         # plt.subplot(131)
         # plt.imshow(image)
         # plt.title("DE image")
+        # plt.show()
         num_iter += 1
-        break
 
 
 if __name__ == "__main__":

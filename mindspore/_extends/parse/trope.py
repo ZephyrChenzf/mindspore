@@ -27,7 +27,7 @@ from operator import (  # noqa
 
 # support system function call
 from builtins import (  # noqa
-    bool, getattr, setattr, len, iter, next, pow, range, map, zip
+    bool, getattr, setattr, len, iter, next, pow, range, map, zip, print
 )
 
 # support functools
@@ -44,7 +44,7 @@ __all__ = ['add', 'sub', 'mul', 'truediv', 'floordiv', 'mod', 'eq', 'ne', 'lt', 
            'not_', 'and_', 'or_', 'xor', 'lshift', 'rshift', 'invert', 'is_', 'is_not', 'contains',
            'matmul', 'getitem', 'setitem',
            'bool', 'getattr', 'setattr', 'len', 'iter', 'next', 'pow', 'range', 'map', 'zip',
-           'partial',
+           'partial', 'print',
            'exp', 'log', 'sin', 'cos', 'tan']
 
 
@@ -89,5 +89,9 @@ def to_array(x):  # pragma: no cover
 
 
 def not_contains(x):  # pragma: no cover
+    """Not in function."""
+    raise RuntimeError('This operation is not meant to be called directly.')
+
+def while_cond(x):  # pragma: no cover
     """Not in function."""
     raise RuntimeError('This operation is not meant to be called directly.')

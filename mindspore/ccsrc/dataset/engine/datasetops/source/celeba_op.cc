@@ -16,6 +16,7 @@
 #include "dataset/engine/datasetops/source/celeba_op.h"
 
 #include <fstream>
+#include <iomanip>
 #include "dataset/core/config_manager.h"
 #include "dataset/util/path.h"
 #include "dataset/engine/datasetops/source/sampler/sequential_sampler.h"
@@ -25,7 +26,7 @@
 
 namespace mindspore {
 namespace dataset {
-CelebAOp::Builder::Builder() : builder_decode_(false), builder_sampler_(nullptr), builder_num_samples_(0) {
+CelebAOp::Builder::Builder() : builder_decode_(false), builder_sampler_(nullptr) {
   std::shared_ptr<ConfigManager> cfg = GlobalContext::config_manager();
   builder_num_workers_ = cfg->num_parallel_workers();
   builder_rows_per_buffer_ = cfg->rows_per_buffer();
@@ -33,23 +34,24 @@ CelebAOp::Builder::Builder() : builder_decode_(false), builder_sampler_(nullptr)
 }
 
 Status CelebAOp::Builder::Build(std::shared_ptr<CelebAOp> *op) {
-  MS_LOG(INFO) << "Celeba dataset directory is " << builder_dir_.c_str() << ".";
-  MS_LOG(INFO) << "Celeba dataset type is " << builder_dataset_type_.c_str() << ".";
+  MS_LOG(DEBUG) << "Celeba dataset directory is " << builder_dir_.c_str() << ".";
+  MS_LOG(DEBUG) << "Celeba dataset type is " << builder_dataset_type_.c_str() << ".";
   RETURN_IF_NOT_OK(SanityCheck());
   if (builder_sampler_ == nullptr) {
-    builder_sampler_ = std::make_shared<SequentialSampler>();
+    int64_t num_samples = 0;
+    int64_t start_index = 0;
+    builder_sampler_ = std::make_shared<SequentialSampler>(start_index, num_samples);
   }
 
-  builder_schema_ = make_unique<DataSchema>();
+  builder_schema_ = std::make_unique<DataSchema>();
   RETURN_IF_NOT_OK(
     builder_schema_->AddColumn(ColDescriptor("image", DataType(DataType::DE_UINT8), TensorImpl::kFlexible, 1)));
   // label is like this:0 1 0 0 1......
   RETURN_IF_NOT_OK(
     builder_schema_->AddColumn(ColDescriptor("attr", DataType(DataType::DE_UINT32), TensorImpl::kFlexible, 1)));
-  *op =
-    std::make_shared<CelebAOp>(builder_num_workers_, builder_rows_per_buffer_, builder_dir_, builder_op_connector_size_,
-                               builder_decode_, builder_dataset_type_, builder_extensions_, std::move(builder_schema_),
-                               std::move(builder_sampler_), builder_num_samples_);
+  *op = std::make_shared<CelebAOp>(builder_num_workers_, builder_rows_per_buffer_, builder_dir_,
+                                   builder_op_connector_size_, builder_decode_, builder_dataset_type_,
+                                   builder_extensions_, std::move(builder_schema_), std::move(builder_sampler_));
   if (*op == nullptr) {
     return Status(StatusCode::kUnexpectedError, __LINE__, __FILE__, "CelebAOp is null");
   }
@@ -67,7 +69,7 @@ Status CelebAOp::Builder::SanityCheck() {
 
 CelebAOp::CelebAOp(int32_t num_workers, int32_t rows_per_buffer, const std::string &dir, int32_t queue_size,
                    bool decode, const std::string &dataset_type, const std::set<std::string> &exts,
-                   std::unique_ptr<DataSchema> schema, std::shared_ptr<Sampler> sampler, int64_t num_samples)
+                   std::unique_ptr<DataSchema> schema, std::shared_ptr<Sampler> sampler)
     : ParallelOp(num_workers, queue_size),
       rows_per_buffer_(rows_per_buffer),
       folder_path_(dir),
@@ -76,14 +78,13 @@ CelebAOp::CelebAOp(int32_t num_workers, int32_t rows_per_buffer, const std::stri
       data_schema_(std::move(schema)),
       sampler_(std::move(sampler)),
       num_rows_in_attr_file_(0),
-      num_rows_exact_(0),
-      num_samples_(num_samples),
       dataset_type_(dataset_type) {
+  // Set the column name map (base class field)
   for (int32_t index = 0; index < data_schema_->NumColumns(); index++) {
-    col_name_map_[data_schema_->column(index).name()] = index;
+    column_name_id_map_[data_schema_->column(index).name()] = index;
   }
 
-  attr_info_queue_ = make_unique<Queue<std::vector<std::string>>>(queue_size);
+  attr_info_queue_ = std::make_unique<Queue<std::vector<std::string>>>(queue_size);
   io_block_queues_.Init(num_workers_, queue_size);
 }
 
@@ -94,13 +95,13 @@ Status CelebAOp::LaunchThreadsAndInitOp() {
 
   RETURN_IF_NOT_OK(io_block_queues_.Register(tree_->AllTasks()));
   RETURN_IF_NOT_OK(attr_info_queue_->Register(tree_->AllTasks()));
-  wp_.Register(tree_->AllTasks());
+  RETURN_IF_NOT_OK(wp_.Register(tree_->AllTasks()));
 
   RETURN_IF_NOT_OK(tree_->AllTasks()->CreateAsyncTask("Walking attr file", std::bind(&CelebAOp::ParseAttrFile, this)));
   RETURN_IF_NOT_OK(tree_->LaunchWorkers(num_workers_, std::bind(&CelebAOp::WorkerEntry, this, std::placeholders::_1)));
   TaskManager::FindMe()->Post();
   RETURN_IF_NOT_OK(ParseImageAttrInfo());
-  RETURN_IF_NOT_OK(sampler_->Init(this));
+  RETURN_IF_NOT_OK(sampler_->HandshakeRandomAccessOp(this));
 
   return Status::OK();
 }
@@ -200,13 +201,6 @@ Status CelebAOp::ParseImageAttrInfo() {
   RETURN_IF_NOT_OK(attr_info_queue_->PopFront(&image_infos));
   while (!image_infos.empty() && needMoreData) {
     for (uint32_t index = 0; index < image_infos.size(); index++) {
-      if (num_samples_ != 0 && image_labels_vec_.size() >= num_samples_) {
-        MS_LOG(WARNING) << "Image number(" << image_labels_vec_.size() << " is more than"
-                        << " rows num eval attr file(" << num_rows_in_attr_file_ << ") or num samples(" << num_samples_
-                        << ").";
-        needMoreData = false;
-        break;
-      }
       std::string image_info = image_infos[index];
       std::vector<std::string> split = Split(image_info);
       std::pair<std::string, std::vector<int32_t>> image_labels;
@@ -214,8 +208,8 @@ Status CelebAOp::ParseImageAttrInfo() {
       Path path(folder_path_);
       Path file_path = path / split[0];
       if (!extensions_.empty() && extensions_.find(file_path.Extension()) == extensions_.end()) {
-        MS_LOG(INFO) << "Unsupported file found at " << file_path.toString().c_str() << ", its extension is "
-                     << file_path.Extension().c_str() << ".";
+        MS_LOG(WARNING) << "Unsupported file found at " << file_path.toString().c_str() << ", its extension is "
+                        << file_path.Extension().c_str() << ".";
         continue;
       }
       image_labels.first = split[0];
@@ -237,12 +231,13 @@ Status CelebAOp::ParseImageAttrInfo() {
     RETURN_IF_NOT_OK(attr_info_queue_->PopFront(&image_infos));
   }
 
-  num_rows_exact_ = image_labels_vec_.size();
-  num_samples_ = (num_samples_ == 0 || num_samples_ > num_rows_exact_) ? num_rows_exact_ : num_samples_;
-  if (num_rows_exact_ == 0) {
-    RETURN_STATUS_UNEXPECTED("Number of rows in celeba dataset is zero");
+  num_rows_ = image_labels_vec_.size();
+  if (num_rows_ == 0) {
+    RETURN_STATUS_UNEXPECTED(
+      "There is no valid data matching the dataset API CelebADataset.Please check file path or dataset API "
+      "validation first.");
   }
-  MS_LOG(INFO) << "Celeba dataset rows number is " << num_rows_exact_ << ".";
+  MS_LOG(DEBUG) << "Celeba dataset rows number is " << num_rows_ << ".";
   return Status::OK();
 }
 
@@ -262,24 +257,6 @@ std::vector<std::string> CelebAOp::Split(const std::string &line) {
   }
 
   return split;
-}
-
-// Derived from RandomAccessOp
-Status CelebAOp::GetNumSamples(int64_t *num) const {
-  if (num == nullptr || num_samples_ == 0) {
-    RETURN_STATUS_UNEXPECTED("NumSample not set");
-  }
-  (*num) = num_samples_;
-  return Status::OK();
-}
-
-Status CelebAOp::GetNumRowsInDataset(int64_t *num) const {
-  if (num == nullptr || num_rows_exact_ == 0) {
-    return Status(StatusCode::kUnexpectedError, __LINE__, __FILE__, "NumRow not set");
-  }
-
-  *num = num_rows_exact_;
-  return Status::OK();
 }
 
 // Main logic, Register Queue with TaskGroup, launch all threads and do the functor's work
@@ -302,16 +279,15 @@ Status CelebAOp::AddIOBlock(std::unique_ptr<DataBuffer> *data_buffer) {
       RETURN_IF_NOT_OK((*data_buffer)->PopRow(&sample_row));
       std::shared_ptr<Tensor> sample_ids = sample_row[0];
       for (auto itr = sample_ids->begin<int64_t>(); itr != sample_ids->end<int64_t>(); ++itr) {
-        if ((*itr) >= num_rows_exact_) {
-          MS_LOG(WARNING) << "Sample Id (" << *itr << ") is out of bounds, skipping. Max id is " << num_rows_exact_
-                          << ".";
+        if ((*itr) >= num_rows_) {
+          MS_LOG(WARNING) << "Sample Id (" << *itr << ") is out of bounds, skipping. Max id is " << num_rows_ << ".";
           continue;
         }
         keys.push_back(*itr);
         row_count++;
         if (row_count % rows_per_buffer_ == 0) {
           RETURN_IF_NOT_OK(io_block_queues_[buff_count++ % num_workers_]->Add(
-            make_unique<IOBlock>(IOBlock(keys, IOBlock::kDeIoBlockNone))));
+            std::make_unique<IOBlock>(IOBlock(keys, IOBlock::kDeIoBlockNone))));
           keys.clear();
         }
       }
@@ -320,21 +296,21 @@ Status CelebAOp::AddIOBlock(std::unique_ptr<DataBuffer> *data_buffer) {
 
     if (!keys.empty()) {
       RETURN_IF_NOT_OK(io_block_queues_[(buff_count++) % num_workers_]->Add(
-        make_unique<IOBlock>(IOBlock(keys, IOBlock::kDeIoBlockNone))));
+        std::make_unique<IOBlock>(IOBlock(keys, IOBlock::kDeIoBlockNone))));
     }
     if (!BitTest(op_ctrl_flags_, kDeOpRepeated) || BitTest(op_ctrl_flags_, kDeOpLastRepeat)) {
       RETURN_IF_NOT_OK(
-        io_block_queues_[(buff_count++) % num_workers_]->Add(make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEoe)));
+        io_block_queues_[(buff_count++) % num_workers_]->Add(std::make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEoe)));
       RETURN_IF_NOT_OK(
-        io_block_queues_[(buff_count++) % num_workers_]->Add(make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEof)));
+        io_block_queues_[(buff_count++) % num_workers_]->Add(std::make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEof)));
       for (int32_t i = 0; i < num_workers_; i++) {
         RETURN_IF_NOT_OK(
-          io_block_queues_[i]->Add(std::move(make_unique<IOBlock>(std::vector<int64_t>(), IOBlock::kDeIoBlockNone))));
+          io_block_queues_[i]->Add(std::make_unique<IOBlock>(std::vector<int64_t>(), IOBlock::kDeIoBlockNone)));
       }
       return Status::OK();
     } else {  // not the last repeat. Acquire lock, sleeps master thread, wait for the wake-up from reset
       RETURN_IF_NOT_OK(
-        io_block_queues_[(buff_count++) % num_workers_]->Add(make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEoe)));
+        io_block_queues_[(buff_count++) % num_workers_]->Add(std::make_unique<IOBlock>(IOBlock::kDeIoBlockFlagEoe)));
       RETURN_IF_NOT_OK(wp_.Wait());  // Master thread goes to sleep after it has made all the IOBlocks
       wp_.Clear();
       RETURN_IF_NOT_OK(sampler_->GetNextBuffer(data_buffer));
@@ -349,17 +325,17 @@ Status CelebAOp::WorkerEntry(int32_t worker_id) {
   RETURN_IF_NOT_OK(io_block_queues_[worker_id]->PopFront(&io_block));
   while (io_block != nullptr) {
     if (io_block->eoe() == true) {
-      RETURN_IF_NOT_OK(out_connector_->Add(worker_id, std::move(make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOE))));
+      RETURN_IF_NOT_OK(out_connector_->Add(worker_id, std::make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOE)));
       buffer_id = worker_id;
     } else if (io_block->eof() == true) {
-      RETURN_IF_NOT_OK(out_connector_->Add(worker_id, std::move(make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOF))));
+      RETURN_IF_NOT_OK(out_connector_->Add(worker_id, std::make_unique<DataBuffer>(0, DataBuffer::kDeBFlagEOF)));
     } else {
       std::vector<int64_t> keys;
       RETURN_IF_NOT_OK(io_block->GetKeys(&keys));
       if (keys.empty()) {
         return Status::OK();  // empty key is a quit signal for workers
       }
-      std::unique_ptr<DataBuffer> db = make_unique<DataBuffer>(buffer_id, DataBuffer::kDeBFlagNone);
+      std::unique_ptr<DataBuffer> db = std::make_unique<DataBuffer>(buffer_id, DataBuffer::kDeBFlagNone);
       RETURN_IF_NOT_OK(LoadBuffer(keys, &db));
       RETURN_IF_NOT_OK(out_connector_->Add(worker_id, std::move(db)));
       buffer_id += num_workers_;
@@ -370,7 +346,7 @@ Status CelebAOp::WorkerEntry(int32_t worker_id) {
 }
 
 Status CelebAOp::LoadBuffer(const std::vector<int64_t> &keys, std::unique_ptr<DataBuffer> *db) {
-  std::unique_ptr<TensorQTable> deq = make_unique<TensorQTable>();
+  std::unique_ptr<TensorQTable> deq = std::make_unique<TensorQTable>();
   for (const auto &key : keys) {
     TensorRow row;
     RETURN_IF_NOT_OK(LoadTensorRow(image_labels_vec_[key], &row));
@@ -378,7 +354,6 @@ Status CelebAOp::LoadBuffer(const std::vector<int64_t> &keys, std::unique_ptr<Da
   }
 
   (*db)->set_tensor_table(std::move(deq));
-  (*db)->set_column_name_map(col_name_map_);
   return Status::OK();
 }
 
@@ -400,7 +375,7 @@ Status CelebAOp::LoadTensorRow(const std::pair<std::string, std::vector<int32_t>
   RETURN_IF_NOT_OK(Tensor::CreateTensor(&image, data_schema_->column(0).tensorImpl(),
                                         TensorShape(std::vector<dsize_t>(1, num_elements)),
                                         data_schema_->column(0).type()));
-  (void)handle.read(reinterpret_cast<char *>(image->StartAddr()), num_elements);
+  (void)handle.read(reinterpret_cast<char *>(image->GetMutableBuffer()), num_elements);
   if (decode_ == true) {
     Status rc = Decode(image, &image);
     if (rc.IsError()) {
@@ -428,9 +403,19 @@ Status CelebAOp::LoadTensorRow(const std::pair<std::string, std::vector<int32_t>
 }
 
 void CelebAOp::Print(std::ostream &out, bool show_all) const {
-  DatasetOp::Print(out, show_all);
-  out << "\nnumber of parallel workers:" << num_workers_ << "\nNumber of rows:" << num_rows_exact_
-      << "\nceleba dir: " << folder_path_ << "\n-------------------------\n";
+  // Always show the id and name as first line regardless if this summary or detailed print
+  out << "(" << std::setw(2) << operator_id_ << ") <CelebAOp>:";
+  if (!show_all) {
+    // Call the super class for displaying any common 1-liner info
+    ParallelOp::Print(out, show_all);
+    // Then show any custom derived-internal 1-liner info for this op
+    out << "\n";
+  } else {
+    // Call the super class for displaying any common detailed info
+    ParallelOp::Print(out, show_all);
+    // Then show any custom derived-internal stuff
+    out << "\nNumber of rows:" << num_rows_ << "\nceleba dir: " << folder_path_ << "\n\n";
+  }
 }
 
 // Reset Sampler and wakeup Master thread (functor)

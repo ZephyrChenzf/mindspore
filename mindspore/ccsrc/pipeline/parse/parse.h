@@ -23,6 +23,7 @@
 #include <string>
 #include <map>
 #include <set>
+#include <stack>
 #include <memory>
 #include "utils/misc.h"
 #include "ir/anf.h"
@@ -40,8 +41,8 @@ enum ParseStatusCode : int {
   PARSE_PARAMETER_INVALID,           // parameter is invalid
   PARSE_NO_RETURN,                   // function no return node
   PARSE_NODE_TYPE_NO_MATCH,          // ast node type is error
-  PARSE_NODE_TYPE_UNKONW,            // node type is unkonw
-  PARSE_NODE_METHOD_UNSUPPORT,       // no method to parse the node
+  PARSE_NODE_TYPE_UNKOWN,            // node type is unkown
+  PARSE_NODE_METHOD_UNSUPPORTED,     // no method to parse the node
   PARSE_DONT_RESOLVE_SYMBOL,         // can't resolve the string
   PARSE_NOT_SUPPORTED_COMPARE_EXPR,  // the comparison is not supported
   PARSE_FAILURE = 0xFF
@@ -49,6 +50,33 @@ enum ParseStatusCode : int {
 
 class AstNodeType;
 class ParseAst;
+
+// Save loop info for 'continue' and 'break' statements.
+struct Loop {
+  // Loop header block.
+  FunctionBlockPtr header;
+  // Loop iterator node, used in 'for loop'.
+  AnfNodePtr iterator;
+  // Loop end block.
+  FunctionBlockPtr end;
+
+  Loop(const FunctionBlockPtr &header, const AnfNodePtr &iterator, const FunctionBlockPtr &end)
+      : header(header), iterator(iterator), end(end) {}
+  ~Loop() = default;
+};
+
+// Loop context for loop stack management.
+class LoopContext {
+ public:
+  LoopContext(std::stack<Loop> *loops, const FunctionBlockPtr &header, const AnfNodePtr &iterator) : loops_(loops) {
+    loops_->emplace(header, iterator, nullptr);
+  }
+  ~LoopContext() { loops_->pop(); }
+  const FunctionBlockPtr &EndBlock() const { return loops_->top().end; }
+
+ private:
+  std::stack<Loop> *loops_;
+};
 
 // Parser to parse python function
 class Parser {
@@ -86,12 +114,20 @@ class Parser {
   FunctionBlockPtr ParseGlobal(const FunctionBlockPtr &block, const py::object &node);
   // process assign statement
   FunctionBlockPtr ParseAssign(const FunctionBlockPtr &block, const py::object &node);
+  // process break statement
+  FunctionBlockPtr ParseBreak(const FunctionBlockPtr &block, const py::object &node);
+  // process continue statement
+  FunctionBlockPtr ParseContinue(const FunctionBlockPtr &block, const py::object &node);
+  // process pass statement
+  FunctionBlockPtr ParsePass(const FunctionBlockPtr &block, const py::object &node);
   // process the expr and slice node method list
   AnfNodePtr ParseBinOp(const FunctionBlockPtr &block, const py::object &node);
   // process a variable name
   AnfNodePtr ParseName(const FunctionBlockPtr &block, const py::object &node);
   // process NoneType
   AnfNodePtr ParseNone(const FunctionBlockPtr &block, const py::object &node);
+  // process Ellipsis
+  AnfNodePtr ParseEllipsis(const FunctionBlockPtr &block, const py::object &node);
   // process a integer or float number
   AnfNodePtr ParseNum(const FunctionBlockPtr &block, const py::object &node);
   // process a string variable
@@ -102,7 +138,7 @@ class Parser {
   AnfNodePtr ParseCall(const FunctionBlockPtr &block, const py::object &node);
   // process the if expression
   AnfNodePtr ParseIfExp(const FunctionBlockPtr &block, const py::object &node);
-  // process calss type define
+  // process class type define
   AnfNodePtr ParseAttribute(const FunctionBlockPtr &block, const py::object &node);
   // process a compare expression
   AnfNodePtr ParseCompare(const FunctionBlockPtr &block, const py::object &node);
@@ -214,6 +250,8 @@ class Parser {
   std::map<std::string, pStmtFunc> stmt_method_map_;
   // define the function map to parse ast expression
   std::map<std::string, pExprFunc> expr_method_map_;
+  // Save current loops to support 'continue', 'break' statement.
+  std::stack<Loop> loops_;
 };
 
 // AST node type define code to ast

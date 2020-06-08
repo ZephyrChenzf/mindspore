@@ -28,7 +28,7 @@ class MindPage:
     Class to read MindRecord File series in pagination.
 
     Args:
-        file_name (str): File name of MindRecord File.
+        file_name (str): One of MindRecord File or file list.
         num_consumer(int, optional): Number of consumer threads which load data to memory (default=4).
             It should not be smaller than 1 or larger than the number of CPU.
 
@@ -37,8 +37,11 @@ class MindPage:
         MRMInitSegmentError: If failed to initialize ShardSegment.
     """
     def __init__(self, file_name, num_consumer=4):
-        check_filename(file_name)
-        self._file_name = file_name
+        if isinstance(file_name, list):
+            for f in file_name:
+                check_filename(f)
+        else:
+            check_filename(file_name)
 
         if num_consumer is not None:
             if isinstance(num_consumer, int):
@@ -133,15 +136,15 @@ class MindPage:
 
         Raises:
             ParamValueError: If any parameter is invalid.
-            MRMFetchDataError: If failed to read by category id.
+            MRMFetchDataError: If failed to fetch data by category.
             MRMUnsupportedSchemaError: If schema is invalid.
         """
-        if category_id < 0:
-            raise ParamValueError("Category id should be greater than 0.")
-        if page < 0:
-            raise ParamValueError("Page should be greater than 0.")
-        if num_row < 0:
-            raise ParamValueError("num_row should be greater than 0.")
+        if not isinstance(category_id, int) or category_id < 0:
+            raise ParamValueError("Category id should be int and greater than or equal to 0.")
+        if not isinstance(page, int) or page < 0:
+            raise ParamValueError("Page should be int and greater than or equal to 0.")
+        if not isinstance(num_row, int) or num_row <= 0:
+            raise ParamValueError("num_row should be int and greater than 0.")
         return self._segment.read_at_page_by_id(category_id, page, num_row)
 
     def read_at_page_by_name(self, category_name, page, num_row):
@@ -157,8 +160,10 @@ class MindPage:
         Returns:
             str, read at page.
         """
-        if page < 0:
-            raise ParamValueError("Page should be greater than 0.")
-        if num_row < 0:
-            raise ParamValueError("num_row should be greater than 0.")
+        if not isinstance(category_name, str):
+            raise ParamValueError("Category name should be str.")
+        if not isinstance(page, int) or page < 0:
+            raise ParamValueError("Page should be int and greater than or equal to 0.")
+        if not isinstance(num_row, int) or num_row <= 0:
+            raise ParamValueError("num_row should be int and greater than 0.")
         return self._segment.read_at_page_by_name(category_name, page, num_row)

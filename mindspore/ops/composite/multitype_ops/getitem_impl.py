@@ -14,8 +14,9 @@
 # ============================================================================
 
 """Implementation for getitem."""
-
-from ...composite import base
+from . import _compile_utils as compile_utils
+from . import _constexpr_utils as const_utils
+from .. import base
 from ... import functional as F
 
 
@@ -72,6 +73,28 @@ _tensor_slice = _TensorSlice('tensor_slice')
 """_tensor_slice is an metafuncgraph object which will slice a tensor."""
 
 
+class _TupleGetItemTensor(base.TupleGetItemTensor_):
+    """
+    Getting item of tuple by tensor index.
+
+    Inputs:
+        data (tuple): A tuple of items.
+        index (Tensor): The index in tensor.
+    Outputs:
+        Type, is same as the element type of data.
+    """
+
+    def __init__(self, name):
+        base.TupleGetItemTensor_.__init__(self, name)
+
+    def __call__(self, *args):
+        pass
+
+
+_tuple_get_item_tensor = _TupleGetItemTensor('tuple_get_item_tensor')
+"""_tuple_get_item_tensor is an metafuncgraph object which will select indexed item."""
+
+
 @getitem.register("Tuple", "Number")
 def _tuple_getitem_by_number(data, number_index):
     """
@@ -100,6 +123,21 @@ def _tuple_getitem_by_slice(data, slice_index):
         Tuple, element type is same as the element type of data.
     """
     return _tuple_slice(data, slice_index)
+
+
+@getitem.register("Tuple", "Tensor")
+def _tuple_getitem_by_tensor(data, tensor_index):
+    """
+    Getting item out of tuple by tensor index.
+
+    Inputs:
+        data (tuple): A tuple of items to index.
+        tensor_index (Tensor): Index to select item.
+
+    Outputs:
+        Type, is same as the element type of data.
+    """
+    return _tuple_get_item_tensor(data, tensor_index)
 
 
 @getitem.register("List", "Number")
@@ -147,10 +185,25 @@ def _tensor_getitem_by_number(data, number_index):
     return _tensor_slice(data, number_index)
 
 
+@getitem.register("Tensor", "None")
+def _tensor_getitem_by_none(data, index):
+    """
+    Getting item of tensor by None.
+
+    Inputs:
+        data (Tensor): A tensor.
+        index (None): None.
+
+    Outputs:
+        Tensor, element type is as same as the element type of data.
+    """
+    return _tensor_slice(data, index)
+
+
 @getitem.register("Tensor", "Slice")
 def _tensor_getitem_by_slice(data, slice_index):
     """
-    Getting item of tensor by slice index.
+    Getting item of tensor by slice.
 
     Inputs:
         data (Tensor): A tensor.
@@ -162,16 +215,75 @@ def _tensor_getitem_by_slice(data, slice_index):
     return _tensor_slice(data, slice_index)
 
 
-@getitem.register("Tensor", "Tuple")
-def _tensor_getitem_by_slice_tuple(data, slice_tuple_index):
+@getitem.register("Tensor", "Tensor")
+def _tensor_getitem_by_tensor(data, tensor_index):
     """
-    Getting item of tensor by slice tuple index.
+    Getting item of tensor by slice.
 
     Inputs:
         data (Tensor): A tensor.
-        slice_tuple_index (tuple): Index in tuple.
+        tensor_index (Tensor): An index expressed by tensor.
 
     Outputs:
         Tensor, element type is same as the element type of data.
     """
-    return _tensor_slice(data, slice_tuple_index)
+    check_dtypes = const_utils.check_index_tensor_dtype(F.dtype(tensor_index),
+                                                        const_utils.TENSOR_GETITEM)
+    result = None
+    if check_dtypes:
+        result = F.gather(data, tensor_index, 0)
+    return result
+
+
+@getitem.register("Tensor", "Tuple")
+def _tensor_getitem_by_tuple(data, tuple_index):
+    """
+    Getting item of tensor by slice tuple.
+
+    Inputs:
+        data (Tensor): A tensor.
+        tuple_index (tuple): Index in tuple.
+
+    Outputs:
+        Tensor, element type is same as the element type of data.
+    """
+    indexes_types = compile_utils.hyper_map(F.typeof, tuple_index)
+    index_elements_type = const_utils.tuple_index_elements_type(indexes_types, const_utils.TENSOR_GETITEM)
+    if index_elements_type == const_utils.NO_TENSOR:
+        return _tensor_slice(data, tuple_index)
+    if index_elements_type == const_utils.ALL_TENSOR:
+        return _tensor_getitem_by_tuple_of_tensor(data, tuple_index)
+    return _tensor_getitem_by_tuple_of_mixed_tensors(data, tuple_index)
+
+
+@getitem.register("Tensor", "Ellipsis")
+def _tensor_getitem_by_ellipsis(data, ellipsis_index):
+    """
+    Getting item of tensor by Ellipsis.
+
+    Inputs:
+        data (Tensor): A tensor.
+        ellipsis (Ellipsis): A Ellipsis object.
+
+    Outputs:
+        Tensor, same as data.
+    """
+    return _tensor_slice(data, ellipsis_index)
+
+
+def _tensor_getitem_by_tuple_of_tensor(data, tuple_index):
+    """Tensor getitem by a tuple of tensor."""
+    indices = compile_utils.generate_indices_from_tuple_of_tensor(data,
+                                                                  tuple_index,
+                                                                  const_utils.TENSOR_GETITEM)
+    result = F.gather_nd(data, indices)
+    return result
+
+
+def _tensor_getitem_by_tuple_of_mixed_tensors(data, tuple_index):
+    """Tensor getitem by a tuple of mixed tensor."""
+    indices = compile_utils.generate_indices_from_tuple_of_mixed_tensors(data,
+                                                                         tuple_index,
+                                                                         const_utils.TENSOR_GETITEM)
+    result = F.gather_nd(data, indices)
+    return result

@@ -14,16 +14,19 @@
 # ============================================================================
 """ test lamb """
 import numpy as np
+import pytest
+
 import mindspore.nn as nn
-from mindspore.common.api import _executor
 from mindspore import Tensor, Parameter
+from mindspore.common.api import _executor
 from mindspore.nn import TrainOneStepCell, WithLossCell
-from mindspore.ops import operations as P
 from mindspore.nn.optim import Lamb
+from mindspore.ops import operations as P
 
 
 class Net(nn.Cell):
     """ Net definition """
+
     def __init__(self):
         super(Net, self).__init__()
         self.weight = Parameter(Tensor(np.ones([64, 10]).astype(np.float32)), name="weight")
@@ -38,6 +41,7 @@ class Net(nn.Cell):
 
 class NetWithoutWeight(nn.Cell):
     """ NetWithoutWeight definition """
+
     def __init__(self):
         super(NetWithoutWeight, self).__init__()
         self.matmul = P.MatMul()
@@ -47,29 +51,27 @@ class NetWithoutWeight(nn.Cell):
         return x
 
 
-def test_lamb_1():
-    """ test_Lamb_1 """
+def test_lamb_compile():
+    """ test_Lamb_compile """
     inputs = Tensor(np.ones([1, 64]).astype(np.float32))
     label = Tensor(np.zeros([1, 10]).astype(np.float32))
     net = Net()
     net.set_train()
     loss = nn.SoftmaxCrossEntropyWithLogits()
-    optimizer = Lamb(net.trainable_params(), decay_steps=10, warmup_steps=5)
+    optimizer = Lamb(net.trainable_params(), decay_steps=10)
 
     net_with_loss = WithLossCell(net, loss)
     train_network = TrainOneStepCell(net_with_loss, optimizer)
     _executor.compile(train_network, inputs, label)
 
 
-def test_lamb_2():
-    """ test_Lamb_2 """
-    inputs = Tensor(np.ones([1, 64]).astype(np.float32))
-    label = Tensor(np.zeros([1, 10]).astype(np.float32))
+def test_lamb_error():
     net = Net()
-    net.set_train()
-    loss = nn.SoftmaxCrossEntropyWithLogits()
-    optimizer = Lamb(net.trainable_params(), decay_steps=10, warmup_steps=0)
+    with pytest.raises(TypeError):
+        Lamb(net.get_parameters(), decay_steps=6, warmup_steps=5.0)
 
-    net_with_loss = WithLossCell(net, loss)
-    train_network = TrainOneStepCell(net_with_loss, optimizer)
-    _executor.compile(train_network, inputs, label)
+    with pytest.raises(TypeError):
+        Lamb(net.get_parameters(), decay_steps=1.0)
+
+    with pytest.raises(ValueError):
+        Lamb(net.get_parameters(), decay_steps=0)

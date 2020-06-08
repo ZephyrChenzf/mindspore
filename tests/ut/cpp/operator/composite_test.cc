@@ -22,6 +22,7 @@
 #include "operator/ops.h"
 #include "pipeline/static_analysis/prim.h"
 #include "pipeline/static_analysis/abstract_function.h"
+#include "debug/trace.h"
 
 namespace mindspore {
 using Shape = abstract::Shape;
@@ -124,10 +125,11 @@ TEST_F(TestComposite, test_TupleSlice_arg_one_number) {
   AbstractBasePtrList args_spec_list = {tuple_tensor, start_index};
 
   try {
+    trace::ClearTraceStack();
     engine_->Run(tupleSliceGraphPtr, args_spec_list);
     FAIL() << "Excepted exception :Args type is wrong";
-  } catch (std::runtime_error const &err) {
-    ASSERT_TRUE(std::string(err.what()).find("TypeError") != std::string::npos);
+  } catch (pybind11::type_error const &err) {
+    ASSERT_TRUE(true);
   } catch (...) {
     FAIL() << "Excepted exception :Args type is wrong";
   }
@@ -151,7 +153,7 @@ TEST_F(TestComposite, test_TupleSlice_arg_slice) {
   auto slice = std::make_shared<AbstractSlice>(start_index, stop_index, step);
   AbstractBasePtrList args_spec_list = {tuple_tensor, slice};
 
-  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(tupleSliceGraphPtr, args_spec_list).inferred);
+  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(tupleSliceGraphPtr, args_spec_list).inferred->abstract());
   if (ret == nullptr) {
     FAIL() << "Cast ret to abstract tuple failed.";
   }
@@ -177,7 +179,7 @@ TEST_F(TestComposite, test_TupleSlice_arg_slice_step_none) {
   auto slice = std::make_shared<AbstractSlice>(start_index, stop_index, step);
   AbstractBasePtrList args_spec_list = {tuple_tensor, slice};
 
-  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(tupleSliceGraphPtr, args_spec_list).inferred);
+  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(tupleSliceGraphPtr, args_spec_list).inferred->abstract());
   if (ret == nullptr) {
     FAIL() << "Cast ret to abstract tuple failed.";
   }
@@ -203,7 +205,7 @@ TEST_F(TestComposite, test_TupleSlice_arg_slice_step_negative) {
   auto slice = std::make_shared<AbstractSlice>(start_index, stop_index, step);
   AbstractBasePtrList args_spec_list = {tuple_tensor, slice};
 
-  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(tupleSliceGraphPtr, args_spec_list).inferred);
+  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(tupleSliceGraphPtr, args_spec_list).inferred->abstract());
   if (ret == nullptr) {
     FAIL() << "Cast ret to abstract tuple failed.";
   }
@@ -229,7 +231,7 @@ TEST_F(TestComposite, test_TupleSlice_arg_slice_step_positive) {
   auto slice = std::make_shared<AbstractSlice>(start_index, stop_index, step);
   AbstractBasePtrList args_spec_list = {tuple_tensor, slice};
 
-  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(tupleSliceGraphPtr, args_spec_list).inferred);
+  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(tupleSliceGraphPtr, args_spec_list).inferred->abstract());
   if (ret == nullptr) {
     FAIL() << "Cast ret to abstract tuple failed.";
   }
@@ -251,7 +253,7 @@ TEST_F(TestComposite, test_TensorSliceBySlice) {
   AbstractSlicePtr slice = std::make_shared<AbstractSlice>(start_index, stop_index, step);
   AbstractBasePtrList args_spec_list = {tensor, slice};
 
-  AbstractTensorPtr ret = dyn_cast<AbstractTensor>(engine_->Run(tensorSlicePtrGraphPtr, args_spec_list).inferred);
+  AbstractTensorPtr ret = dyn_cast<AbstractTensor>(engine_->Run(tensorSlicePtrGraphPtr, args_spec_list).inferred->abstract());
   if (ret == nullptr) {
     FAIL() << "Cast ret to abstract array failed.";
   }
@@ -286,7 +288,7 @@ TEST_F(TestComposite, test_TensorSliceBySliceTuple) {
   AbstractTuplePtr slice_tuple = std::make_shared<AbstractTuple>(eles);
   AbstractBasePtrList args_spec_list = {tensor, slice_tuple};
 
-  AbstractTensorPtr ret = dyn_cast<AbstractTensor>(engine_->Run(tensorSliceGraphPtr, args_spec_list).inferred);
+  AbstractTensorPtr ret = dyn_cast<AbstractTensor>(engine_->Run(tensorSliceGraphPtr, args_spec_list).inferred->abstract());
   if (ret == nullptr) {
     FAIL() << "Cast ret to abstract array failed.";
   }
@@ -318,7 +320,7 @@ TEST_F(TestComposite, test_TensorSliceBySliceTupleToReduceDimension) {
   AbstractTuplePtr slice_tuple = std::make_shared<AbstractTuple>(eles);
   AbstractBasePtrList args_spec_list = {tensor, slice_tuple};
 
-  AbstractTensorPtr ret = dyn_cast<AbstractTensor>(engine_->Run(tensorSliceGraphPtr, args_spec_list).inferred);
+  AbstractTensorPtr ret = dyn_cast<AbstractTensor>(engine_->Run(tensorSliceGraphPtr, args_spec_list).inferred->abstract());
   if (ret == nullptr) {
     FAIL() << "Cast ret to abstract array failed.";
   }
@@ -334,7 +336,7 @@ TEST_F(TestComposite, test_TensorSliceByScalar) {
   AbstractScalarPtr start_index = std::make_shared<AbstractScalar>(2);
   AbstractBasePtrList args_spec_list = {tensor, start_index};
 
-  AbstractTensorPtr ret = dyn_cast<AbstractTensor>(engine_->Run(tensorSliceGraphPtr, args_spec_list).inferred);
+  AbstractTensorPtr ret = dyn_cast<AbstractTensor>(engine_->Run(tensorSliceGraphPtr, args_spec_list).inferred->abstract());
   if (ret == nullptr) {
     FAIL() << "Cast ret to abstract array failed.";
   }
@@ -356,7 +358,7 @@ TEST_F(TestComposite, test_TensorSliceByScalarTuple) {
   AbstractTuplePtr slice_tuple = std::make_shared<AbstractTuple>(eles);
   AbstractBasePtrList args_spec_list = {tensor, slice_tuple};
 
-  AbstractTensorPtr ret = dyn_cast<AbstractTensor>(engine_->Run(tensorSliceGraphPtr, args_spec_list).inferred);
+  AbstractTensorPtr ret = dyn_cast<AbstractTensor>(engine_->Run(tensorSliceGraphPtr, args_spec_list).inferred->abstract());
   if (ret == nullptr) {
     FAIL() << "Cast ret to abstract array failed.";
   }
@@ -380,7 +382,7 @@ TEST_F(TestComposite, test_TensorSliceByScalarTupleToScalar) {
   AbstractTuplePtr slice_tuple = std::make_shared<AbstractTuple>(eles);
   AbstractBasePtrList args_spec_list = {tensor, slice_tuple};
 
-  AbstractTensorPtr ret = dyn_cast<AbstractTensor>(engine_->Run(tensorSliceGraphPtr, args_spec_list).inferred);
+  AbstractTensorPtr ret = dyn_cast<AbstractTensor>(engine_->Run(tensorSliceGraphPtr, args_spec_list).inferred->abstract());
   if (ret == nullptr) {
     FAIL() << "Cast ret to abstract array failed.";
   }
@@ -406,7 +408,7 @@ TEST_F(TestComposite, test_UnpackCall_3args) {
   abstract::AbstractDictionaryPtr tensor_dict = std::make_shared<abstract::AbstractDictionary>(tensor_map);
 
   AbstractBasePtrList args_spec_list = {fn_arg, tensor_tuple, tensor_dict};
-  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(unPackCallGraphPtr, args_spec_list).inferred);
+  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(unPackCallGraphPtr, args_spec_list).inferred->abstract());
   if (ret == nullptr) {
     FAIL() << "Cast ret to abstract tuple failed.";
   }
@@ -433,7 +435,7 @@ TEST_F(TestComposite, test_UnpackCall_5args) {
   abstract::AbstractDictionaryPtr tensor_dict = std::make_shared<abstract::AbstractDictionary>(tensor_map);
 
   AbstractBasePtrList args_spec_list = {fn_arg, tensor_dict, tensor_tuple, tensor_dict, tensor_tuple};
-  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(unPackCallGraphPtr, args_spec_list).inferred);
+  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(unPackCallGraphPtr, args_spec_list).inferred->abstract());
   if (ret == nullptr) {
     FAIL() << "Cast ret to abstract tuple failed.";
   }
@@ -455,7 +457,7 @@ TEST_F(TestComposite, test_ZipOperation) {
   auto tuple = std::make_shared<AbstractTuple>(eles);
   AbstractBasePtrList args_spec_list = {tuple};
 
-  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(zip_op_graph, args_spec_list).inferred);
+  AbstractTuplePtr ret = dyn_cast<AbstractTuple>(engine_->Run(zip_op_graph, args_spec_list).inferred->abstract());
   if (ret == nullptr) {
     FAIL() << "Cast ret to abstract tuple failed.";
   }

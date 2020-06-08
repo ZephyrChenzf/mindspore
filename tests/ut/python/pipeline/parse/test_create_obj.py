@@ -23,10 +23,12 @@
 """
 import logging
 import numpy as np
+
 import mindspore.nn as nn
-from mindspore.ops import operations as P
+from mindspore import context
 from mindspore.common.api import ms_function
 from mindspore.common.tensor import Tensor
+from mindspore.ops import operations as P
 from ...ut_filter import non_graph_engine
 
 log = logging.getLogger("test")
@@ -35,6 +37,7 @@ log.setLevel(level=logging.ERROR)
 
 class Net(nn.Cell):
     """ Net definition """
+
     def __init__(self):
         super(Net, self).__init__()
         self.softmax = nn.Softmax(0)
@@ -50,6 +53,7 @@ class Net(nn.Cell):
 def test_create_cell_object_on_construct():
     """ test_create_cell_object_on_construct """
     log.debug("begin test_create_object_on_construct")
+    context.set_context(mode=context.GRAPH_MODE)
     np1 = np.random.randn(2, 3, 4, 5).astype(np.float32)
     input_me = Tensor(np1)
 
@@ -64,6 +68,7 @@ def test_create_cell_object_on_construct():
 # Test: creat CELL OR Primitive instance on construct
 class Net1(nn.Cell):
     """ Net1 definition """
+
     def __init__(self):
         super(Net1, self).__init__()
         self.add = P.TensorAdd()
@@ -90,6 +95,7 @@ def test_create_primitive_object_on_construct():
 # Test: creat CELL OR Primitive instance on construct use many parameter
 class NetM(nn.Cell):
     """ NetM definition """
+
     def __init__(self, name, axis):
         super(NetM, self).__init__()
         # self.relu = nn.ReLU()
@@ -104,6 +110,7 @@ class NetM(nn.Cell):
 
 class NetC(nn.Cell):
     """ NetC definition """
+
     def __init__(self, tensor):
         super(NetC, self).__init__()
         self.tensor = tensor
@@ -118,6 +125,7 @@ class NetC(nn.Cell):
 def test_create_cell_object_on_construct_use_many_parameter():
     """ test_create_cell_object_on_construct_use_many_parameter """
     log.debug("begin test_create_object_on_construct")
+    context.set_context(mode=context.GRAPH_MODE)
     np1 = np.random.randn(2, 3, 4, 5).astype(np.float32)
     input_me = Tensor(np1)
 

@@ -33,15 +33,25 @@
 #include "mindrecord/include/shard_segment.h"
 #include "ut_common.h"
 
-using mindspore::MsLogLevel::INFO;
-using mindspore::ExceptionType::NoExceptionType;
 using mindspore::LogStream;
+using mindspore::ExceptionType::NoExceptionType;
+using mindspore::MsLogLevel::INFO;
 
 namespace mindspore {
 namespace mindrecord {
 class TestShardSegment : public UT::Common {
  public:
   TestShardSegment() {}
+  void SetUp() override { ShardWriterImageNet(); }
+
+  void TearDown() override {
+    for (int i = 1; i <= 4; i++) {
+      string filename = std::string("./imagenet.shard0") + std::to_string(i);
+      string db_name = std::string("./imagenet.shard0") + std::to_string(i) + ".db";
+      remove(common::SafeCStr(filename));
+      remove(common::SafeCStr(db_name));
+    }
+  }
 };
 
 TEST_F(TestShardSegment, TestShardSegment) {
@@ -49,7 +59,7 @@ TEST_F(TestShardSegment, TestShardSegment) {
   std::string file_name = "./imagenet.shard01";
 
   ShardSegment dataset;
-  dataset.Open(file_name, 4);
+  dataset.Open({file_name}, true, 4);
 
   auto x = dataset.GetCategoryFields();
   for (const auto &fields : x.second) {
@@ -87,7 +97,7 @@ TEST_F(TestShardSegment, TestReadAtPageByNameOfCategoryName) {
   std::string file_name = "./imagenet.shard01";
 
   ShardSegment dataset;
-  dataset.Open(file_name, 4);
+  dataset.Open({file_name}, true, 4);
 
   auto x = dataset.GetCategoryFields();
   for (const auto &fields : x.second) {
@@ -111,7 +121,7 @@ TEST_F(TestShardSegment, TestReadAtPageByIdOfCategoryId) {
   std::string file_name = "./imagenet.shard01";
 
   ShardSegment dataset;
-  dataset.Open(file_name, 4);
+  dataset.Open({file_name}, true,  4);
 
   auto x = dataset.GetCategoryFields();
   for (const auto &fields : x.second) {
@@ -133,7 +143,7 @@ TEST_F(TestShardSegment, TestReadAtPageByIdOfPageNo) {
   std::string file_name = "./imagenet.shard01";
 
   ShardSegment dataset;
-  dataset.Open(file_name, 4);
+  dataset.Open({file_name}, true, 4);
 
   auto x = dataset.GetCategoryFields();
   for (const auto &fields : x.second) {
@@ -155,7 +165,7 @@ TEST_F(TestShardSegment, TestReadAtPageByIdOfPageRows) {
   std::string file_name = "./imagenet.shard01";
 
   ShardSegment dataset;
-  dataset.Open(file_name, 4);
+  dataset.Open({file_name}, true, 4);
 
   auto x = dataset.GetCategoryFields();
   for (const auto &fields : x.second) {

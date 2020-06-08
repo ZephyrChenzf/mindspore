@@ -19,16 +19,18 @@
 import os
 import numpy as np
 
-import mindspore.nn as nn
 import mindspore.context as context
-from mindspore.ops import operations as P
+import mindspore.nn as nn
 from mindspore import Tensor, Model, ParallelMode
 from mindspore.nn.optim import Momentum
+from mindspore.ops import operations as P
 
 _current_dir = os.path.dirname(os.path.realpath(__file__)) + "/../test_data"
 
+
 class LeNet5(nn.Cell):
     """LeNet5 definition"""
+
     def __init__(self):
         super(LeNet5, self).__init__()
         self.conv1 = nn.Conv2d(1, 6, 5)
@@ -52,6 +54,7 @@ class LeNet5(nn.Cell):
 
 class DatasetLenet():
     """DatasetLenet definition"""
+
     def __init__(self, predict, label, length=3):
         self.predict = predict
         self.label = label
@@ -77,7 +80,6 @@ def test_lenet5_train_step_training_pynative():
     context.reset_auto_parallel_context()
     context.set_auto_parallel_context(parallel_mode=ParallelMode.DATA_PARALLEL,
                                       device_num=8, mirror_mean=True)
-    size = 3
     predict = Tensor(np.ones([1, 1, 32, 32]).astype(np.float32) * 0.01)
     label = Tensor(np.zeros([1, 10]).astype(np.float32))
     DatasetLenet(predict, label, 2)

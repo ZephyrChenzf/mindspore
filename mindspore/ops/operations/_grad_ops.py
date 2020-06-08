@@ -15,13 +15,13 @@
 
 """Operators for gradients."""
 
-import math
 from ..._c_expression import signature_rw as sig_rw
 from ..._c_expression import signature_kind as sig_kind
 from ..primitive import Primitive, PrimitiveWithInfer, prim_attr_register
-from ..._checkparam import ParamValidator as validator
-from ..._checkparam import Rel, check_int_positive, check_bool
+from ..._checkparam import Validator as validator, Rel
+from .._utils import get_concat_offset
 from ...common import dtype as mstype
+from .. import functional as F
 
 
 class AbsGrad(PrimitiveWithInfer):
@@ -51,12 +51,68 @@ class ACosGrad(PrimitiveWithInfer):
         """init ACosGrad"""
 
     def infer_shape(self, x, dout):
-        validator.check_param_equal("x", x, "dout", dout)
+        validator.check("x shape", x, "dout shape", dout, Rel.EQ, self.name)
         return x
 
     def infer_dtype(self, x, dout):
         args = {"x": x, "dout": dout}
-        validator.check_type_same(args, mstype.number_type)
+        validator.check_tensor_type_same(args, mstype.number_type, self.name)
+        return x
+
+
+class AcoshGrad(PrimitiveWithInfer):
+    """Performs grad of Acosh operation."""
+
+    @prim_attr_register
+    def __init__(self):
+        """init AcoshGrad"""
+
+    def infer_shape(self, x, dout):
+        validator.check("x shape", x, "dout shape", dout, Rel.EQ, self.name)
+        return x
+
+    def infer_dtype(self, x, dout):
+        args = {"x": x, "dout": dout}
+        validator.check_tensor_type_same(args, mstype.number_type, self.name)
+        return x
+
+
+class AsinGrad(PrimitiveWithInfer):
+    """
+    Computes AsinGrad of input element-wise.
+
+    Returns:
+        Tensor, has the same type as input.
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """Init AsinGrad"""
+
+    def infer_shape(self, x, dout):
+        validator.check("x shape", x, "dout shape", dout, Rel.EQ, self.name)
+        return x
+
+    def infer_dtype(self, x, dout):
+        args = {"x": x, "dout": dout}
+        validator.check_tensor_type_same(args, mstype.number_type, self.name)
+        return x
+
+
+class AsinhGrad(PrimitiveWithInfer):
+    """Performs grad of Asinh operation."""
+
+    @prim_attr_register
+    def __init__(self):
+        """init AsinhGrad"""
+
+    def infer_shape(self, x, dout):
+        validator.check("x shape", x, "dout shape", dout, Rel.EQ, self.name)
+        return x
+
+    def infer_dtype(self, x, dout):
+        args = {"x": x, "dout": dout}
+        validator.check_tensor_type_same(args, mstype.number_type, self.name)
         return x
 
 
@@ -65,15 +121,15 @@ class BatchNormGrad(PrimitiveWithInfer):
 
     @prim_attr_register
     def __init__(self, is_training=False, epsilon=1e-5):
-        self.is_training = validator.check_type('is_training', is_training, (bool,))
-        self.epsilon = validator.check_number_range('epsilon', epsilon, 0, 1, Rel.INC_RIGHT)
+        self.is_training = validator.check_value_type('is_training', is_training, (bool,), self.name)
+        self.epsilon = validator.check_number_range('epsilon', epsilon, 0, 1, Rel.INC_RIGHT, self.name)
         self.add_prim_attr('data_format', "NCHW")
 
-    def infer_shape(self, y_backprop_shape, x_shape, scale_shape, reserve_1_shape, reserve_2_shape, reserve_3_shape):
+    def infer_shape(self, y_backprop_shape, x_shape, scale_shape, reserve_1_shape, reserve_2_shape):
         validator.check("BatchNorm y_backprop_shape", y_backprop_shape, "BatchNorm x_shape", x_shape)
         return (x_shape, scale_shape, scale_shape, reserve_1_shape, reserve_2_shape)
 
-    def infer_dtype(self, y_backprop_type, x_type, scale_type, reserve_1_type, reserve_2_type, reserve_3_type):
+    def infer_dtype(self, y_backprop_type, x_type, scale_type, reserve_1_type, reserve_2_type):
         return (x_type, scale_type, scale_type, reserve_1_type, reserve_2_type)
 
 
@@ -91,22 +147,51 @@ class BiasAddGrad(Primitive):
 
 class BinaryCrossEntropyGrad(PrimitiveWithInfer):
     """Computes gradients for `BinaryCrossEntropy` operation."""
+
     @prim_attr_register
     def __init__(self, reduction='mean'):
-        self.reduction = validator.check_string('reduction', reduction, ['none', 'mean', 'sum'])
+        self.reduction = validator.check_string('reduction', reduction, ['none', 'mean', 'sum'], self.name)
 
     def infer_shape(self, x_shape, y_shape, doutput_shape, weight_shape):
-        validator.check_param_equal('x_shape', x_shape, 'y_shape', y_shape)
+        validator.check('x_shape', x_shape, 'y_shape', y_shape, Rel.EQ, self.name)
         if weight_shape:
-            validator.check_param_equal('y_shape', y_shape, 'weight_shape', weight_shape)
+            validator.check('y_shape', y_shape, 'weight_shape', weight_shape, Rel.EQ, self.name)
         return x_shape
 
     def infer_dtype(self, x_type, y_type, doutput_type, weight_type):
         args = {'x_type': x_type, 'y_type': y_type, 'doutput_type': doutput_type}
-        validator.check_type_same(args, (mstype.float16, mstype.float32))
+        validator.check_tensor_type_same(args, (mstype.float16, mstype.float32), self.name)
         if weight_type:
-            validator.check_two_types_same('x_type', x_type, 'weight_type', weight_type)
+            validator.check('x_type', x_type, 'weight_type', weight_type, Rel.EQ, TypeError)
         return x_type
+
+
+class ConcatOffset(PrimitiveWithInfer):
+    """primitive for computing Concat's gradient."""
+
+    @prim_attr_register
+    def __init__(self, N=2, axis=0):
+        """init ConcatOffset"""
+
+    def __infer__(self, input_x):
+        axis = self.axis
+        x_shp = input_x['shape']
+        x_type = input_x['dtype']
+        offset, _, axis = get_concat_offset(x_shp, x_type, axis, self.name)
+        self.add_prim_attr('T', x_type[0].element_type())
+        offset_values = []
+        for i in range(len(x_shp)):
+            values = []
+            for j in range(len(x_shp[0])):
+                value = 0
+                if j == axis:
+                    value = offset[i]
+                values.append(value)
+            offset_values.append(tuple(values))
+        out = {'shape': None,
+               'dtype': None,
+               'value': tuple(offset_values)}
+        return out
 
 
 class Conv2DBackpropFilter(PrimitiveWithInfer):
@@ -120,8 +205,8 @@ class Conv2DBackpropFilter(PrimitiveWithInfer):
         pad (int): The pad value to fill. Default: 0.
         mode (int): 0 Math convolutiuon, 1 cross-correlation convolution ,
                     2 deconvolution, 3 depthwise convolution. Default: 1.
-        stride (int): The stride to apply conv filter. Default: 1.
-        dilation (int): Specifies the dilation rate to use for dilated convolution. Default: 1.
+        stride (tuple): The stride to apply conv filter. Default: (1, 1).
+        dilation (tuple): Specifies the dilation rate to use for dilated convolution. Default: (1, 1, 1, 1).
         group (int): Splits input into groups. Default: 1.
 
     Returns:
@@ -136,8 +221,8 @@ class Conv2DBackpropFilter(PrimitiveWithInfer):
                  pad=0,
                  pad_list=(0, 0, 0, 0),
                  mode=1,
-                 stride=1,
-                 dilation=1,
+                 stride=(1, 1),
+                 dilation=(1, 1, 1, 1),
                  group=1):
         """init Convolution"""
         self.init_prim_io_names(inputs=['out_backprop', 'input', 'filter_sizes'], outputs=['output'])
@@ -147,23 +232,25 @@ class Conv2DBackpropFilter(PrimitiveWithInfer):
         pad_mode = pad_mode.upper()
         self.add_prim_attr('pad_mode', pad_mode)
         self.pad = pad
-        self.stride = stride
+        if isinstance(stride, tuple) and len(stride) == 4:
+            self.stride = (stride[2], stride[3])
+            self.add_prim_attr('stride', self.stride)
         self.dilation = dilation
         self.group = group
         self.add_prim_attr('data_format', "NCHW")
 
     def __infer__(self, doutput, x, w_size):
         w_size_v = w_size['value']
-        validator.check_type('w_size', w_size_v, [tuple])
+        validator.check_value_type('w_size', w_size_v, [tuple], self.name)
         for i, dim_len in enumerate(w_size_v):
-            validator.check_type("w_size[%d]" % i, dim_len, [int])
-        validator.check_typename('x_dtype', x['dtype'], [mstype.int8, mstype.int32, mstype.float16, mstype.float32])
-        validator.check_two_types_same('doutput_dtype', doutput['dtype'], 'x_dtype', x['dtype'])
+            validator.check_value_type("w_size[%d]" % i, dim_len, [int], self.name)
+        args = {"x": x['dtype'], "doutput": doutput['dtype']}
+        validator.check_tensor_type_same(args, [mstype.int8, mstype.int32, mstype.float16, mstype.float32], self.name)
         out = {
             'value': None,
             'shape': w_size_v,
             'dtype': doutput['dtype'],
-            }
+        }
         return out
 
 
@@ -220,8 +307,8 @@ class DepthwiseConv2dNativeBackpropFilter(PrimitiveWithInfer):
 
     def __infer__(self, x, w_size, dout):
         w_size_v = w_size['value']
-        args = {'x_dtype': x['dtype'], 'dout_type': dout['dtype']}
-        validator.check_type_same(args, mstype.number_type)
+        args = {'x': x['dtype'], 'dout': dout['dtype']}
+        validator.check_tensor_type_same(args, mstype.number_type, self.name)
         out = {
             'value': None,
             'shape': w_size_v,
@@ -280,8 +367,8 @@ class DepthwiseConv2dNativeBackpropInput(PrimitiveWithInfer):
         raise NotImplementedError
 
     def __infer__(self, x_size, w, dout):
-        args = {'w_dtype': w['dtype'], 'dout_type': dout['dtype']}
-        validator.check_type_same(args, mstype.number_type)
+        args = {'w': w['dtype'], 'dout': dout['dtype']}
+        validator.check_tensor_type_same(args, mstype.number_type, self.name)
         x_size_v = x_size['value']
         out = {
             'value': None,
@@ -303,7 +390,7 @@ class FlattenGrad(PrimitiveWithInfer):
             'value': None,
             'shape': args[1]['value'],
             'dtype': args[0]['dtype'],
-            }
+        }
         return out
 
 
@@ -330,9 +417,9 @@ class GeluGrad(PrimitiveWithInfer):
         return x_shape
 
     def infer_dtype(self, y_backprop_dtype, x_dtype, y_dtype):
-        validator.check_typename("y_backprop_dtype", y_backprop_dtype, (mstype.float16, mstype.float32))
-        validator.check_typename("x_dtype", x_dtype, (mstype.float16, mstype.float32))
-        validator.check_typename("y_dtype", y_dtype, (mstype.float16, mstype.float32))
+        validator.check_tensor_type_same({"y_backprop": y_backprop_dtype}, (mstype.float16, mstype.float32), self.name)
+        validator.check_tensor_type_same({"x": x_dtype}, (mstype.float16, mstype.float32), self.name)
+        validator.check_tensor_type_same({"y": y_dtype}, (mstype.float16, mstype.float32), self.name)
         return x_dtype
 
 
@@ -340,59 +427,40 @@ class _PoolGrad(PrimitiveWithInfer):
     """Gradients of the max/avg pool operation."""
 
     @prim_attr_register
-    def __init__(self, ksize=1, strides=1, padding="VALID"):
+    def __init__(self, ksize, strides, padding="VALID"):
         self.init_prim_io_names(inputs=['x_origin', 'out_origin', 'grad'], outputs=['output'])
-        self.ksize = ksize
-        self.strides = strides
-        self.padding = padding
 
-        self.ksize = validator.check_type('ksize', self.ksize, [int, tuple])
-        self.strides = validator.check_type('strides', self.strides, [int, tuple])
-
-        validator.check_type('padding', self.padding, [str])
-        self.padding = validator.check_string('padding', self.padding, ['VALID', 'SAME'])
+        validator.check_value_type('ksize', ksize, [int, tuple], self.name)
+        validator.check_value_type('strides', strides, [int, tuple], self.name)
+        self.padding = validator.check_string('padding', padding.upper(), ['VALID', 'SAME'], self.name)
         self.add_prim_attr("padding", self.padding)
-        self.add_prim_attr('data_format', "NCHW")
+        self.is_maxpoolgradwithargmax = (self.name == "MaxPoolGradWithArgmax")
+        if not self.is_maxpoolgradwithargmax:
+            self.add_prim_attr('data_format', "NCHW")
 
-        if isinstance(self.ksize, int):
-            self.pool_h = validator.check_integer("ksize", self.ksize, 1, Rel.GE)
-            self.pool_w = self.pool_h
-            self.add_prim_attr("ksize", (1, 1, self.ksize, self.ksize))
-        elif isinstance(self.ksize, tuple):
-            if (len(self.ksize) != 2 and len(self.ksize) != 4):
-                raise ValueError('Attr \'ksize\' of \'Pool\' Op passed ' +
-                                 str(self.ksize)+', should be a int or a tuple of length 2 or 4.')
-            for ksize_val in self.ksize:
-                if (not isinstance(ksize_val, int)) or (ksize_val <= 0):
-                    raise ValueError('Each value of attr \'ksize\' of \'MaxPool\' Op passed ' +
-                                     str(self.ksize)+', should be int and greater than 0.')
-            self.pool_h = self.ksize[-2]
-            self.pool_w = self.ksize[-1]
-            self.add_prim_attr("ksize", (1, 1, self.ksize[-2], self.ksize[-1]))
+        def _grad_check_int_or_tuple(arg_name, arg_val, is_argmax):
+            validator.check_value_type(arg_name, arg_val, (int, tuple), self.name)
+            error_msg = ValueError(f"For '{self.name}' the '{arg_name}' should be an positive int number "
+                                   f"or a tuple of two or four positive int numbers, but got {arg_val}")
+            if isinstance(arg_val, int):
+                ret = (1, arg_val, arg_val, 1) if is_argmax else (1, 1, arg_val, arg_val)
+            elif len(arg_val) == 2:
+                ret = (1, arg_val[0], arg_val[1], 1) if is_argmax else (1, 1, arg_val[0], arg_val[1])
+            elif len(arg_val) == 4:
+                ret = arg_val
+            else:
+                raise error_msg
+            # whether all elements of tuple are positive integers
+            for item in ret:
+                if not isinstance(item, int) or item <= 0:
+                    raise error_msg
+            return ret
 
-        if isinstance(self.strides, int):
-            self.stride_h = validator.check_integer("strides", self.strides, 1, Rel.GE)
-            self.stride_w = self.stride_h
-            self.add_prim_attr("strides", (1, 1, self.strides, self.strides))
-        elif isinstance(self.strides, tuple):
-            if (len(self.strides) != 2 and len(self.strides) != 4):
-                raise ValueError('Attr \'strides\' of \'MaxPool\' Op passed ' +
-                                 str(self.strides)+', should be a int or a tuple of length 2 or 4.')
-            for stride_val in self.strides:
-                if (not isinstance(stride_val, int)) or (stride_val <= 0):
-                    raise ValueError('Each value of attr \'strides\' of \'MaxPool\' Op passed ' +
-                                     str(self.strides)+', should be int and greater than 0.')
-            self.stride_h = self.strides[-2]
-            self.stride_w = self.strides[-1]
-            self.add_prim_attr("strides", (1, 1, self.strides[-2], self.strides[-1]))
+        self.ksize = _grad_check_int_or_tuple("ksize", ksize, self.is_maxpoolgradwithargmax)
+        self.add_prim_attr("ksize", self.ksize)
 
-        if self.padding == "VALID":
-            self.pad = 0
-        elif self.padding == "SAME":
-            self.pad = math.floor((self.pool_h - 1) / 2)
-        else:
-            raise ValueError('The padding should be str and must be SAME or VALID,'
-                             ' but got {}.'.format(self.padding))
+        self.strides = _grad_check_int_or_tuple("strides", strides, self.is_maxpoolgradwithargmax)
+        self.add_prim_attr("strides", self.strides)
 
 
 class AvgPoolGrad(_PoolGrad):
@@ -451,28 +519,13 @@ class MaximumGrad(Primitive):
         raise NotImplementedError
 
 
-class MaxPoolGradWithArgmax(PrimitiveWithInfer):
+class MaxPoolGradWithArgmax(_PoolGrad):
     """Computes the gradients of MaxPoolWithArgmax."""
 
     @prim_attr_register
-    def __init__(self,
-                 pad_mode="valid",
-                 window=0,
-                 pad=0,
-                 stride=1,
-                 data_mode=1,
-                 ceil_mode=0,
-                 alpha=1.0,
-                 beta=0.0):
+    def __init__(self, ksize=1, strides=1, padding="VALID",):
         self.init_prim_io_names(inputs=['x', 'grad', 'argmax'], outputs=['output'])
-
-        self.window = window
-        self.pool_h = self.pool_w = window
-        self.pad = pad
-        self.pad_mode = pad_mode
-        self.stride = stride
-        self.data_mode = data_mode
-        self.ceil_mode = ceil_mode
+        super(MaxPoolGradWithArgmax, self).__init__(ksize, strides, padding)
 
     def infer_shape(self, x_shape, grad_shape, argmax_shape):
         if not grad_shape:
@@ -513,17 +566,17 @@ class L2NormalizeGrad(PrimitiveWithInfer):
 
     @prim_attr_register
     def __init__(self, axis=0, epsilon=1e-4):
-        validator.check_type('axis', axis, [int])
-        validator.check_type('epsilon', epsilon, [int, float])
+        validator.check_value_type('axis', axis, [int], self.name)
+        validator.check_value_type('epsilon', epsilon, [int, float], self.name)
 
     def infer_shape(self, input_x, out, dout):
-        validator.check_param_equal('input_x', input_x, 'out', out)
-        validator.check_param_equal('input_x', input_x, 'dout', dout)
+        validator.check('input_x shape', input_x, 'out shape', out, Rel.EQ, self.name)
+        validator.check('input_x shape', input_x, 'dout shape', dout, Rel.EQ, self.name)
         return input_x
 
     def infer_dtype(self, input_x, out, dout):
         args = {'input_x': input_x, 'out': out, 'dout': dout}
-        validator.check_type_same(args, mstype.number_type)
+        validator.check_tensor_type_same(args, mstype.number_type, self.name)
         return input_x
 
 
@@ -544,8 +597,8 @@ class LayerNormGrad(Primitive):
     @prim_attr_register
     def __init__(self, begin_norm_axis=1, begin_params_axis=1):
         """init"""
-        self.begin_norm_axis = validator.check_type('begin_norm_axis', begin_norm_axis, [int])
-        self.begin_params_axis = validator.check_type('begin_params_axis', begin_params_axis, [int])
+        self.begin_norm_axis = validator.check_value_type('begin_norm_axis', begin_norm_axis, [int], self.name)
+        self.begin_params_axis = validator.check_value_type('begin_params_axis', begin_params_axis, [int], self.name)
 
     def __call__(self, x, dy, variance, mean, gamma):
         raise NotImplementedError
@@ -557,15 +610,15 @@ class LogSoftmaxGrad(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, axis=-1):
         """init LogSoftmaxGrad"""
-        validator.check_type("axis", axis, [int])
+        validator.check_value_type("axis", axis, [int], self.name)
 
     def infer_shape(self, dout, logits):
         rank = len(logits)
-        validator.check_int_range('axis', self.axis, -rank - 1, rank, Rel.INC_BOTH)
+        validator.check_int_range('axis', self.axis, -rank - 1, rank, Rel.INC_BOTH, self.name)
         return logits
 
     def infer_dtype(self, dout, logits):
-        validator.check_subclass("logits", logits, mstype.tensor)
+        validator.check_subclass("logits", logits, mstype.tensor, self.name)
         return logits
 
 
@@ -574,13 +627,13 @@ class LSTMGradData(PrimitiveWithInfer):
 
     @prim_attr_register
     def __init__(self, input_size, hidden_size, num_layers, has_bias, bidirectional, dropout):
-        self.input_size = check_int_positive(input_size)
-        self.hidden_size = check_int_positive(hidden_size)
-        self.num_layers = check_int_positive(num_layers)
-        self.has_bias = check_bool(has_bias)
-        self.bidirectional = check_bool(bidirectional)
-        self.dropout = validator.check_type("dropout", dropout, [float])
-        self.dropout = validator.check_number_range('dropout', dropout, 0, 1, Rel.INC_BOTH)
+        self.input_size = validator.check_integer('input_size', input_size, 0, Rel.GT, self.name)
+        self.hidden_size = validator.check_integer('hidden_size', hidden_size, 0, Rel.GT, self.name)
+        self.num_layers = validator.check_integer('num_layers', num_layers, 0, Rel.GT, self.name)
+        self.has_bias = validator.check_value_type('has_bias', has_bias, (bool,), self.name)
+        self.bidirectional = validator.check_value_type('bidirectional', bidirectional, (bool,), self.name)
+        self.dropout = validator.check_value_type("dropout", dropout, [float], self.name)
+        self.dropout = validator.check_number_range('dropout', dropout, 0, 1, Rel.INC_BOTH, self.name)
 
         if bidirectional:
             self.num_directions = 2
@@ -590,19 +643,19 @@ class LSTMGradData(PrimitiveWithInfer):
     def infer_shape(self, y_shape, dy_shape, dhy_shape, dcy_shape, w_shape,
                     hx_shape, cx_shape, reserve_shape, state_shape):
         # dhy and dcy should be same shape
-        validator.check_integer("h_shape", len(dhy_shape), 3, Rel.EQ)
-        validator.check_integer("h_shape", len(dhy_shape), len(dcy_shape), Rel.EQ)
-        validator.check_integer("h_shape[0]", dhy_shape[0], dcy_shape[0], Rel.EQ)
-        validator.check_integer("h_shape[1]", dhy_shape[1], dcy_shape[1], Rel.EQ)
-        validator.check_integer("h_shape[2]", dhy_shape[2], dcy_shape[2], Rel.EQ)
+        validator.check_integer("h_shape", len(dhy_shape), 3, Rel.EQ, self.name)
+        validator.check_integer("h_shape", len(dhy_shape), len(dcy_shape), Rel.EQ, self.name)
+        validator.check_integer("h_shape[0]", dhy_shape[0], dcy_shape[0], Rel.EQ, self.name)
+        validator.check_integer("h_shape[1]", dhy_shape[1], dcy_shape[1], Rel.EQ, self.name)
+        validator.check_integer("h_shape[2]", dhy_shape[2], dcy_shape[2], Rel.EQ, self.name)
 
-        validator.check_integer("h_shape[0]", dhy_shape[0], self.num_layers * self.num_directions, Rel.EQ)
-        validator.check_integer("h_shape[2]", dhy_shape[2], self.hidden_size, Rel.EQ)
+        validator.check_integer("h_shape[0]", dhy_shape[0], self.num_layers * self.num_directions, Rel.EQ, self.name)
+        validator.check_integer("h_shape[2]", dhy_shape[2], self.hidden_size, Rel.EQ, self.name)
 
         # dy: (seq_len, batch_size, hidden_size * num_directions)
-        validator.check_integer("dy_shape", len(dy_shape), 3, Rel.EQ)
-        validator.check_integer("dy[1]", dy_shape[1], dhy_shape[1], Rel.EQ)
-        validator.check_integer("dy[2]", dy_shape[2], self.hidden_size * self.num_directions, Rel.EQ)
+        validator.check_integer("dy_shape", len(dy_shape), 3, Rel.EQ, self.name)
+        validator.check_integer("dy[1]", dy_shape[1], dhy_shape[1], Rel.EQ, self.name)
+        validator.check_integer("dy[2]", dy_shape[2], self.hidden_size * self.num_directions, Rel.EQ, self.name)
 
         # (seq_len, batch_size, input_size)
         dx_shape = (y_shape[0], y_shape[1], self.input_size)
@@ -613,11 +666,8 @@ class LSTMGradData(PrimitiveWithInfer):
 
     def infer_dtype(self, y_dtype, dy_dtype, dhy_dtype, dcy_dtype, w_dtype,
                     hx_dtype, cx_dtype, reserve_dtype, state_dtype):
-        validator.check_typename("dy_dtype", dy_dtype, (mstype.float32, mstype.float16))
-        validator.check_typename("dhy_dtype", dhy_dtype, (mstype.float32, mstype.float16))
-        validator.check_typename("dcy_dtype", dcy_dtype, (mstype.float32, mstype.float16))
-        validator.check_typename("datatype", dy_dtype, (dhy_dtype.element_type(),))
-        validator.check_typename("datatype", dy_dtype, (dcy_dtype.element_type(),))
+        args = {"dy": dy_dtype, "dhy": dhy_dtype, "dcy": dcy_dtype}
+        validator.check_tensor_type_same(args, (mstype.float32, mstype.float16), self.name)
         return (dy_dtype, dy_dtype, dy_dtype)
 
 
@@ -626,13 +676,13 @@ class LSTMGradWeight(PrimitiveWithInfer):
 
     @prim_attr_register
     def __init__(self, input_size, hidden_size, num_layers, has_bias, bidirectional, dropout):
-        self.input_size = check_int_positive(input_size)
-        self.hidden_size = check_int_positive(hidden_size)
-        self.num_layers = check_int_positive(num_layers)
-        self.has_bias = check_bool(has_bias)
-        self.bidirectional = check_bool(bidirectional)
-        self.dropout = validator.check_type("dropout", dropout, [float])
-        self.dropout = validator.check_number_range('dropout', dropout, 0, 1, Rel.INC_BOTH)
+        self.input_size = validator.check_integer('input_size', input_size, 0, Rel.GT, self.name)
+        self.hidden_size = validator.check_integer('hidden_size', hidden_size, 0, Rel.GT, self.name)
+        self.num_layers = validator.check_integer('num_layers', num_layers, 0, Rel.GT, self.name)
+        self.has_bias = validator.check_value_type('has_bias', has_bias, (bool,), self.name)
+        self.bidirectional = validator.check_value_type('bidirectional', bidirectional, (bool,), self.name)
+        self.dropout = validator.check_value_type("dropout", dropout, [float], self.name)
+        self.dropout = validator.check_number_range('dropout', dropout, 0, 1, Rel.INC_BOTH, self.name)
 
         if bidirectional:
             self.num_directions = 2
@@ -656,9 +706,68 @@ class LSTMGradWeight(PrimitiveWithInfer):
         return hx_dtype
 
 
+class LSTMGrad(PrimitiveWithInfer):
+    """Computes the data and weight gradients of LSTM."""
+
+    @prim_attr_register
+    def __init__(self, input_size, hidden_size, num_layers, has_bias, bidirectional, dropout):
+        self.input_size = validator.check_integer('input_size', input_size, 0, Rel.GT, self.name)
+        self.hidden_size = validator.check_integer('hidden_size', hidden_size, 0, Rel.GT, self.name)
+        self.num_layers = validator.check_integer('num_layers', num_layers, 0, Rel.GT, self.name)
+        self.has_bias = validator.check_value_type('has_bias', has_bias, (bool,), self.name)
+        self.bidirectional = validator.check_value_type('bidirectional', bidirectional, (bool,), self.name)
+        self.dropout = validator.check_value_type("dropout", dropout, [float], self.name)
+        self.dropout = validator.check_number_range('dropout', dropout, 0, 1, Rel.INC_BOTH, self.name)
+
+        if bidirectional:
+            self.num_directions = 2
+        else:
+            self.num_directions = 1
+
+    def infer_shape(self, x_shape, hx_shape, cx_shape, w_shape, y_shape, hy_shape, cy_shape, dy_shape, dhy_shape,
+                    dcy_shape, reserve_shape):
+        # dhy and dcy should be same shape
+        validator.check_integer("h_shape", len(dhy_shape), 3, Rel.EQ, self.name)
+        validator.check_integer("h_shape", len(dhy_shape), len(dcy_shape), Rel.EQ, self.name)
+        validator.check_integer("h_shape[0]", dhy_shape[0], dcy_shape[0], Rel.EQ, self.name)
+        validator.check_integer("h_shape[1]", dhy_shape[1], dcy_shape[1], Rel.EQ, self.name)
+        validator.check_integer("h_shape[2]", dhy_shape[2], dcy_shape[2], Rel.EQ, self.name)
+
+        validator.check_integer("h_shape[0]", dhy_shape[0], self.num_layers * self.num_directions, Rel.EQ, self.name)
+        validator.check_integer("h_shape[2]", dhy_shape[2], self.hidden_size, Rel.EQ, self.name)
+
+        # dy: (seq_len, batch_size, hidden_size * num_directions)
+        validator.check_integer("dy_shape", len(dy_shape), 3, Rel.EQ, self.name)
+        validator.check_integer("dy[1]", dy_shape[1], dhy_shape[1], Rel.EQ, self.name)
+        validator.check_integer("dy[2]", dy_shape[2], self.hidden_size * self.num_directions, Rel.EQ, self.name)
+
+        # (seq_len, batch_size, input_size)
+        dx_shape = (y_shape[0], y_shape[1], self.input_size)
+        dhx_shape = dhy_shape
+        dcx_shape = dcy_shape
+        weight_size = 0
+        gate_size = 4 * self.hidden_size
+        for layer in range(self.num_layers):
+            for _ in range(self.num_directions):
+                input_layer_size = self.input_size if layer == 0 else self.hidden_size * self.num_directions
+                weight_size += gate_size * input_layer_size
+                weight_size += gate_size * self.hidden_size
+                if self.has_bias:
+                    weight_size += gate_size
+
+        return (dx_shape, dhx_shape, dcx_shape, (weight_size, 1, 1))
+
+    def infer_dtype(self, x_dtype, hx_dtype, cx_dtype, w_dtype, y_dtype, hy_dtype, cy_dtype, dy_dtype, dhy_dtype,
+                    dcy_dtype, reserve_dtype):
+        return (dy_dtype, dy_dtype, dy_dtype, hx_dtype)
+
+
 class PReLUGrad(PrimitiveWithInfer):
     r"""
     Gradients of PReLU operation.
+
+    Note:
+        1-dimensional input_x is not supported.
 
     Inputs:
         - **y_backprop** (Tensor) - Representing the backprop of the next layer.
@@ -674,12 +783,15 @@ class PReLUGrad(PrimitiveWithInfer):
         pass
 
     def infer_shape(self, y_backprop_shape, A_shape, w_shape):
+        if len(A_shape) == 1:
+            raise ValueError(f'For \'{self.name}\' input_x rank 1 is not supported.')
         return y_backprop_shape, w_shape
 
     def infer_dtype(self, y_backprop_dtype, A_dtype, w_dtype):
-        validator.check_typename("y_backprop_dtype", y_backprop_dtype, (mstype.float16, mstype.float32))
-        validator.check_typename("A_dtype", A_dtype, (mstype.float16, mstype.float32))
-        validator.check_typename("w_dtype", w_dtype, (mstype.float16, mstype.float32))
+        valid_types = (mstype.float16, mstype.float32)
+        validator.check_tensor_type_same({"y_backprop": y_backprop_dtype}, valid_types, self.name)
+        validator.check_tensor_type_same({"A_dtype": A_dtype}, valid_types, self.name)
+        validator.check_tensor_type_same({"w_dtype": w_dtype}, valid_types, self.name)
         return y_backprop_dtype, w_dtype
 
 
@@ -709,9 +821,28 @@ class ReLU6Grad(PrimitiveWithInfer):
         return x_shape
 
     def infer_dtype(self, y_grad_dtype, x_dtype):
-        validator.check_typename("y_grad_dtype", y_grad_dtype, (mstype.float16, mstype.float32))
-        validator.check_typename("x_dtype", x_dtype, (mstype.float16, mstype.float32))
+        validator.check_tensor_type_same({"y_grad": y_grad_dtype}, (mstype.float16, mstype.float32), self.name)
+        validator.check_tensor_type_same({"x": x_dtype}, (mstype.float16, mstype.float32), self.name)
         return x_dtype
+
+
+class ReluGradV2(PrimitiveWithInfer):
+    """Performs grad of ReLUV2 operation."""
+
+    @prim_attr_register
+    def __init__(self):
+        self.init_prim_io_names(inputs=['gradients', 'mask'], outputs=['output'])
+
+    def __call__(self, gradients, mask):
+        raise NotImplementedError
+
+    def infer_shape(self, gradients_shape, mask_shape):
+        return gradients_shape
+
+    def infer_dtype(self, gradients_dtype, mask_dtype):
+        validator.check_tensor_type_same({'gradients': gradients_dtype}, mstype.number_type, self.name)
+        validator.check_tensor_type_same({'mask': mask_dtype}, (mstype.uint8,), self.name)
+        return gradients_dtype
 
 
 class EluGrad(PrimitiveWithInfer):
@@ -725,10 +856,8 @@ class EluGrad(PrimitiveWithInfer):
         return x_shape
 
     def infer_dtype(self, y_grad_dtype, x_dtype):
-        args_type = {'y_grad': y_grad_dtype, 'x': x_dtype}
-        validator.check_args_tensor(args_type)
-        args_dtype = {'y_grad_dtype': y_grad_dtype, 'x_dtype': x_dtype}
-        validator.check_type_same(args_dtype, mstype.float_type)
+        args = {'y_grad': y_grad_dtype, 'x': x_dtype}
+        validator.check_tensor_type_same(args, mstype.float_type, self.name)
         return x_dtype
 
 
@@ -784,11 +913,11 @@ class ROIAlignGrad(PrimitiveWithInfer):
     @prim_attr_register
     def __init__(self, xdiff_shape, pooled_height, pooled_width, spatial_scale, sample_num=2):
         """init ROIAlignGrad"""
-        validator.check_type("pooled_height", pooled_height, [int])
-        validator.check_type("pooled_width", pooled_width, [int])
-        validator.check_type("spatial_scale", spatial_scale, [float])
-        validator.check_type("sample_num", sample_num, [int])
-        validator.check_type("xdiff_shape", xdiff_shape, [tuple])
+        validator.check_value_type("pooled_height", pooled_height, [int], self.name)
+        validator.check_value_type("pooled_width", pooled_width, [int], self.name)
+        validator.check_value_type("spatial_scale", spatial_scale, [float], self.name)
+        validator.check_value_type("sample_num", sample_num, [int], self.name)
+        validator.check_value_type("xdiff_shape", xdiff_shape, [tuple], self.name)
         self.xdiff_shape = xdiff_shape
         self.pooled_height = pooled_height
         self.pooled_width = pooled_width
@@ -813,11 +942,41 @@ class SigmoidGrad(PrimitiveWithInfer):
         return out
 
     def infer_dtype(self, out, dout):
-        validator.check_typename("dout dtype", dout, (mstype.float16, mstype.float32))
-        validator.check_typename("out dtype", out, (mstype.float16, mstype.float32))
-        args = {"out type": out, "dout type": dout}
-        validator.check_type_same(args, mstype.number_type)
+        args = {'out': out, 'dout': dout}
+        validator.check_tensor_type_same(args, mstype.number_type, self.name)
         return out
+
+
+class HSigmoidGrad(PrimitiveWithInfer):
+    """Gets the gradient of HSigmoid operation."""
+
+    @prim_attr_register
+    def __init__(self):
+        self.init_prim_io_names(inputs=['y_grad', 'x'], outputs=['output'])
+
+    def infer_shape(self, y_grad_shape, x_shape):
+        return x_shape
+
+    def infer_dtype(self, y_grad_dtype, x_dtype):
+        validator.check_tensor_type_same({"y_grad": y_grad_dtype}, (mstype.float16, mstype.float32), self.name)
+        validator.check_tensor_type_same({"x": x_dtype}, (mstype.float16, mstype.float32), self.name)
+        return x_dtype
+
+
+class HSwishGrad(PrimitiveWithInfer):
+    """Gets the gradient of HSwish operation."""
+
+    @prim_attr_register
+    def __init__(self):
+        self.init_prim_io_names(inputs=['y_grad', 'x'], outputs=['output'])
+
+    def infer_shape(self, y_grad_shape, x_shape):
+        return x_shape
+
+    def infer_dtype(self, y_grad_dtype, x_dtype):
+        validator.check_tensor_type_same({"y_grad": y_grad_dtype}, (mstype.float16, mstype.float32), self.name)
+        validator.check_tensor_type_same({"x": x_dtype}, (mstype.float16, mstype.float32), self.name)
+        return x_dtype
 
 
 class SigmoidCrossEntropyWithLogitsGrad(PrimitiveWithInfer):
@@ -829,13 +988,13 @@ class SigmoidCrossEntropyWithLogitsGrad(PrimitiveWithInfer):
         self.init_prim_io_names(inputs=['x', 'y', 'dout'], outputs=['x_grad'])
 
     def infer_shape(self, x_shape, y_shape, dout_shape):
-        validator.check_param_equal("x_shape", x_shape, "y_shape", y_shape)
-        validator.check_param_equal("x_shape", x_shape, "dout_shape", dout_shape)
+        validator.check("x_shape", x_shape, "y_shape", y_shape, Rel.EQ, self.name)
+        validator.check("x_shape", x_shape, "dout_shape", dout_shape, Rel.EQ, self.name)
         return x_shape
 
     def infer_dtype(self, x_dtype, y_dtype, dout_dtype):
         args = {"x_dtype": x_dtype, "y_dtype": y_dtype, 'dout_dtype': dout_dtype}
-        validator.check_type_same(args, mstype.number_type)
+        validator.check_tensor_type_same(args, mstype.number_type, self.name)
         return dout_dtype
 
 
@@ -851,8 +1010,8 @@ class SliceGrad(PrimitiveWithInfer):
         dy_shape, x_shape, size_value = dy['shape'], x['shape'], size['value']
         dy_shape_len = len(dy_shape)
         for i in range(dy_shape_len):
-            validator.check(f'dy_shape[{i}]', dy_shape[i], f'x_shape[{i}]', x_shape[i], Rel.LE)
-            validator.check(f'dy_shape[{i}]', dy_shape[i], f'size_shape[{i}]', size_value[i], Rel.EQ)
+            validator.check(f'dy_shape[{i}]', dy_shape[i], f'x_shape[{i}]', x_shape[i], Rel.LE, self.name)
+            validator.check(f'dy_shape[{i}]', dy_shape[i], f'size_shape[{i}]', size_value[i], Rel.EQ, self.name)
         return {'shape': x_shape,
                 'dtype': x['dtype'],
                 'value': None}
@@ -866,13 +1025,13 @@ class SmoothL1LossGrad(PrimitiveWithInfer):
         pass
 
     def infer_shape(self, prediction, target, dloss):
-        validator.check_param_equal('prediction', prediction, 'target', target)
-        validator.check_param_equal('prediction', prediction, 'dloss', dloss)
+        validator.check('prediction shape', prediction, 'target shape', target, Rel.EQ, self.name)
+        validator.check('prediction shape', prediction, 'dloss shape', dloss, Rel.EQ, self.name)
         return prediction
 
     def infer_dtype(self, prediction, target, dloss):
         args = {"prediction": prediction, "target": target, 'dloss': dloss}
-        validator.check_type_same(args, mstype.number_type)
+        validator.check_tensor_type_same(args, mstype.number_type, self.name)
         return dloss
 
 
@@ -899,17 +1058,34 @@ class StridedSliceGrad(PrimitiveWithInfer):
                  new_axis_mask=0,
                  shrink_axis_mask=0):
         """init StrideSliceGrad"""
-        validator.check_type('begin_mask', begin_mask, [int])
-        validator.check_type('end_mask', end_mask, [int])
-        validator.check_type('ellipsis_mask', ellipsis_mask, [int])
-        validator.check_type('new_axis_mask', new_axis_mask, [int])
-        validator.check_type('shrink_axis_mask', shrink_axis_mask, [int])
+        validator.check_value_type('begin_mask', begin_mask, [int], self.name)
+        validator.check_value_type('end_mask', end_mask, [int], self.name)
+        validator.check_value_type('ellipsis_mask', ellipsis_mask, [int], self.name)
+        validator.check_value_type('new_axis_mask', new_axis_mask, [int], self.name)
+        validator.check_value_type('shrink_axis_mask', shrink_axis_mask, [int], self.name)
         self.init_prim_io_names(inputs=['dy', 'shapex', 'begin', 'end', 'strides'], outputs=['output'])
 
     def __infer__(self, dy, shapex, begin, end, strides):
         return {'shape': shapex['value'],
                 'dtype': dy['dtype'],
                 'value': None}
+
+
+class SoftplusGrad(PrimitiveWithInfer):
+    """Computes gradient for the Log Softmax activation."""
+
+    @prim_attr_register
+    def __init__(self):
+        self.init_prim_io_names(inputs=['dout', 'x'], outputs=['output'])
+
+    def infer_shape(self, dout_shape, x_shape):
+        validator.check("x_shape", x_shape, "dout_shape", dout_shape, Rel.EQ, self.name)
+        return x_shape
+
+    def infer_dtype(self, dout_dtype, x_dtype):
+        args = {"x_dtype": x_dtype, "dout_dtype": dout_dtype}
+        validator.check_tensor_type_same(args, mstype.float_type, self.name)
+        return x_dtype
 
 
 class TanhGrad(PrimitiveWithInfer):
@@ -923,11 +1099,58 @@ class TanhGrad(PrimitiveWithInfer):
         return out
 
     def infer_dtype(self, out, dout):
-        validator.check_subclass("out", out, mstype.tensor)
-        validator.check_subclass("dout", dout, mstype.tensor)
-        args = {"out type": out, "dout type": dout}
-        validator.check_type_same(args, mstype.number_type)
+        args = {"out": out, "dout": dout}
+        validator.check_tensor_type_same(args, mstype.number_type, self.name)
         return out
+
+
+class MirrorPadGrad(PrimitiveWithInfer):
+    """Gradients of MirrorPad operation."""
+
+    @prim_attr_register
+    def __init__(self, mode="REFLECT"):
+        """init MirrorPad"""
+        validator.check_string('mode', mode, ['REFLECT', 'SYMMETRIC'], self.name)
+        self.mode = mode
+
+    def __infer__(self, dout, paddings, x):
+        validator.check_subclass("dout", dout['dtype'], mstype.tensor, self.name)
+        validator.check_subclass("paddings", paddings['dtype'], mstype.tensor, self.name)
+        validator.check_subclass("input_x", x['dtype'], mstype.tensor, self.name)
+        return {'shape': x['shape'],
+                'dtype': dout['dtype'],
+                'value': None}
+
+
+class EmbeddingLookupCommGrad(PrimitiveWithInfer):
+    """
+    Perform the gradient for the communication part of EmbeddingLookup operator.
+
+    This works ONLY when 'reduce_scatter_flag' is True in 'EmbeddingLookup'. Roughly speaking,
+    this primitive is implemented by StridedSlice --> HostAllGather --> Concat. This primitive runs on host.
+    """
+    @prim_attr_register
+    def __init__(self):
+        self.init_prim_io_names(inputs=['dy', 'split_num'], outputs=['output'])
+        self.add_prim_attr('primitive_target', 'CPU')
+
+    def __infer__(self, dy, split_num):
+        """
+        This primitive is implemented by three steps:
+            1) Split the 'dy' along dimension 0 into 'split_num' parts.
+            2) For each part, perform HostAllGather((0, 1, 2, 3, 4, 5, 6, 7)) on the host.
+            3) After HostAllGather, there are still 'split_num' parts in each process. Then, perform Concat on them
+              along dimension 0.
+
+        The output shape of this primitive: shape(output)[0] == shape(dy)[0] * 8
+        """
+        dy_shape = tuple(dy['shape'])
+        split_num_value = split_num['value']
+        validator.check_value_type("split_num_value", split_num_value, [int], self.name)
+        dy_shape_all = F.tuple_setitem(dy_shape, 0, dy_shape[0] * 8)
+        return {'shape': dy_shape_all,
+                'dtype': dy['dtype'],
+                'value': None}
 
 
 class RefToEmbed(Primitive):
@@ -956,6 +1179,149 @@ class RefToEmbed(Primitive):
     __mindspore_signature__ = (
         ('variable', sig_rw.RW_REF, sig_kind.KIND_POSITIONAL_KEYWORD),
     )
+
     @prim_attr_register
     def __init__(self):
         pass
+
+
+class AtanGrad(PrimitiveWithInfer):
+    """
+    Computes AtanGrad of input element-wise.
+
+    Returns:
+        Tensor, has the same type as input.
+    """
+
+    @prim_attr_register
+    def __init__(self):
+        """init AtanGrad"""
+
+    def infer_shape(self, x, dout):
+        validator.check("x shape", x, "dout shape", dout, Rel.EQ, self.name)
+        return x
+
+    def infer_dtype(self, x, dout):
+        args = {"x": x, "dout": dout}
+        validator.check_tensor_type_same(args, mstype.number_type, self.name)
+        return x
+
+
+class BasicLSTMCellCStateGrad(PrimitiveWithInfer):
+    """Computes the state gradients of BasicLSTMCell."""
+
+    @prim_attr_register
+    def __init__(self, forget_bias, activation):
+        self.forget_bias = validator.check_value_type("forget_bias", forget_bias, [float], self.name)
+        self.activation = validator.check_string("activation", activation, ['tanh'], self.name)
+
+    def infer_shape(self, c_shape, dht_shape, dct_shape, it_shape, jt_shape, ft_shape, ot_shape, tanhct_shape):
+        # dhy and dcy should be same shape
+        validator.check_integer("c rank", len(c_shape), 2, Rel.EQ, self.name)
+        validator.check("dht rank", len(dht_shape), "c rank", len(c_shape), Rel.EQ, self.name)
+        validator.check("dct rank", len(dct_shape), "c rank", len(c_shape), Rel.EQ, self.name)
+        validator.check("it rank", len(it_shape), "c rank", len(c_shape), Rel.EQ, self.name)
+        validator.check("jt rank", len(jt_shape), "c rank", len(c_shape), Rel.EQ, self.name)
+        validator.check("ft rank", len(ft_shape), "c rank", len(c_shape), Rel.EQ, self.name)
+        validator.check("ot rank", len(ot_shape), "c rank", len(c_shape), Rel.EQ, self.name)
+        validator.check("tanhct rank", len(tanhct_shape), "c rank", len(c_shape), Rel.EQ, self.name)
+        validator.check("dht shape", dht_shape, "c shape", c_shape, Rel.EQ, self.name)
+        validator.check("dct shape", dct_shape, "c shape", c_shape, Rel.EQ, self.name)
+        validator.check("it shape", it_shape, "c shape", c_shape, Rel.EQ, self.name)
+        validator.check("jt shape", jt_shape, "c shape", c_shape, Rel.EQ, self.name)
+        validator.check("ft shape", ft_shape, "c shape", c_shape, Rel.EQ, self.name)
+        validator.check("ot shape", ot_shape, "c shape", c_shape, Rel.EQ, self.name)
+        validator.check("tanhct shape", tanhct_shape, "c shape", c_shape, Rel.EQ, self.name)
+
+        dgate_shape = (c_shape[0], 4 * c_shape[1])
+        dct_1_shape = c_shape
+
+        return (dgate_shape, dct_1_shape)
+
+    def infer_dtype(self, c_dtype, dht_dtype, dct_dtype, it_dtype, jt_dtype, ft_dtype, ot_dtype, tanhct_dtype):
+        validator.check_subclass("c", c_dtype, [mstype.tensor], self.name)
+        validator.check_subclass("dht", dht_dtype, [mstype.tensor], self.name)
+        validator.check_subclass("dct", dct_dtype, [mstype.tensor], self.name)
+        validator.check_subclass("it", it_dtype, [mstype.tensor], self.name)
+        validator.check_subclass("jt", jt_dtype, [mstype.tensor], self.name)
+        validator.check_subclass("ft", ft_dtype, [mstype.tensor], self.name)
+        validator.check_subclass("ot", ot_dtype, [mstype.tensor], self.name)
+        validator.check_subclass("tanhct", tanhct_dtype, [mstype.tensor], self.name)
+        validator.check_type_name("c", c_dtype, [mstype.float16, mstype.float32], self.name)
+        validator.check_type_name("dht", dht_dtype, [mstype.float16, mstype.float32], self.name)
+        validator.check_type_name("dct", dct_dtype, [mstype.float16, mstype.float32], self.name)
+        validator.check_type_name("it", it_dtype, [mstype.float16, mstype.float32], self.name)
+        validator.check_type_name("jt", jt_dtype, [mstype.float16, mstype.float32], self.name)
+        validator.check_type_name("ft", ft_dtype, [mstype.float16, mstype.float32], self.name)
+        validator.check_type_name("ot", ot_dtype, [mstype.float16, mstype.float32], self.name)
+        validator.check_type_name("tanhct", tanhct_dtype, [mstype.float16, mstype.float32], self.name)
+        return (c_dtype, c_dtype)
+
+
+class BasicLSTMCellWeightGrad(PrimitiveWithInfer):
+    """Computes the weight gradients of BasicLSTM."""
+
+    @prim_attr_register
+    def __init__(self):
+        pass
+
+    def infer_shape(self, x_shape, h_shape, dgate_shape):
+        validator.check_integer("x rank", len(x_shape), 2, Rel.EQ, self.name)
+        validator.check("h rank", len(h_shape), " x rank", len(x_shape), Rel.EQ, self.name)
+        validator.check("dgate rank", len(dgate_shape), "x rank", len(x_shape), Rel.EQ, self.name)
+        validator.check("h_shape[0]", h_shape[0], "x_shape[0]", x_shape[0], Rel.EQ, self.name)
+        validator.check("dgate_shape[0]", dgate_shape[0], "h_shape[0]", h_shape[0], Rel.EQ, self.name)
+        validator.check("dgate_shape[1]", dgate_shape[1], "4*h_shape[1]", 4 * h_shape[1], Rel.EQ, self.name)
+        dw_shape = (dgate_shape[1], x_shape[1] + h_shape[1], 1, 1)
+        db_shape = (dgate_shape[1], 1, 1, 1)
+        return (dw_shape, db_shape)
+
+    def infer_dtype(self, x_dtype, h_dtype, dgate_dtype):
+        validator.check_subclass("x", x_dtype, mstype.tensor, self.name)
+        validator.check_subclass("h", h_dtype, mstype.tensor, self.name)
+        validator.check_subclass("dgate", dgate_dtype, mstype.tensor, self.name)
+        validator.check_type_name("x", x_dtype, [mstype.float16, mstype.float32], self.name)
+        validator.check_type_name("h", h_dtype, [mstype.float16, mstype.float32], self.name)
+        validator.check_type_name("dgate", dgate_dtype, [mstype.float16, mstype.float32], self.name)
+        return (x_dtype, x_dtype)
+
+
+class BasicLSTMCellInputGrad(PrimitiveWithInfer):
+    """Computes the input gradients of BasicLSTM."""
+
+    @prim_attr_register
+    def __init__(self, keep_prob):
+        self.keep_prob = validator.check_value_type("keep_prob", keep_prob, [float], self.name)
+        self.keep_prob = validator.check_number_range("keep_prob", keep_prob, 0.0, 1.0, Rel.INC_BOTH, self.name)
+
+    def infer_shape(self, dgate_shape, w_shape):
+        validator.check_integer("dgate rank", len(dgate_shape), 2, Rel.EQ, self.name)
+        validator.check_integer("w rank", len(w_shape), 4, Rel.EQ, self.name)
+        validator.check("dgate_shape[1]", dgate_shape[1], "w_shape[0]", w_shape[0], Rel.EQ, self.name)
+        dxt_shape = (dgate_shape[0], w_shape[1] - w_shape[0] // 4)
+        dht_shape = (dgate_shape[0], dgate_shape[1] // 4)
+        return (dxt_shape, dht_shape)
+
+    def infer_dtype(self, dgate_dtype, w_dtype):
+        validator.check_subclass("dgate", dgate_dtype, mstype.tensor, self.name)
+        validator.check_subclass("w", w_dtype, mstype.tensor, self.name)
+        validator.check_type_name("dgate", dgate_dtype, [mstype.float16, mstype.float32], self.name)
+        validator.check_type_name("w", w_dtype, [mstype.float16, mstype.float32], self.name)
+        return (dgate_dtype, dgate_dtype)
+
+
+class InvGrad(PrimitiveWithInfer):
+    """Computes gradients for inv operation."""
+
+    @prim_attr_register
+    def __init__(self):
+        pass
+
+    def infer_shape(self, x, grad):
+        validator.check("x_shape", x, "grad_shape", grad, Rel.EQ, self.name)
+        return x
+
+    def infer_dtype(self, x, grad):
+        validator.check_type_name("dgate", x, [mstype.float16, mstype.float32, mstype.int32, mstype.int8], self.name)
+        validator.check_type_name("grad", grad, [mstype.float16, mstype.float32, mstype.int32, mstype.int8], self.name)
+        return x

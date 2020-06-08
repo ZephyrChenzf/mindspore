@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import numpy as np
-from mindspore import context
-import mindspore.nn as nn
-from mindspore.ops import operations as P
-from mindspore import Tensor
+
 import mindspore as ms
+import mindspore.nn as nn
+from mindspore import Tensor
+from mindspore import context
 from mindspore.common.api import _executor
 from mindspore.ops import composite as C
+from mindspore.ops import operations as P
 
 
 class GradWrap(nn.Cell):
@@ -27,8 +28,13 @@ class GradWrap(nn.Cell):
         super(GradWrap, self).__init__()
         self.network = network
 
-    def construct(self, x, y, bias):
-        return C.grad_all(self.network)(x, y, bias)
+    def construct(self, x, y):
+        return C.grad_all(self.network)(x, y)
+
+
+def compile_net(net, x, y):
+    net.set_auto_parallel()
+    _executor.compile(net, x, y)
 
 
 def test_sum_as_loss_float16():
@@ -38,21 +44,20 @@ def test_sum_as_loss_float16():
             self.fc_nobias = P.MatMul(transpose_b=True).set_strategy(strategy0)
             self.reduce_sum = P.ReduceSum(keep_dims=False).set_strategy(strategy1)
 
-        def construct(self, x, y, bias):
+        def construct(self, x, y):
             out = self.fc_nobias(x, y)
-            out = self.reduce_sum(out, (0,1))
+            out = self.reduce_sum(out, (0, 1))
             return out
 
     context.set_auto_parallel_context(device_num=16, global_rank=0)
     strategy0 = ((4, 1), (4, 1))
-    strategy1 = ((4, 1), )
+    strategy1 = ((4, 1),)
     net = GradWrap(Net(strategy0, strategy1))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
 
     x = Tensor(np.ones([64, 32]), dtype=ms.float16)
     y = Tensor(np.ones([64, 32]), dtype=ms.float16)
-    bias = Tensor(np.ones([64]), dtype=ms.float16)
-    _executor.compile(net, x, y, bias)
+    compile_net(net, x, y)
 
 
 def test_sum_as_loss_float32():
@@ -62,21 +67,20 @@ def test_sum_as_loss_float32():
             self.fc_nobias = P.MatMul(transpose_b=True).set_strategy(strategy0)
             self.reduce_sum = P.ReduceSum(keep_dims=False).set_strategy(strategy1)
 
-        def construct(self, x, y, bias):
+        def construct(self, x, y):
             out = self.fc_nobias(x, y)
-            out = self.reduce_sum(out, (0,1))
+            out = self.reduce_sum(out, (0, 1))
             return out
 
     context.set_auto_parallel_context(device_num=16, global_rank=0)
     strategy0 = ((4, 1), (4, 1))
-    strategy1 = ((4, 1), )
+    strategy1 = ((4, 1),)
     net = GradWrap(Net(strategy0, strategy1))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
 
     x = Tensor(np.ones([64, 32]), dtype=ms.float32)
     y = Tensor(np.ones([64, 32]), dtype=ms.float32)
-    bias = Tensor(np.ones([64]), dtype=ms.float32)
-    _executor.compile(net, x, y, bias)
+    compile_net(net, x, y)
 
 
 def test_sum_as_loss_int32():
@@ -86,18 +90,17 @@ def test_sum_as_loss_int32():
             self.fc_nobias = P.MatMul(transpose_b=True).set_strategy(strategy0)
             self.reduce_sum = P.ReduceSum(keep_dims=False).set_strategy(strategy1)
 
-        def construct(self, x, y, bias):
+        def construct(self, x, y):
             out = self.fc_nobias(x, y)
-            out = self.reduce_sum(out, (0,1))
+            out = self.reduce_sum(out, (0, 1))
             return out
 
     context.set_auto_parallel_context(device_num=16, global_rank=0)
     strategy0 = ((4, 1), (4, 1))
-    strategy1 = ((4, 1), )
+    strategy1 = ((4, 1),)
     net = GradWrap(Net(strategy0, strategy1))
     context.set_auto_parallel_context(parallel_mode="semi_auto_parallel")
 
     x = Tensor(np.ones([64, 32]), dtype=ms.int32)
     y = Tensor(np.ones([64, 32]), dtype=ms.int32)
-    bias = Tensor(np.ones([64]), dtype=ms.int32)
-    _executor.compile(net, x, y, bias)
+    compile_net(net, x, y)

@@ -1,5 +1,5 @@
 /**
- * Copyright 2019 Huawei Technologies Co., Ltd
+ * Copyright 2019-2020 Huawei Technologies Co., Ltd
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,17 +22,16 @@
 #include "ir/anf.h"
 #include "ir/dtype.h"
 #include "utils/utils.h"
-#include "ir/meta_tensor.h"
+#include "ir/tensor.h"
 #include "pipeline/static_analysis/dshape.h"
 #include "utils/log_adapter.h"
-#include "framework/ge_runtime/task_info.h"
 
 namespace mindspore {
 enum KernelType : int { UNKNOWN_KERNEL_TYPE = 0, AUTO_DIFF_KERNEL, AICPU_KERNEL, RT_KERNEL, HCCL_KERNEL, TBE_KERNEL };
 
 namespace kernel {
 
-enum Axis {
+enum Axis : int {
   N = 0,
   C,
   H,
@@ -47,6 +46,13 @@ enum FusionType {
   SEGMENT,
   OPAQUE,
   UNKNOWN_FUSION_TYPE = -1,
+};
+enum OpPattern {
+  kCommonPattern = 0,
+  kFormatAgnosticPattern = 1,
+  kBroadcastPattern = 2,
+  kReducePattern = 3,
+  kDynamicFormatPattern = 4,
 };
 
 // Backend processor
@@ -111,7 +117,6 @@ struct Address {
   size_t size;
 };
 using AddressPtr = std::shared_ptr<Address>;
-using TaskInfoPtr = std::shared_ptr<ge::model_runner::TaskInfo>;
 
 class KernelMod {
  public:
@@ -119,11 +124,7 @@ class KernelMod {
   virtual const std::vector<size_t> &GetOutputSizeList() const = 0;
   virtual const std::vector<size_t> &GetWorkspaceSizeList() const = 0;
   virtual bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
-                      const std::vector<AddressPtr> &outputs, uintptr_t stream_ptr) = 0;
-  virtual std::vector<TaskInfoPtr> GenTask(const std::vector<AddressPtr> &, const std::vector<AddressPtr> &,
-                                           const std::vector<AddressPtr> &, uint32_t) {
-    return {};
-  }
+                      const std::vector<AddressPtr> &outputs, void *stream_ptr) = 0;
   virtual std::vector<size_t> GenParameters() { return {}; }
 
   virtual ~KernelMod() = default;

@@ -67,16 +67,7 @@ std::string AbstractBase::ToString() const {
   return buffer.str();
 }
 
-AbstractBasePtr AbstractScalar::Broaden() const {
-  AbstractBasePtr clone = Clone();
-  MS_EXCEPTION_IF_NULL(clone);
-  auto value_track = clone->GetValueTrack();
-  MS_EXCEPTION_IF_NULL(value_track);
-  if (value_track->isa<SymbolicKeyInstance>()) {
-    return clone;
-  }
-  return AbstractBase::Broaden();
-}
+AbstractBasePtr AbstractScalar::Broaden() const { return AbstractBase::Broaden(); }
 
 AbstractBasePtr AbstractScalar::Join(const AbstractBasePtr &other) {
   MS_EXCEPTION_IF_NULL(other);
@@ -443,7 +434,7 @@ bool AbstractTensor::operator==(const AbstractTensor &other) const {
   auto v1 = GetValueTrack();
   auto v2 = other.GetValueTrack();
   if (v1 == nullptr || v2 == nullptr) {
-    MS_LOG(EXCEPTION) << "the value of AbstractTensor is nullptr";
+    MS_LOG(EXCEPTION) << "The value of AbstractTensor is nullptr";
   }
 
   bool is_value_equal = (v1 == v2);
@@ -810,8 +801,8 @@ bool AbstractRef::operator==(const AbstractBase &other) const {
 std::string AbstractRef::ToString() const {
   std::ostringstream buffer;
   buffer << type_name() << "("
-         << "key: " << ref_key_->ToString() << "ref_value: " << ref_->ToString()
-         << "origin_value: " << ref_origin_->ToString();
+         << "key: " << ref_key_->ToString() << " ref_value: " << ref_->ToString()
+         << " origin_value: " << ref_origin_->ToString();
   auto value = GetValueTrack();
   if (value) {
     buffer << ", value: " << value->ToString();
@@ -892,10 +883,27 @@ bool AbstractNull::operator==(const AbstractBase &other) const {
 
 std::string AbstractNull::ToString() const {
   std::ostringstream buffer;
-  buffer << type_name() << "("
-         << "Value: "
-         << "Null"
-         << ")";
+  buffer << type_name() << "(Value: Null)";
+  return buffer.str();
+}
+
+bool AbstractEllipsis::operator==(const AbstractEllipsis &) const { return true; }
+
+bool AbstractEllipsis::operator==(const AbstractBase &other) const {
+  if (&other == this) {
+    return true;
+  }
+  if (other.isa<AbstractEllipsis>()) {
+    auto other_none = static_cast<const AbstractEllipsis *>(&other);
+    return *this == *other_none;
+  } else {
+    return false;
+  }
+}
+
+std::string AbstractEllipsis::ToString() const {
+  std::ostringstream buffer;
+  buffer << type_name() << "(Value: Ellipsis)";
   return buffer.str();
 }
 
@@ -980,6 +988,9 @@ bool AbstractBasePtrListDeepEqual(const AbstractBasePtrList &lhs, const Abstract
   for (std::size_t i = 0; i < size; i++) {
     MS_EXCEPTION_IF_NULL(lhs[i]);
     MS_EXCEPTION_IF_NULL(rhs[i]);
+    if (lhs[i] == rhs[i]) {
+      continue;
+    }
     if (!(*lhs[i] == *rhs[i])) {
       return false;
     }

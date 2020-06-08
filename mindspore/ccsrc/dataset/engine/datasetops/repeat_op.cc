@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <iomanip>
 #include <iostream>
 #include <utility>
 
@@ -20,6 +21,7 @@
 #include "dataset/engine/datasetops/repeat_op.h"
 #include "dataset/engine/data_buffer.h"
 #include "dataset/engine/db_connector.h"
+#include "dataset/engine/opt/pass.h"
 
 #include "utils/log_adapter.h"
 
@@ -51,41 +53,43 @@ RepeatOp::~RepeatOp() {}
 
 // A print method typically used for debugging
 void RepeatOp::Print(std::ostream &out, bool show_all) const {
-  // Call base class printer first
-  PipelineOp::Print(out, show_all);
-
-  // Then display our own stuff
-  out << "RepeatOp:"
-      << "\nCurrent repeat count: " << repeat_count_ << "\nMax repeat count: " << max_repeats_
-      << "\nLeaf Nodes in my execution path:";
-  if (!leaf_ops_.empty()) {
-    out << "\n";
-    for (size_t i = 0; i < leaf_ops_.size(); i++) {
-      out << "  Operator: " << leaf_ops_[i]->id() << "\n";
-    }
+  // Always show the id and name as first line regardless if this summary or detailed print
+  out << "(" << std::setw(2) << operator_id_ << ") <RepeatOp>:";
+  if (!show_all) {
+    // Call the super class for displaying any common 1-liner info
+    PipelineOp::Print(out, show_all);
+    // Then show any custom derived-internal 1-liner info for this op
+    out << " [repeats: " << max_repeats_ << "]\n";
   } else {
-    out << " kNone.";
+    // Call the super class for displaying any common detailed info
+    PipelineOp::Print(out, show_all);
+    // Then show any custom derived-internal stuff
+    out << "\nCurrent repeat count: " << repeat_count_ << "\nMax repeat count: " << max_repeats_
+        << "\nLeaf Nodes in execution path:";
+    if (!eoe_ops_.empty()) {
+      for (size_t i = 0; i < eoe_ops_.size(); i++) {
+        out << "\n  Operator: " << eoe_ops_[i]->id();
+      }
+    } else {
+      out << " None.";
+    }
+    out << "\n\n";
   }
-  out << "\n-------------------------\n\n";  // End the display with this line
 }
 
 // Base-class override for executing specific RepeatOp configurations. This code will be called
 // during the execution tree prepare phase when it is visiting this operator.
-Status RepeatOp::PrepareNodeAction() {
+Status RepeatOp::PrepareNodePostAction() {
   // Run any common code from super class first before adding our own specific logic
-  RETURN_IF_NOT_OK(PipelineOp::PrepareNodeAction());
+  RETURN_IF_NOT_OK(PipelineOp::PrepareNodePostAction());
   std::shared_ptr<DatasetOp> leaf_op = tree_->PopFromRepeatStack();
   while (leaf_op != nullptr) {
     // Track the leaf operators that are under this repeat op.
-    leaf_ops_.push_back(leaf_op);
-
-    // Special case.  If the repeat count is 1, then pre-flag the leaf nodes
-    // to tell them they are already at their last op:
-    if (max_repeats_ == 1) {
-      leaf_op->set_control_flag(kDeOpLastRepeat);
-    }
+    eoe_ops_.push_back(leaf_op);
     leaf_op = tree_->PopFromRepeatStack();
   }
+  // Push ourselves to the stack in case one of our ascendants is repeat too.
+  tree_->AddToRepeatStack(shared_from_this());
   return Status::OK();
 }
 
@@ -119,6 +123,8 @@ Status RepeatOp::GetNextBuffer(std::unique_ptr<DataBuffer> *p_buffer, int32_t wo
   if (buf->eof()) {
     RETURN_IF_NOT_OK(EofReceived(worker_id));
   }
+  // Update the column name map if needed
+  RETURN_IF_NOT_OK(DatasetOp::AssignColMapFromChild());
   *p_buffer = std::move(buf);
   return Status::OK();
 }
@@ -126,17 +132,21 @@ Status RepeatOp::GetNextBuffer(std::unique_ptr<DataBuffer> *p_buffer, int32_t wo
 // Base-class override for handling cases when an eoe is received.
 Status RepeatOp::EoeReceived(int32_t worker_id) {
   repeat_count_++;
-  MS_LOG(INFO) << "Repeat operator end of epoch message received. Repeat count is now: " << repeat_count_ << ".";
-
-  // If we've reached the requested repeat count, then flag the leaf nodes
+  MS_LOG(DEBUG) << "Repeat operator end of epoch message received. Repeat count is now: " << repeat_count_ << ".";
+  bool repeated = BitTest(op_ctrl_flags_, kDeOpRepeated);
+  bool last_repeat = BitTest(op_ctrl_flags_, kDeOpLastRepeat);
+  // If we've reached the requested repeat count, then flag the eoe nodes
   // to tell them they've got one more epoch to perform.  When they reach the end
-  // of the last epoch, they quit rather than loop again.
-  if (max_repeats_ != kInfiniteRepeat && repeat_count_ == (max_repeats_ - 1)) {
-    for (size_t i = 0; i < leaf_ops_.size(); i++) {
-      leaf_ops_[i]->set_control_flag(kDeOpLastRepeat);
+  // of the last epoch, they quit rather than loop again. This happens in two cases:
+  // 1- We are also repeated (by another repeat op) and we are at the last repetition. Or,
+  // 2- We are not repeated
+  if (max_repeats_ != kInfiniteRepeat && repeat_count_ == (max_repeats_ - 1) && (!repeated || last_repeat)) {
+    for (auto &eoe_op : eoe_ops_) {
+      eoe_op->set_control_flag(kDeOpLastRepeat);
     }
   }
   if (repeat_count_ == max_repeats_) {
+    repeat_count_ = 0;
     state_ = OpState::kDeOpIdle;
     return Status::OK();
   }
@@ -154,16 +164,16 @@ Status RepeatOp::operator()() { RETURN_STATUS_UNEXPECTED("Logic error. RepeatOp 
 
 // Base-class override for handling cases when an eof is received.
 Status RepeatOp::EofReceived(int32_t worker_id) {
-  MS_LOG(INFO) << "Repeat operator EOF received, do nothing now.";
+  MS_LOG(DEBUG) << "Repeat operator EOF received, do nothing now.";
   return Status::OK();
 }
 
 int32_t RepeatOp::num_consumers() const {
   if (parent_.empty()) {
-    MS_LOG(INFO) << "Repeat operator, no parent node, assuming it's root and returning 1.";
+    MS_LOG(DEBUG) << "Repeat operator, no parent node, assuming it's root and returning 1.";
     return 1;
   } else if (parent_[0] == nullptr) {
-    MS_LOG(INFO) << "Repeat operator, pointer to the first parent is null. Returning 0.";
+    MS_LOG(DEBUG) << "Repeat operator, pointer to the first parent is null. Returning 0.";
     return 0;
   } else {
     return parent_[0]->num_consumers();
@@ -172,11 +182,17 @@ int32_t RepeatOp::num_consumers() const {
 
 int32_t RepeatOp::num_producers() const {
   if (child_.empty() || child_[0] == nullptr) {
-    MS_LOG(INFO) << "Repeat operator, pointer to child node is null. Returning 0.";
+    MS_LOG(DEBUG) << "Repeat operator, pointer to child node is null. Returning 0.";
     return 0;
   } else {
     return child_[0]->num_producers();
   }
+}
+
+// Visitor accept method for NodePass
+Status RepeatOp::Accept(NodePass *p, bool *modified) {
+  // Downcast shared pointer then call visitor
+  return p->RunOnNode(std::static_pointer_cast<RepeatOp>(shared_from_this()), modified);
 }
 }  // namespace dataset
 }  // namespace mindspore

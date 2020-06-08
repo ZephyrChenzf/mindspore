@@ -32,12 +32,14 @@
 #include "operator/ops.h"
 #include "operator/composite/composite.h"
 #include "utils/symbolic.h"
+#include "utils/context/ms_context.h"
 #include "./common.h"
 
 namespace mindspore {
 namespace ad {
 std::unordered_map<FuncGraphPtr, DFunctorPtr> DFunctor::func_graph_to_functor_;
 std::unordered_map<AnfNodePtr, AdjointPtr> DFunctor::anfnode_to_adjoin_definition_;
+FuncGraphSet DFunctor::scope_;
 
 DFunctor::DFunctor(const FuncGraphPtr &primal_graph, const pipeline::ResourceBasePtr &resources)
     : primal_graph_(primal_graph), resources_(resources), need_cut_(false), is_top_(false) {
@@ -55,11 +57,15 @@ DFunctor::DFunctor(const FuncGraphPtr &primal_graph, const pipeline::ResourceBas
 void DFunctor::Init(const DFunctorPtr &functor, bool is_top) {
   func_graph_to_functor_[primal_graph_] = functor;
   is_top_ = is_top;
+  if (is_top) {
+    scope_ = primal_graph_->scope();
+  }
 }
 
 void DFunctor::Clear() {
   func_graph_to_functor_.clear();
   anfnode_to_adjoin_definition_.clear();
+  scope_.clear();
 }
 
 void DFunctor::BackPropagateFv(const AnfNodePtr &fv, const AnfNodePtr &din) {
@@ -95,11 +101,48 @@ void DFunctor::BackPropagateFv(const AnfNodePtr &fv, const AnfNodePtr &din) {
   fv_adjoint->second->AccumulateDout(dfv);
 }
 
+void DFunctor::BackPropagateSwitchLayer(const CNodePtr &cnode_morph, const CNodePtr &env) {
+  // Take switch_layer as a set of candidate functions.
+  auto input = cnode_morph->input(2);
+  if (!IsPrimitiveCNode(input, prim::kPrimMakeTuple)) {
+    MS_LOG(EXCEPTION) << "The 2th input of switch_layer expect a tuple of graphs, but got " << input->ToString() << ".";
+  }
+  auto tuple_graphs = input->cast<CNodePtr>();
+  for (size_t i = 1; i < tuple_graphs->size(); ++i) {
+    auto graph = tuple_graphs->input(i);
+    if (!IsValueNode<FuncGraph>(graph)) {
+      MS_LOG(EXCEPTION) << "The 2th input of switch_layer expect a tuple of graphs, but got " << graph->ToString()
+                        << " as the " << i << "th element.";
+    }
+    auto func_graph = GetValueNode<FuncGraphPtr>(graph);
+    auto functor = func_graph_to_functor_.find(func_graph);
+    if (functor == func_graph_to_functor_.end()) {
+      MS_LOG(EXCEPTION) << "BackPropagateSwitchLayer failed functor for subgraph does not exist input[" << i << "] "
+                        << func_graph->ToString() << ".";
+    }
+    // Consider direct and indirect fvs.
+    for (auto fv : func_graph->free_variables_nodes()) {
+      BackPropagateFv(fv, env);
+    }
+    for (auto indirect_fv : functor->second->anfnode_to_adjoin_indirect_fv_) {
+      MS_LOG(DEBUG) << "BackPropagateSwitchLayer backprop indirect fv " << func_graph->ToString() << " "
+                    << indirect_fv.first->ToString() << ".";
+      BackPropagateFv(indirect_fv.first, env);
+    }
+  }
+}
+
 void DFunctor::BackPropagate(const CNodePtr &cnode_morph, const CNodePtr &k_app, const AdjointPtr &node_adjoint) {
   auto bprop = k_graph_->NewCNode({NewValueNode(prim::kPrimTupleGetItem), k_app, NewValueNode(1)});
   // Call with delimited continuation dout.
   auto bprop_app = tape_->NewCNode({bprop, node_adjoint->dout()});
   node_adjoint->RegisterDoutUser(bprop_app, 1);
+  // Special case for switch_layer
+  if (IsPrimitiveCNode(cnode_morph, prim::kPrimSwitchLayer)) {
+    auto din = tape_->NewCNode({NewValueNode(prim::kPrimTupleGetItem), bprop_app, NewValueNode(0)});
+    BackPropagateSwitchLayer(cnode_morph, din);
+    return;
+  }
   for (size_t i = 0; i < cnode_morph->size(); i++) {
     auto din = tape_->NewCNode({NewValueNode(prim::kPrimTupleGetItem), bprop_app, NewValueNode(SizeToInt(i))});
     auto input = cnode_morph->input(i);
@@ -175,7 +218,7 @@ AdjointPtr DFunctor::MapMorphism(const AnfNodePtr &morph) {
   UpdateAdjoint(node_adjoint);
   anfnode_to_adjoin_[morph] = node_adjoint;
   if (cnode_morph->stop_gradient()) {
-    MS_LOG(WARNING) << "MapMorphism node " << morph->ToString() << " is stopped.";
+    MS_LOG(DEBUG) << "MapMorphism node " << morph->ToString() << " is stopped.";
     return node_adjoint;
   }
 
@@ -185,19 +228,32 @@ AdjointPtr DFunctor::MapMorphism(const AnfNodePtr &morph) {
   return node_adjoint;
 }
 
+bool DFunctor::IsFreeMorphism(const AnfNodePtr &node) {
+  // Do not care about non-CNode
+  if (!node->isa<CNode>()) {
+    return false;
+  }
+  // Do not care about kPrimReturn
+  if (IsPrimitiveCNode(node, prim::kPrimReturn)) {
+    return false;
+  }
+  auto &users = primal_graph_->manager()->node_users()[node];
+  // Do not care about isolated morphisms
+  if (users.empty()) {
+    return false;
+  }
+  // Not free if it's used by some node in primal_graph
+  bool nonfree = std::any_of(std::begin(users), std::end(users), [&](const auto &kv) {
+    auto &user = kv.first;
+    return user->func_graph() == primal_graph_;
+  });
+  return !nonfree;
+}
+
 void DFunctor::MapFreeMorphism() {
   // Handle cnode not attached to output, that might be refered in other functions.
   for (auto &node : primal_graph_->nodes()) {
-    auto adjoint = FindAdjoint(node);
-    if (adjoint != nullptr) {
-      continue;
-    }
-    if (!node->isa<CNode>()) {
-      MS_LOG(DEBUG) << "MapFreeMorphism noncnode not mapped after MapMorphism " << node->ToString() << " "
-                    << node->type_name() << ".";
-      continue;
-    }
-    if (IsPrimitiveCNode(node, prim::kPrimReturn)) {
+    if (!IsFreeMorphism(node)) {
       continue;
     }
     MS_LOG(DEBUG) << "MapFreeMorphism map nonoutput cnode after MapMorphism " << node->ToString() << ".";
@@ -256,9 +312,10 @@ void DFunctor::MapMorphism() {
   // Set stop_gradient before MapMorphism.
   BroadCastStopFlag();
 
+  // Handle free morphism before output, because in some case, free morphism might depend on output's fv tangent
+  MapFreeMorphism();
   // Handle morphism from output.
   (void)MapMorphism(primal_graph_->output());
-  MapFreeMorphism();
 
   // Construct K for primal_graph_
   auto output_adjoint = anfnode_to_adjoin_.find(primal_graph_->output());
@@ -295,13 +352,6 @@ FuncGraphPtr DFunctor::KUserDefined(const FuncGraphPtr &primal) {
   auto bprop = primal->transforms().find("bprop");
   if (bprop != primal->transforms().end()) {
     FuncGraphPtr bprop_graph = bprop->second.func_graph();
-    const size_t param_diff = 1;
-    if (bprop_graph->output()->isa<CNode>() &&
-        bprop_graph->output()->cast<CNodePtr>()->size() + param_diff != bprop_graph->parameters().size()) {
-      MS_LOG(EXCEPTION) << "User defined Cell bprop " << primal->ToString() << " in scope "
-                        << primal->output()->scope()->name()
-                        << " output must be a tuple and output number should be the same with inputs.";
-    }
     resources_->manager()->AddFuncGraph(bprop_graph);
 
     if (bprop_graph->free_variables_nodes().size() != 0 || primal->free_variables_nodes().size() != 0) {
@@ -395,6 +445,11 @@ AnfNodePtr DFunctor::MapToK(const AnfNodePtr &primal) {
   return primal;
 }
 
+bool DFunctor::IsInScope(const AnfNodePtr &node) {
+  return std::any_of(scope_.begin(), scope_.end(),
+                     [&](const FuncGraphPtr &graph) { return node->func_graph() == graph; });
+}
+
 void DFunctor::MapFvObject() {
   // Map free variable.
   const auto &free_variables_nodes = primal_graph_->free_variables_nodes();
@@ -407,8 +462,8 @@ void DFunctor::MapFvObject() {
     if (parent_adjoint != nullptr) {
       adjoint = std::make_shared<Adjoint>(node, parent_adjoint->k(), tape_);
     } else {
-      if (is_top_) {
-        // Top graph for ad, add adjoint for free variables.
+      if (is_top_ || node->isa<Parameter>() || !IsInScope(node)) {
+        // Out of ad scope, add adjoint for free variables.
         adjoint = std::make_shared<Adjoint>(node, node, tape_);
         UpdateAdjoint(adjoint);
       } else {
@@ -437,7 +492,7 @@ void DFunctor::MapParamObject() {
 void DFunctor::MapValueObject() {
   // Map ValueNode.
   auto manager = resources_->manager();
-  auto &value_nodes = manager->valuenodes()[primal_graph_];
+  auto &value_nodes = primal_graph_->value_nodes();
   for (const auto &value_pair : value_nodes) {
     auto node = value_pair.first;
     auto parent_adjoint = FindAdjoint(node);
@@ -496,6 +551,10 @@ AdjointPtr DFunctor::FindAdjoint(const AnfNodePtr &primal) {
 }
 
 void DFunctor::CallDoutHoleOnTape() {
+  if (!is_top_) {
+    return;
+  }
+
   // Call dout hole of all adjoint.
   for (auto &f : func_graph_to_functor_) {
     for (auto &adjoint : f.second->anfnode_to_adjoin_) {

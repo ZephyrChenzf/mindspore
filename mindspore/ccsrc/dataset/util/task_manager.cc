@@ -53,7 +53,7 @@ Status TaskManager::CreateAsyncTask(const std::string &my_name, const std::funct
     LockGuard lck(&tg_lock_);
     this->grp_list_.insert(vg);
   }
-  (*task)->wp_.Register(vg);
+  RETURN_IF_NOT_OK((*task)->wp_.Register(vg));
   RETURN_IF_NOT_OK((*task)->Run());
   // Wait for the thread to initialize successfully.
   RETURN_IF_NOT_OK((*task)->Wait());
@@ -84,30 +84,51 @@ void TaskManager::interrupt_all() noexcept {
       svc->InterruptAll();
     }
   }
-  (void)master_->Interrupt();
+  master_->Interrupt();
 }
 
-Task *TaskManager::FindMe() { return gMyTask; }
+Task *TaskManager::FindMe() {
+#if !defined(_WIN32) && !defined(_WIN64)
+  return gMyTask;
+#else
+  TaskManager &tm = TaskManager::GetInstance();
+  SharedLock lock(&tm.lru_lock_);
+  auto id = this_thread::get_id();
+  auto tk = std::find_if(tm.lru_.begin(), tm.lru_.end(), [id](const Task &tk) { return tk.id_ == id; });
+  if (tk != tm.lru_.end()) {
+    return &(*tk);
+  }
+  // If we get here, either I am the watchdog or the master thread.
+  if (tm.master_->id_ == id) {
+    return tm.master_.get();
+  } else if (tm.watchdog_ != nullptr && tm.watchdog_->id_ == id) {
+    return tm.watchdog_;
+  }
+  MS_LOG(ERROR) << "Task not found.";
+  return nullptr;
+#endif
+}
 
 TaskManager::TaskManager() try : global_interrupt_(0),
                                  lru_(&Task::node),
                                  free_lst_(&Task::free),
                                  watchdog_grp_(nullptr),
                                  watchdog_(nullptr) {
-  std::shared_ptr<MemoryPool> mp = Services::GetInstance().GetServiceMemPool();
-  Allocator<Task> alloc(mp);
+  auto alloc = Services::GetAllocator<Task>();
   // Create a dummy Task for the master thread (this thread)
   master_ = std::allocate_shared<Task>(alloc, "master", []() -> Status { return Status::OK(); });
   master_->id_ = this_thread::get_id();
   master_->running_ = true;
   master_->is_master_ = true;
+#if !defined(_WIN32) && !defined(_WIN64)
   gMyTask = master_.get();
   // Initialize the semaphore for the watchdog
   errno_t rc = sem_init(&sem_, 0, 0);
   if (rc == -1) {
-    MS_LOG(INFO) << "Unable to initialize a semaphore. Errno = " << rc << ".";
+    MS_LOG(ERROR) << "Unable to initialize a semaphore. Errno = " << rc << ".";
     std::terminate();
   }
+#endif
 } catch (const std::exception &e) {
   MS_LOG(ERROR) << "MindData initialization failed: " << e.what() << ".";
   std::terminate();
@@ -116,17 +137,20 @@ TaskManager::TaskManager() try : global_interrupt_(0),
 TaskManager::~TaskManager() {
   if (watchdog_) {
     WakeUpWatchDog();
-    watchdog_->thrd_.join();
+    watchdog_->Join();
     // watchdog_grp_ and watchdog_ pointers come from Services::GetInstance().GetServiceMemPool() which we will free it
     // on shutdown. So no need to free these pointers one by one.
     watchdog_grp_ = nullptr;
     watchdog_ = nullptr;
   }
+#if !defined(_WIN32) && !defined(_WIN64)
   (void)sem_destroy(&sem_);
+#endif
 }
 
 Status TaskManager::DoServiceStart() {
   MS_LOG(INFO) << "Starting Task Manager.";
+#if !defined(_WIN32) && !defined(_WIN64)
   // Create a watchdog for control-c
   std::shared_ptr<MemoryPool> mp = Services::GetInstance().GetServiceMemPool();
   // A dummy group just for the watchdog. We aren't really using it. But most code assumes a thread must
@@ -143,6 +167,7 @@ Status TaskManager::DoServiceStart() {
   }
   grp_list_.erase(watchdog_grp_);
   lru_.Remove(watchdog_);
+#endif
   return Status::OK();
 }
 
@@ -154,6 +179,7 @@ Status TaskManager::DoServiceStop() {
 
 Status TaskManager::WatchDog() {
   TaskManager::FindMe()->Post();
+#if !defined(_WIN32) && !defined(_WIN64)
   errno_t err = sem_wait(&sem_);
   if (err == -1) {
     RETURN_STATUS_UNEXPECTED("Errno = " + std::to_string(errno));
@@ -162,6 +188,7 @@ Status TaskManager::WatchDog() {
   // In addition, we also want to prevent new thread from creating. This can be done
   // easily by calling the parent function.
   RETURN_IF_NOT_OK(ServiceStop());
+#endif
   return Status::OK();
 }
 
@@ -177,7 +204,7 @@ void TaskManager::InterruptMaster(const Status &rc) {
   TaskManager &tm = TaskManager::GetInstance();
   std::shared_ptr<Task> master = tm.master_;
   std::lock_guard<std::mutex> lck(master->mux_);
-  (void)master->Interrupt();
+  master->Interrupt();
   if (rc.IsError() && master->rc_.IsOk()) {
     master->rc_ = rc;
     master->caught_severe_exception_ = true;
@@ -269,14 +296,14 @@ Status TaskGroup::CreateAsyncTask(const std::string &my_name, const std::functio
   return Status::OK();
 }
 
-void TaskGroup::interrupt_all() noexcept { (void)intrp_svc_->InterruptAll(); }
+void TaskGroup::interrupt_all() noexcept { intrp_svc_->InterruptAll(); }
 
-Status TaskGroup::join_all() {
+Status TaskGroup::join_all(Task::WaitFlag wf) {
   Status rc;
   Status rc2;
   SharedLock lck(&rw_lock_);
   for (Task &tk : grp_list_) {
-    rc = tk.Join();
+    rc = tk.Join(wf);
     if (rc.IsError()) {
       rc2 = rc;
     }
@@ -287,12 +314,11 @@ Status TaskGroup::join_all() {
 Status TaskGroup::DoServiceStop() {
   intrp_svc_->ServiceStop();
   interrupt_all();
-  return (join_all());
+  return (join_all(Task::WaitFlag::kNonBlocking));
 }
 
 TaskGroup::TaskGroup() : grp_list_(&Task::group), intrp_svc_(nullptr) {
-  std::shared_ptr<MemoryPool> mp = Services::GetInstance().GetServiceMemPool();
-  Allocator<IntrpService> alloc(mp);
+  auto alloc = Services::GetAllocator<IntrpService>();
   intrp_svc_ = std::allocate_shared<IntrpService>(alloc);
   (void)Service::ServiceStart();
 }

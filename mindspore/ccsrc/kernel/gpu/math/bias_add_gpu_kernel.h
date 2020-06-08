@@ -23,7 +23,6 @@
 #include <vector>
 #include "kernel/gpu/gpu_kernel.h"
 #include "kernel/gpu/gpu_kernel_factory.h"
-#include "dataset/util/make_unique.h"
 #include "kernel/gpu/kernel_constants.h"
 
 namespace mindspore {
@@ -36,25 +35,34 @@ class BiasAddGpuKernel : public GpuKernel {
         cudnn_data_type_(CUDNN_DATA_FLOAT),
         x_desc_(nullptr),
         b_desc_(nullptr),
-        op_desc_(nullptr) {}
+        op_desc_(nullptr),
+        is_null_input_(false) {}
   ~BiasAddGpuKernel() override { DestroyResource(); }
 
   const std::vector<size_t> &GetInputSizeList() const override { return input_size_list_; }
   const std::vector<size_t> &GetOutputSizeList() const override { return output_size_list_; }
   const std::vector<size_t> &GetWorkspaceSizeList() const override { return workspace_size_list_; }
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
-              const std::vector<AddressPtr> &outputs, uintptr_t stream_ptr) override {
+              const std::vector<AddressPtr> &outputs, void *stream_ptr) override {
     VARIABLE_NOT_USED(workspace);
     VARIABLE_NOT_USED(stream_ptr);
+    if (is_null_input_) {
+      return true;
+    }
+
     T *x_addr = GetDeviceAddress<T>(inputs, 0);
     T *b_addr = GetDeviceAddress<T>(inputs, 1);
     T *output_addr = GetDeviceAddress<T>(outputs, 0);
 
-    const float alpha = 1;
-    const float beta = 0;
-    CHECK_CUDNN_RET_WITH_EXCEPT(cudnnOpTensor(cudnn_handle_, op_desc_, &alpha, x_desc_, x_addr, &alpha, b_desc_, b_addr,
-                                              &beta, x_desc_, output_addr),
-                                "cudnnOpTensor Add failed");
+    try {
+      const float alpha = 1;
+      const float beta = 0;
+      CHECK_CUDNN_RET_WITH_EXCEPT(cudnnOpTensor(cudnn_handle_, op_desc_, &alpha, x_desc_, x_addr, &alpha, b_desc_,
+                                                b_addr, &beta, x_desc_, output_addr),
+                                  "cudnnOpTensor failed");
+    } catch (const std::exception &e) {
+      MS_LOG(EXCEPTION) << "Encountered an exception: " << e.what() << " when invoke cudnnOpTensor";
+    }
     return true;
   }
   bool Init(const CNodePtr &kernel_node) override {
@@ -62,6 +70,13 @@ class BiasAddGpuKernel : public GpuKernel {
     cudnn_data_type_ = kCudnnDtypeMap[TypeIdLabel(AnfAlgo::GetInputDeviceDataType(kernel_node, 0))];
     auto x_shape = AnfAlgo::GetPrevNodeOutputInferShape(kernel_node, 0);
     auto num_dims = x_shape.size();
+    is_null_input_ = CHECK_NULL_INPUT(x_shape);
+    if (is_null_input_) {
+      MS_LOG(WARNING) << "input is null";
+      InitSizeLists();
+      return true;
+    }
+
     if (num_dims < 2) {
       MS_LOG(EXCEPTION) << "input dims must be at least 2, but got " << num_dims;
     }
@@ -74,8 +89,8 @@ class BiasAddGpuKernel : public GpuKernel {
 
     // Expand to 4 dims for cudnnSetTensorNdDescriptorEx.
     auto cudnn_dims = std::max(num_dims, 4UL);
-    std::unique_ptr<int[]> x_dims = mindspore::make_unique<int[]>(cudnn_dims);
-    std::unique_ptr<int[]> b_dims = mindspore::make_unique<int[]>(cudnn_dims);
+    std::unique_ptr<int[]> x_dims = std::make_unique<int[]>(cudnn_dims);
+    std::unique_ptr<int[]> b_dims = std::make_unique<int[]>(cudnn_dims);
     for (size_t i = 0; i < cudnn_dims; i++) {
       x_dims[i] = (i < num_dims) ? SizeToInt(x_shape[i]) : 1;
       b_dims[i] = (i == pos) ? SizeToInt(x_shape[i]) : 1;
@@ -123,6 +138,7 @@ class BiasAddGpuKernel : public GpuKernel {
   cudnnTensorDescriptor_t x_desc_;
   cudnnTensorDescriptor_t b_desc_;
   cudnnOpTensorDescriptor_t op_desc_;
+  bool is_null_input_;
   std::vector<size_t> input_size_list_;
   std::vector<size_t> output_size_list_;
   std::vector<size_t> workspace_size_list_;

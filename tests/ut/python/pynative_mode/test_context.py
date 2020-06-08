@@ -13,8 +13,12 @@
 # limitations under the License.
 # ============================================================================
 """ test_context """
+import os
 import pytest
+
 from mindspore import context
+
+
 # pylint: disable=W0212
 # W0212: protected-access
 
@@ -65,20 +69,64 @@ def test_dump_target():
     with pytest.raises(TypeError):
         context.set_context(save_dump_path=1)
     context.set_context(enable_dump=False)
-    assert context.get_context("enable_dump") == False
+    assert not context.get_context("enable_dump")
     context.set_context(enable_dump=True)
-    assert context.get_context("enable_dump") == True
+    assert context.get_context("enable_dump")
     assert context.get_context("save_dump_path") == "."
+
+
+def test_enable_profiling():
+    """ test_profiling_mode """
+    with pytest.raises(TypeError):
+        context.set_context(enable_profiling=1)
+    with pytest.raises(TypeError):
+        context.set_context(enable_profiling="1")
+    context.set_context(enable_profiling=True)
+    assert context.get_context("enable_profiling") is True
+    context.set_context(enable_profiling=False)
+    assert context.get_context("enable_profiling") is False
+
+
+def test_profiling_options():
+    """ test_profiling_options """
+    with pytest.raises(TypeError):
+        context.set_context(profiling_options=True)
+    with pytest.raises(TypeError):
+        context.set_context(profiling_options=1)
+    with pytest.raises(ValueError):
+        context.set_context(profiling_options="training_")
+    with pytest.raises(ValueError):
+        context.set_context(profiling_options="training_trace:op_trace")
+    context.set_context(profiling_options="training_trace")
+    assert context.get_context("profiling_options") == "training_trace"
+    context.set_context(profiling_options="training_trace:task_trace")
+    assert context.get_context("profiling_options") == "training_trace:task_trace"
+
+
+def test_variable_memory_max_size():
+    """test_variable_memory_max_size"""
+    with pytest.raises(TypeError):
+        context.set_context(variable_memory_max_size=True)
+    with pytest.raises(TypeError):
+        context.set_context(variable_memory_max_size=1)
+    with pytest.raises(ValueError):
+        context.set_context(variable_memory_max_size="")
+    with pytest.raises(ValueError):
+        context.set_context(variable_memory_max_size="1G")
+    with pytest.raises(ValueError):
+        context.set_context(variable_memory_max_size="31GB")
+    context.set_context(variable_memory_max_size="3GB")
 
 
 def test_set_context():
     """ test_set_context """
     context.set_context(mode=context.GRAPH_MODE, device_target="Ascend",
-                        device_id=0, save_graphs=True, save_graphs_path="/mindspore")
+                        device_id=0, save_graphs=True, save_graphs_path="mindspore_ir_path")
     assert context.get_context("device_id") == 0
     assert context.get_context("device_target") == "Ascend"
     assert context.get_context("save_graphs")
-    assert context.get_context("save_graphs_path") == "/mindspore"
+    assert os.path.exists("mindspore_ir_path")
+    assert context.get_context("save_graphs_path").find("mindspore_ir_path") > 0
     assert context.get_context("mode") == context.GRAPH_MODE
 
     context.set_context(mode=context.PYNATIVE_MODE)
@@ -87,3 +135,15 @@ def test_set_context():
 
     with pytest.raises(ValueError):
         context.set_context(modex="ge")
+
+
+def teardown_module():
+    dirs = ['mindspore_ir_path']
+    for item in dirs:
+        item_name = './' + item
+        if not os.path.exists(item_name):
+            continue
+        if os.path.isdir(item_name):
+            os.rmdir(item_name)
+        elif os.path.isfile(item_name):
+            os.remove(item_name)

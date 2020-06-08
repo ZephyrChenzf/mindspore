@@ -47,7 +47,7 @@ class FusedBatchNormGradGpuKernel : public GpuKernel {
   const std::vector<size_t> &GetOutputSizeList() const override { return output_size_list_; }
   const std::vector<size_t> &GetWorkspaceSizeList() const override { return workspace_size_list_; }
   bool Launch(const std::vector<AddressPtr> &inputs, const std::vector<AddressPtr> &workspace,
-              const std::vector<AddressPtr> &outputs, uintptr_t stream_ptr) override {
+              const std::vector<AddressPtr> &outputs, void *stream_ptr) override {
     VARIABLE_NOT_USED(workspace);
     VARIABLE_NOT_USED(stream_ptr);
     if (is_null_input_) {
@@ -110,7 +110,7 @@ class FusedBatchNormGradGpuKernel : public GpuKernel {
       cudnnSetTensor4dDescriptor(dx_desc_, CUDNN_TENSOR_NCHW, cudnn_data_type_, batch_, channel_, height_, width_),
       "Set dx desc failed");
     CHECK_CUDNN_RET_WITH_EXCEPT(
-      cudnnSetTensor4dDescriptor(scale_bias_desc_, CUDNN_TENSOR_NCHW, cudnn_data_type_, 1, channel_, 1, 1),
+      cudnnSetTensor4dDescriptor(scale_bias_desc_, CUDNN_TENSOR_NCHW, CUDNN_DATA_FLOAT, 1, channel_, 1, 1),
       "Set para desc failed");
 
     InitSizeLists();

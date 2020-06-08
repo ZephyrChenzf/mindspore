@@ -14,9 +14,7 @@
  * limitations under the License.
  */
 #include "common/common.h"
-#include "common/cvop_common.h"
 #include "dataset/kernels/data/one_hot_op.h"
-#include "dataset/core/cv_tensor.h"
 #include "utils/log_adapter.h"
 
 using namespace mindspore::dataset;
@@ -24,9 +22,9 @@ using mindspore::MsLogLevel::INFO;
 using mindspore::ExceptionType::NoExceptionType;
 using mindspore::LogStream;
 
-class MindDataTestOneHotOp : public UT::CVOP::CVOpCommon {
+class MindDataTestOneHotOp : public UT::Common {
  protected:
-    MindDataTestOneHotOp() : CVOpCommon() {}
+    MindDataTestOneHotOp() {}
 };
 
 TEST_F(MindDataTestOneHotOp, TestOp) {
@@ -47,8 +45,8 @@ TEST_F(MindDataTestOneHotOp, TestOp) {
   EXPECT_TRUE(s.IsOk());
   ASSERT_TRUE(output->shape() == expected->shape());
   ASSERT_TRUE(output->type() == expected->type());
-  std::cout << *output << std::endl;
-  std::cout << *expected << std::endl;
+  MS_LOG(DEBUG) << *output << std::endl;
+  MS_LOG(DEBUG) << *expected << std::endl;
 
   ASSERT_TRUE(*output == *expected);
   MS_LOG(INFO) << "MindDataTestOneHotOp end.";

@@ -85,13 +85,18 @@ list_ = typing.List()
 tuple_ = typing.Tuple()
 tensor = typing.TensorType()
 function = typing.Function()
+function_type = typing.Function
 symbolic_key = typing.SymbolicKeyType()
 env_type = typing.EnvType()
+env_type_type = typing.EnvType
 type_type = typing.TypeType()
 type_none = typing.TypeNone()
 string = typing.String()
 type_refkey = typing.RefKeyType()
 tensor_type = typing.TensorType
+anything_type = typing.TypeAnything
+slice_type = typing.Slice
+ellipsis_type = typing.Ellipsis
 
 number_type = (int8,
                int16,
@@ -106,6 +111,7 @@ number_type = (int8,
                float64,)
 
 int_type = (int8, int16, int32, int64,)
+uint_type = (uint8, uint16, uint32, uint64)
 float_type = (float16, float32, float64,)
 
 _simple_types = {
@@ -150,7 +156,7 @@ def pytype_to_dtype(obj):
         return obj
     if isinstance(obj, type) and obj in _simple_types:
         return _simple_types[obj]
-    raise NotImplementedError()
+    raise NotImplementedError(f"Unsupported type {obj} for `pytype_to_dtype`.")
 
 
 def get_py_obj_dtype(obj):
@@ -163,7 +169,11 @@ def get_py_obj_dtype(obj):
     Returns:
         Type of MindSpore type.
     """
-
+    # Tensor
+    if hasattr(obj, 'dtype') and callable(obj.dtype) and isinstance(obj.dtype(), typing.Type):
+        return tensor_type(obj.dtype())
+    if hasattr(obj, '__primitive_flag__') or hasattr(obj, 'construct'):
+        return function
     if isinstance(obj, (typing.Type, type)):
         return pytype_to_dtype(obj)
     return pytype_to_dtype(type(obj))

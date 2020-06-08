@@ -20,6 +20,7 @@
 #include <mutex>
 #include <string>
 #include "dataset/util/memory_pool.h"
+#include "dataset/util/allocator.h"
 #include "dataset/util/service.h"
 
 #define UNIQUEID_LEN 36
@@ -62,13 +63,20 @@ class Services {
 
   std::shared_ptr<MemoryPool> GetServiceMemPool() { return pool_; }
 
+#if !defined(_WIN32) && !defined(_WIN64)
   static std::string GetUserName();
 
   static std::string GetHostName();
 
   static int GetLWP();
+#endif
 
   static std::string GetUniqueID();
+
+  template <typename T>
+  static Allocator<T> GetAllocator() {
+    return Allocator<T>(Services::GetInstance().GetServiceMemPool());
+  }
 
  private:
   static std::once_flag init_instance_flag_;

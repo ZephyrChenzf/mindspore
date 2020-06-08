@@ -13,15 +13,14 @@
 # limitations under the License.
 # ============================================================================
 
-import pytest
-from mindspore import Tensor
-from mindspore.ops import operations as P
-import mindspore.nn as nn
-from mindspore.common.api import ms_function
 import numpy as np
+import pytest
+
 import mindspore.context as context
-from mindspore.common.initializer import initializer
-from mindspore.common.parameter import Parameter
+import mindspore.nn as nn
+from mindspore import Tensor
+from mindspore.common.api import ms_function
+from mindspore.ops import operations as P
 
 context.set_context(device_target='GPU')
 

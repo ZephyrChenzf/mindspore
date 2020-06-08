@@ -73,7 +73,7 @@ class Connector {
   // @param queue_capacity The number of element (DataBuffer) for each queue.
   Connector(int32_t n_producers, int32_t n_consumers, int32_t queue_capacity)
       : num_producers_(n_producers), num_consumers_(n_consumers) {
-    MS_LOG(INFO) << "A connector is created with " << n_producers << " producers and " << n_consumers << " consumers.";
+    MS_LOG(DEBUG) << "A connector is created with " << n_producers << " producers and " << n_consumers << " consumers.";
     my_name_ = Services::GetUniqueID();
     // We require the consumers to have ids sequentially from 0 to the num_consumers_-1,
     // Otherwise a ordered list of consumer ids have to be passed here. (not implemented yet)
@@ -138,7 +138,7 @@ class Connector {
     }
     expect_consumer_ = 0;
     pop_from_ = 0;
-    MS_LOG(INFO) << "Connector counters reset.";
+    MS_LOG(DEBUG) << "Connector counters reset.";
   }
 
   void Print(std::ostream &out, bool showAll) const {
@@ -150,6 +150,23 @@ class Connector {
   friend std::ostream &operator<<(std::ostream &out, const Connector &con) {
     con.print(out, false);
     return out;
+  }
+
+  // Get current size of connector.
+  int32_t size() const {
+    int32_t size = 0;
+    for (int32_t i = 0; i < queues_.size(); ++i) {
+      size += queues_[i]->size();
+    }
+    return size;
+  }
+
+  int32_t capacity() const {
+    int32_t capacity = 0;
+    for (int32_t i = 0; i < queues_.size(); ++i) {
+      capacity += queues_[i]->capacity();
+    }
+    return capacity;
   }
 
   // Register the internal resources with Task group for interruption service.
